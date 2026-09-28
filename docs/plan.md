@@ -81,14 +81,14 @@ Done when: a merged route answers HTTP requests, a cron fires on schedule, and a
 - Passkey login.
 - SSH gateway into workspaces, `hobwork` CLI inside workspace VMs.
 
-## Phase 9: Apple apps
+## Phase 9: Integrations
+
+- Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.
+- OpenRouter SDK helper.
+
+## Phase 10: Apple apps
 
 - iOS app (`dev.bgenc.hobwork`): login, WebView for project UIs, device WebSocket, push notifications.
 - Capabilities in order: notifications, NFC read/write, alarms (AlarmKit), Screen Time (Family Controls, development entitlement first).
 - Request the Family Controls distribution entitlement early so TestFlight is possible later.
 - macOS app after iOS.
-
-## Phase 10: Integrations
-
-- Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.
-- OpenRouter SDK helper.

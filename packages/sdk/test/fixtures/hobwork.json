@@ -1,0 +1,25 @@
+{
+  "crons": {
+    "morning-alarm": { "schedule": "0 6 * * 1-5", "handler": "src/morning-alarm.ts" }
+  },
+  "webhooks": {
+    "filament-scanned": { "handler": "src/scan.ts" }
+  },
+  "routes": {
+    "GET /spools": { "handler": "src/spools.ts" }
+  },
+  "triggers": {
+    "desk-button": {
+      "homeassistant": {
+        "trigger": "device",
+        "domain": "zha",
+        "device_id": "...",
+        "type": "remote_button_short_press",
+        "subtype": "button_1"
+      },
+      "handler": "src/desk-button.ts"
+    }
+  },
+  "egress": ["api.example.com"],
+  "idleTimeout": "1h"
+}

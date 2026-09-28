@@ -5,3 +5,13 @@ dist/
 .env
 .env.*
 /data/
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcshareddata/swiftpm/
+.build/
+
+# Guest image build output
+/images/build/

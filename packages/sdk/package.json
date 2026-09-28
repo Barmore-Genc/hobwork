@@ -1,0 +1,22 @@
+{
+  "name": "@hobwork/sdk",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./hobwork.schema.json": "./hobwork.schema.json"
+  },
+  "scripts": {
+    "lint": "oxlint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "ajv": "^8.17.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.0.0"
+  }
+}

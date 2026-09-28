@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { git, HOBWORK_IDENTITY, type GitOptions } from './git.ts'
+import { git, GitError, HOBWORK_IDENTITY, type GitOptions } from './git.ts'
 import { repoPath, workspaceDir, type Host } from './host.ts'
 import { ProjectError, requireProject } from './projects.ts'
 import { assertNotDefaultBranch, branchExists, deleteBranchRef, validateBranchName } from './repo.ts'
@@ -270,6 +270,34 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     })
   }
 
+  // Moves the branch from `from` to `to` and resets its workspace checkout to
+  // match, keeping ignored files such as node_modules. Returns false and changes
+  // nothing if the branch or the workspace changed since `from`.
+  function moveBranch(project: string, branch: string, from: string, to: string): Promise<boolean> {
+    validateBranchName(branch)
+    return serialized(project, branch, async () => {
+      assertNotDefaultBranch(branch)
+      const workspace = get(project, branch)
+      if (workspace) {
+        const head = (await workspaceGit(project, branch, ['rev-parse', 'HEAD'])).trim()
+        const status = await workspaceGit(project, branch, ['status', '--porcelain'])
+        if (head !== from || status.trim()) return false
+      }
+      try {
+        await git(['--git-dir', repoPath(host, project), 'update-ref', `refs/heads/${branch}`, to, from])
+      } catch (err) {
+        if (err instanceof GitError) return false
+        throw err
+      }
+      if (workspace) {
+        const remote = `refs/remotes/origin/${branch}`
+        await workspaceGit(project, branch, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${remote}`])
+        await workspaceGit(project, branch, ['reset', '--quiet', '--hard', remote])
+      }
+      return true
+    })
+  }
+
   // Uncommitted changes in the workspace, including new files.
   function diff(project: string, branch: string): Promise<string> {
     return serialized(project, branch, async () => {
@@ -298,6 +326,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     touch,
     commit,
     diff,
+    moveBranch,
     resetStatuses,
   }
 }

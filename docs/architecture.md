@@ -247,10 +247,19 @@ There is no human approval step. Users see the result as a new version in the UI
 
 Pipeline runs are recorded (step, status, output, duration) and visible to agents through `pipeline_status`.
 
+Details:
+
+- `merge` takes only committed changes and refuses while the workspace has uncommitted ones.
+- The candidate is built in a temporary host-side clone: the branch is squashed into one commit (author: the agent, committer: Hobwork, message: the agent's summary) and rebased onto `main`. Squashing first means only the branch's end result has to apply. On conflict, the conflicting files are returned and the agent redoes the change on a new branch from `main`.
+- Merges and restores run one at a time per project, so each candidate is tested against the `main` it lands on.
+- The pipeline VM gets a clean checkout of the candidate with no git directory. `hobwork.json` and `package.json` are read on the host from git, never from the checkout. Extra dependencies are the `package.json` dependencies not in the platform set. The platform set is defined by `templates/project/package.json`.
+- After a successful merge, the branch and its workspace checkout are reset to the new `main` (ignored files like `node_modules` stay), so the agent can keep working on the same branch. If the branch changed while the merge ran, it is left as it was.
+- The pipeline VM backend is a seam (`StartPipelineVm` in `server/src/pipeline/runner.ts`). `server/src/pipeline/host-backend.ts` runs commands on the host without a sandbox and exists only for tests.
+
 ## Versions and rollback
 
-- Every merge is one squash commit on `main` = one version.
-- The UI lists versions with their summaries. "Restore this version" commits that version's tree as a new commit on `main` and deploys it. History is never rewritten.
+- Every merge is one squash commit on `main` = one version. Version 1 is the template commit from project creation.
+- The UI lists versions with their summaries. "Restore this version" commits that version's tree as a new commit on `main`, records it as a new version and deploys it, without running the pipeline. History is never rewritten.
 - Restoring code does not roll back data. Additive migrations keep this safe.
 - **Auto-revert**: if a new version fails completely (runtime does not start, or every invocation fails for several minutes after deploy), Hobwork restores the previous version automatically and records why, so the agent can see it.
 

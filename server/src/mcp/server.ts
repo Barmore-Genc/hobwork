@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import type { Agent } from '../agents.ts'
+import type { Delivery } from '../delivery.ts'
 import {
   checkoutDirectory,
   deleteCheckoutFile,
@@ -16,11 +17,13 @@ import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProje
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { runBash } from './bash.ts'
+import { registerDeliveryTools } from './delivery.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 
 export type McpContext = {
   host: Host
   workspaces: WorkspaceManager<ExecWorkspaceVm>
+  delivery: Delivery
   agent: Agent
 }
 
@@ -28,7 +31,7 @@ export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, sc
 
 Before changing a project, read its AGENTS.md (read_file on main or on your branch). It explains the layout, the SDK and the workflow.
 
-Workflow: create a branch, change files on it (write_file, edit_file), run checks in the branch workspace with bash (pnpm typecheck, pnpm lint, pnpm test), then commit. File changes stay in the branch workspace until you commit.
+Workflow: create a branch, change files on it (write_file, edit_file), run checks in the branch workspace with bash (pnpm typecheck, pnpm lint, pnpm test), then commit. File changes stay in the branch workspace until you commit. When the change is done, merge the branch with a summary: this runs the pipeline and deploys the change as a new version, or returns the failing step's output.
 
 Rules:
 - Handlers are like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the project DB through the SDK.
@@ -82,7 +85,7 @@ function formatReadResult(content: string, offset: number, limit: number): strin
   return notes.length ? `${body}\n\n[${notes.join(' ')}]` : body
 }
 
-export function createMcpServer({ host, workspaces, agent }: McpContext): McpServer {
+export function createMcpServer({ host, workspaces, delivery, agent }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
   // main is never written through a workspace, so its checkout is refreshed to
@@ -411,6 +414,8 @@ export function createMcpServer({ host, workspaces, agent }: McpContext): McpSer
     },
     async ({ project: p, ref, limit }) => json(await log(host, p, ref, limit)),
   )
+
+  registerDeliveryTools(server, { host, delivery, agent })
 
   return server
 }

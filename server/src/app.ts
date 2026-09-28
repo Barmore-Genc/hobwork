@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { Host } from './host.ts'
 import { createMcpHandler, MCP_PATH, type McpAuthenticator } from './mcp/http.ts'
@@ -12,11 +13,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
 
 export function createApp(
   host: Host,
-  options: { workspaces?: WorkspaceManager<ExecWorkspaceVm>; authenticate?: McpAuthenticator } = {},
+  options: {
+    workspaces?: WorkspaceManager<ExecWorkspaceVm>
+    delivery?: Delivery
+    authenticate?: McpAuthenticator
+  } = {},
 ): Server {
+  const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
   const handleMcp = createMcpHandler({
     host,
-    workspaces: options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host),
+    workspaces,
+    delivery: options.delivery ?? createDelivery(host, { workspaces }),
     authenticate: options.authenticate,
   })
 

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { verifyAgentToken, type Agent } from '../agents.ts'
+import type { Delivery } from '../delivery.ts'
 import type { Host } from '../host.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { createMcpServer } from './server.ts'
@@ -27,6 +28,7 @@ function jsonRpcError(res: ServerResponse, status: number, message: string, head
 export function createMcpHandler(options: {
   host: Host
   workspaces: WorkspaceManager<ExecWorkspaceVm>
+  delivery: Delivery
   authenticate?: McpAuthenticator
 }) {
   const authenticate = options.authenticate ?? bearerTokenAuth(options.host)
@@ -44,7 +46,12 @@ export function createMcpHandler(options: {
       return jsonRpcError(res, 405, 'Method not allowed', { allow: 'POST' })
     }
 
-    const server = createMcpServer({ host: options.host, workspaces: options.workspaces, agent })
+    const server = createMcpServer({
+      host: options.host,
+      workspaces: options.workspaces,
+      delivery: options.delivery,
+      agent,
+    })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {
       void transport.close()

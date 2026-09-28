@@ -7,6 +7,7 @@ See [architecture.md](architecture.md) for the design.
 ## Phase 0: Repository scaffold
 
 - pnpm workspace: `server/`, `web/`, `packages/sdk/`, `templates/project/`.
+- `hobwork.json` JSON schema.
 - Host: Node + TypeScript (native type stripping), Vitest, oxlint.
 - Web: Vite, React, Tailwind (already scaffolded).
 - Host DB setup with SQLite defaults and a simple migration runner.
@@ -18,9 +19,10 @@ Done when: `pnpm dev` starts host and web, `pnpm test` runs, the web UI loads.
 ## Phase 1: Sandbox layer
 
 - `Sandbox` interface in the host, Gondolin implementation.
-- Hobwork guest image: Alpine + Node + pnpm + git, larger root disk.
+- Hobwork guest image: Alpine + Node + pnpm + git, larger root disk, platform dependency set.
+- Decide how extra per-project dependencies layer on top of the platform set.
 - Benchmark on `colossus` with KVM (boot, exec, memory, egress), same script as the Mac run.
-- Test Gondolin VFS performance for `pnpm install` and `vitest` in a mounted checkout vs on the VM disk. Decide how workspaces hold their files.
+- Test Gondolin VFS performance for `vitest` and `tsc` in a mounted checkout vs on the VM disk. Decide how workspaces hold their files.
 - Decide and prototype the internal SDK to host endpoint.
 
 Done when: the host can start a VM with a directory mounted, run a command with streamed output, and stop it, with numbers from `colossus`.
@@ -44,7 +46,7 @@ Done when: Claude Code connected over MCP can create a project, edit files on a 
 
 ## Phase 4: Pipeline, merge, versions
 
-- Pipeline runner: fresh VM, install, typecheck, lint, test, build, manifest extraction. Records steps and output.
+- Pipeline runner: fresh VM, validate `hobwork.json`, install extras, typecheck, lint, test, build. Records steps and output.
 - `merge`: pipeline on the branch rebased onto `main`, squash-merge on success, failures returned to the agent.
 - `pipeline_status`, `list_versions`, `restore_version`.
 
@@ -52,9 +54,9 @@ Done when: an agent can merge a branch, gets test failures back when tests fail,
 
 ## Phase 5: Runtime and logs
 
-- SDK: `route`, `cron`, `event` helpers, context with `fetch`, logging.
+- SDK: `Handler` type, context with `fetch`, logging.
 - Runner inside the VM: loads the deployed build, serves invocations over ingress.
-- Host: 0/1 VM lifecycle with idle timeout, routing `/p/<project>/api/*`, cron scheduler, deploy with switch-over.
+- Host: 0/1 VM lifecycle with idle timeout, routes (`/p/<project>/api/*`), webhooks (`/hooks/...`), cron scheduler, deploy with switch-over.
 - Invocation records and captured logs. MCP: `invoke`, `list_invocations`, `get_logs`, `tail_logs`.
 - Auto-revert on total failure after deploy.
 
@@ -88,5 +90,5 @@ Done when: a merged route answers HTTP requests, a cron fires on schedule, and a
 
 ## Phase 10: Integrations
 
-- Home Assistant: WebSocket connection, state change events, service calls from the SDK.
+- Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.
 - OpenRouter SDK helper.

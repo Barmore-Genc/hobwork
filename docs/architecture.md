@@ -42,7 +42,7 @@ Named after hobs, the house spirits that quietly do chores around the home.
 
 - **Host**: Node (>= 23.6, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `colossus` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
 - **Web UI**: React, TypeScript, Tailwind, Vite. Served by the host.
-- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git and a larger disk.
+- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, a larger disk and the platform dependency set.
 - **SDK** (`@hobwork/sdk`): the library project code imports to talk to the host (storage, logs, secrets-aware fetch, devices, calling other projects).
 - **Apple apps**: iOS and macOS (maybe tvOS later). Bundle ID prefix `dev.bgenc.hobwork`. A WebView for dashboards plus native capabilities exposed to scripts.
 
@@ -93,34 +93,70 @@ New projects are created from a template with everything configured:
 
 ```
 AGENTS.md              how Hobwork works, rules for agents (Lambda model, tests, migrations)
-package.json           deps; scripts: typecheck, lint, test, build
-pnpm-lock.yaml
+hobwork.json           entry points (crons, webhooks, routes, triggers) and settings
+package.json           scripts: typecheck, lint, test, build; extra deps (discouraged)
 tsconfig.json
 vite.config.ts         UI build + Vitest config
-hobwork.json           static project settings (egress hosts, idle timeout)
-src/
-  routes/*.ts          HTTP handlers, exposed at /p/<project>/api/...
-  crons/*.ts           scheduled handlers
-  events/*.ts          handlers for events (HA state changes, device events, other projects)
-  lib/                 shared code
+src/                   handlers and shared code
 ui/                    dashboard pages (React + Tailwind)
 migrations/*.sql       project DB migrations, applied in order
 tests/                 Vitest tests
 ```
 
-Handlers are registered in code with SDK helpers, e.g.:
+### Entry points
 
-```ts
-// src/crons/morning-alarm.ts
-import { cron } from "@hobwork/sdk";
+All entry points are declared in `hobwork.json`. The host reads it directly and never has to run project code to find out what a project does. The pipeline validates it against a JSON schema.
 
-export default cron("0 6 * * 1-5", async (ctx) => {
-  const sleep = await ctx.fetch("https://health-export.example/api/sleep/last");
-  ...
-});
+```json
+{
+  "crons": {
+    "morning-alarm": { "schedule": "0 6 * * 1-5", "handler": "src/morning-alarm.ts" }
+  },
+  "webhooks": {
+    "filament-scanned": { "handler": "src/scan.ts" }
+  },
+  "routes": {
+    "GET /spools": { "handler": "src/spools.ts" }
+  },
+  "triggers": {
+    "desk-button": {
+      "homeassistant": {
+        "trigger": "device",
+        "domain": "zha",
+        "device_id": "...",
+        "type": "remote_button_short_press",
+        "subtype": "button_1"
+      },
+      "handler": "src/desk-button.ts"
+    }
+  },
+  "egress": ["api.example.com"],
+  "idleTimeout": "1h"
+}
 ```
 
-The host never imports project code, so it cannot read these definitions directly. The pipeline's build step runs the project's code inside the pipeline VM and writes a **manifest** (routes, crons, events, UI pages) that the host stores with the version. Scheduling and routing use the manifest.
+- **Crons**: run on a schedule. The host owns the schedule.
+- **Webhooks**: called from outside at `/hooks/<project>/<name>/<token>`. The token is a rotatable secret. The request is passed to the handler.
+- **Routes**: authenticated API for the project's own dashboard, at `/p/<project>/api/...`.
+- **Triggers**: events from integrations (Home Assistant, devices). The trigger payload is passed to the handler.
+
+A handler file exports a default function that receives the invocation context:
+
+```ts
+import type { Handler } from "@hobwork/sdk";
+
+export default (async (ctx) => {
+  const res = await ctx.fetch("https://health-export.example/api/sleep/last");
+  ...
+}) satisfies Handler;
+```
+
+### Dependencies
+
+The guest image contains one **platform dependency set** (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns and similar) on the VM's own disk. Every project uses the same versions, so they are updated together.
+
+- Updating the platform set means a new image version. Before switching, Hobwork runs every project's pipeline against the new image. Projects that fail stay on the old image until an agent fixes them.
+- Projects can add extra npm packages in their `package.json`, installed on top of the platform set. This is allowed but discouraged, and `AGENTS.md` says so.
 
 ### Branches and workspaces
 
@@ -139,7 +175,7 @@ Three ways in. All of them act on the same repos and workspaces.
 
 ### MCP tools
 
-Projects: `list_projects`, `create_project` (from template), `get_project` (manifest, current version, status).
+Projects: `list_projects`, `create_project` (from template), `get_project` (entry points, current version, status).
 
 Workspaces and files: `create_branch`, `list_branches`, `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files`, `search`, `bash` (runs in the branch workspace VM), `commit`, `diff`, `log`.
 
@@ -148,6 +184,8 @@ Delivery: `merge` (runs the pipeline, squash-merges and deploys on success, retu
 Runtime: `invoke` (call a route or trigger a cron/event by hand, on `main` or in a workspace), `list_invocations`, `get_logs`, `tail_logs`.
 
 Secrets: `list_secrets` (names and bound hosts only, never values).
+
+Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_services`, and `ha_listen` (wait for a trigger to fire, so an agent can ask the user to press a button and see the resulting payload).
 
 The MCP server's instructions point agents to the project's `AGENTS.md` and explain the core rules.
 
@@ -160,15 +198,16 @@ Written into `AGENTS.md` in every project and into the MCP server instructions:
 - Migrations are forward-only and additive (add tables and columns, do not drop or rename), so older versions keep working after a restore.
 - Use `get_logs` and `list_invocations` to debug. Do not guess.
 - There are no long-running processes. Anything that needs to persist goes in the project DB.
+- Prefer the platform dependency set. Add extra packages only when nothing in it does the job.
 
 ## Delivery pipeline
 
 `merge` on a branch:
 
 1. Start a fresh pipeline VM with the candidate: the branch rebased (or merged) onto current `main`.
-2. `pnpm install --frozen-lockfile`
-3. `typecheck`, `lint`, `test`, `build` (package.json scripts from the template).
-4. Extract the manifest.
+2. Validate `hobwork.json`.
+3. Install extra dependencies, if the project has any. Platform packages are already in the image.
+4. `typecheck`, `lint`, `test`, `build` (package.json scripts from the template). `build` bundles handlers and dashboards with Vite.
 5. Apply new migrations to a copy of the production DB, as a dry run.
 6. On success: squash-merge into `main` with the agent's summary as the commit message, apply migrations for real, deploy.
 7. On failure: return the failing step with its output to the agent. No human is involved. The agent fixes and calls `merge` again.
@@ -189,7 +228,7 @@ Pipeline runs are recorded (step, status, output, duration) and visible to agent
 - Each deployed project has 0 or 1 runtime VMs. There is no scaling beyond 1. Concurrent invocations run in the same VM.
 - The VM starts on the first invocation (HTTP request, cron tick, event) and stops after an idle timeout. Default 1 hour, configurable per project in `hobwork.json`. Cold start cost is the VM boot, roughly half a second.
 - Inside the VM a Hobwork **runner** (Node) loads the deployed build and serves invocations from the host over the Gondolin ingress.
-- The host owns scheduling. A cron tick wakes the VM if it is asleep.
+- The host owns scheduling and trigger subscriptions. A cron tick, webhook call or trigger wakes the VM if it is asleep.
 - Deploy: start the new VM, wait until it is ready, switch traffic, drain and stop the old one.
 - Handlers call back to the host (DB, logs, devices, events) through the SDK over an internal endpoint that only the project's VMs can reach.
 
@@ -246,9 +285,34 @@ Planned capabilities:
 - **Screen Time**: block apps and set limits (Family Controls, Managed Settings, Device Activity). The development entitlement works for our own devices through Xcode builds. TestFlight and App Store need Apple to approve the distribution entitlement. macOS support is still to be checked.
 - **HealthKit** (possible): read sleep data directly, instead of going through a Health export API.
 
+## Home Assistant
+
+The host keeps one WebSocket connection to HA, authenticated with a long-lived access token entered in the Hobwork settings.
+
+### HA to Hobwork (triggers)
+
+HA's WebSocket API has `subscribe_trigger`: the client sends a trigger definition in HA's own automation syntax, HA evaluates it, and pushes a message every time it fires. Hobwork uses this directly:
+
+1. On deploy, the host reads the `homeassistant` triggers from `hobwork.json` and subscribes each one with `subscribe_trigger`.
+2. A Zigbee button is pressed. ZHA or Zigbee2MQTT turns it into a device trigger, event or state change in HA. HA matches it against the subscription and pushes the trigger variables to Hobwork.
+3. The host invokes the handler with the trigger variables, waking the project VM if needed.
+
+Any trigger HA supports works (device, state, numeric_state, event, zone, time, template), with the same syntax as in an HA automation, and HA does the filtering. On reconnect (e.g. HA restart) the host subscribes again. Triggers that fire while the connection is down are lost, and this is logged.
+
+Agents find device IDs, entities and trigger payloads through the HA MCP tools. `ha_listen` lets an agent subscribe a trigger temporarily and ask the user to press the button, to see the real payload before writing the handler.
+
+HA automations can also call a Hobwork webhook (`rest_command`), for anything easier to express on the HA side.
+
+### Hobwork to HA (actions)
+
+The SDK has `ha.callService(domain, service, data)`, `ha.getState(entity)` and similar. Calls go through the host, so the HA token never enters a VM and VMs do not need access to the LAN. Announcements on Google Home speakers are `tts.speak` or `media_player.play_media` calls.
+
+### Later
+
+A custom HA integration (installed through HACS) that exposes Hobwork handlers as HA services or entities, so they can be used from the HA automation editor.
+
 ## Integrations (later)
 
-- **Home Assistant**: the host holds a WebSocket connection to HA and turns state changes into events for projects. Scripts call HA services through the SDK. Covers the Google Home announcements use case.
 - **OpenRouter**: SDK helper for calling models, with the API key as a secret.
 - **Visual programming**: undecided.
 

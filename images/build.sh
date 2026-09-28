@@ -23,8 +23,9 @@ out="build/$arch"
 rm -rf "${here:?}/$out"
 
 # --privileged: postBuild commands chroot into the rootfs and mount /proc there.
+# The repo root is mounted because the image includes packages/sdk.
 docker run --rm --privileged --platform "$platform" \
-  -v "$here:/images" -w /images \
+  -v "$here/..:/repo" -w /repo/images \
   node:24-alpine3.23 sh -euc "
     apk add --no-cache lz4 cpio e2fsprogs bash >/dev/null
     npm install --global --silent --prefix /opt/gondolin @earendil-works/gondolin@$gondolin_version

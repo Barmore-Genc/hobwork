@@ -1,0 +1,109 @@
+import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { createAgentToken } from './agents.ts'
+import { createApp } from './app.ts'
+import { createDelivery } from './delivery.ts'
+import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
+import { createGondolinSandbox } from './sandbox/gondolin.ts'
+import { imageDir, imageExists } from './sandbox/image.ts'
+import { createTestHost } from './test-host.ts'
+import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
+
+// Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
+describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs', { timeout: 300_000 }, () => {
+  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox }
+  const pipelineVms = pipelineVmBackend(vmOptions)
+  let host: ReturnType<typeof createTestHost>
+  let workspaces: ReturnType<typeof createWorkspaceManager<ExecWorkspaceVm>>
+  let server: Server
+  let client: Client
+
+  beforeAll(async () => {
+    if (!imageExists(vmOptions.image)) throw new Error(`no guest image at ${vmOptions.image}, run images/build.sh`)
+    host = createTestHost()
+    workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: workspaceVmBackend(vmOptions) })
+    const delivery = createDelivery(host, { workspaces, pipeline: { startVm: pipelineVms.start } })
+    server = createApp(host, { workspaces, delivery })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`)
+    const { token } = createAgentToken(host.db, 'claude')
+    client = new Client({ name: 'test', version: '0.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(url, { requestInit: { headers: { authorization: `Bearer ${token}` } } }),
+    )
+  })
+
+  afterAll(async () => {
+    await client?.close()
+    await workspaces?.stopAll()
+    await pipelineVms.stopAll()
+    if (server) await new Promise((resolve) => server.close(resolve))
+    host?.dispose()
+  })
+
+  async function call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+    const result = (await client.callTool({ name, arguments: args }, undefined, { timeout: 300_000 })) as CallToolResult
+    const text = result.content.map((c) => (c.type === 'text' ? c.text : '')).join('')
+    return { text, isError: result.isError === true }
+  }
+
+  async function ok(name: string, args: Record<string, unknown>): Promise<string> {
+    const { text, isError } = await call(name, args)
+    expect(isError, text).toBe(false)
+    return text
+  }
+
+  const p = { project: 'filament', branch: 'greeting' }
+  const checks = 'pnpm typecheck && pnpm lint && pnpm test && pnpm build'
+
+  test('an agent checks, merges and breaks the template project', async () => {
+    await ok('create_project', { name: 'filament' })
+    await ok('create_branch', p)
+
+    const passing = await ok('bash', { ...p, command: checks, timeout_seconds: 300 })
+    expect(passing, passing).toMatch(/^exit code: 0/)
+    expect(passing).toContain('built in')
+
+    await ok('write_file', { ...p, path: 'src/extra.ts', content: 'export const extra = 1\n' })
+    await ok('commit', { ...p, message: 'Add extra' })
+    const merged = await ok('merge', { ...p, summary: 'Add extra' })
+    expect(merged, merged).toMatch(/^Merged greeting into main as version 2/)
+
+    const greeting = await ok('read_file', { ...p, path: 'src/greeting.ts' })
+    await ok('write_file', { ...p, path: 'src/greeting.ts', content: greeting.replace("'Good morning'", "'Hi'") })
+    const failing = await ok('bash', { ...p, command: 'pnpm test', timeout_seconds: 300 })
+    expect(failing).toMatch(/^exit code: 1/)
+    expect(failing).toContain('greeting at 7:00')
+
+    await ok('commit', { ...p, message: 'Say hi' })
+    const { text, isError } = await call('merge', { ...p, summary: 'Say hi' })
+    expect(isError, text).toBe(true)
+    expect(text).toContain('the test step failed')
+    expect(JSON.parse(await ok('list_versions', { project: p.project }))).toHaveLength(2)
+  })
+
+  test('egress follows hobwork.json and the VM restarts when it changes', async () => {
+    const status = 'curl -s -o /dev/null -w "%{http_code}" https://example.com/'
+    expect(await ok('bash', { ...p, command: status })).toContain('403')
+    const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
+    await ok('write_file', { ...p, path: 'hobwork.json', content: JSON.stringify({ ...config, egress: ['example.com'] }) })
+    expect(await ok('bash', { ...p, command: status })).toContain('200')
+  })
+
+  test('idle workspace VMs stop', async () => {
+    const idle = createWorkspaceManager<ExecWorkspaceVm>(host, {
+      startVm: workspaceVmBackend(vmOptions),
+      idleTimeoutMs: 1000,
+    })
+    await ok('create_branch', { ...p, branch: 'idle' })
+    const vm = await idle.start(p.project, 'idle')
+    expect((await vm.exec('echo up', { cwd: '.', timeoutMs: 10_000 })).stdout).toBe('up\n')
+    expect(idle.get(p.project, 'idle')?.status).toBe('running')
+    await vi.waitFor(() => expect(idle.get(p.project, 'idle')?.status).toBe('stopped'), { timeout: 10_000, interval: 200 })
+    await expect(vm.exec('true', { cwd: '.', timeoutMs: 5000 })).rejects.toThrow()
+  })
+})

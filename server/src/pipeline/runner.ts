@@ -6,7 +6,7 @@ import type { Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { requireProject } from '../projects.ts'
 import type { ExecWorkspaceVm } from '../workspaces.ts'
-import { extraDependencies } from './platform.ts'
+import { extraDependencies } from '../platform.ts'
 import { validateHobworkJson } from './validate.ts'
 
 // Seam for the sandbox layer: start a fresh VM with `dir` (a clean checkout of

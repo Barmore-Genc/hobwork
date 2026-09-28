@@ -5,7 +5,7 @@ import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { FAKE_PROJECT, fakePackageJson, seedMain } from '../test-project.ts'
 import type { ExecResult, ExecWorkspaceVm } from '../workspaces.ts'
-import { extraDependencies, platformPackages } from './platform.ts'
+import { extraDependencies, platformPackages } from '../platform.ts'
 import { failInterruptedRuns, getRun, latestRun, runPipeline, type PipelineOptions } from './runner.ts'
 
 let host: ReturnType<typeof createTestHost>
@@ -65,6 +65,7 @@ test('installs only when the project has dependencies outside the platform set',
   expect(commands[0]).toBe('pnpm install')
 
   expect(platformPackages().has('react')).toBe(true)
+  expect(platformPackages().has('@hobwork/sdk')).toBe(true)
   expect(extraDependencies({ dependencies: { react: '^19' }, devDependencies: { vitest: '^4', 'left-pad': '1' } })).toEqual([
     'left-pad',
   ])

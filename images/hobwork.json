@@ -37,11 +37,24 @@
       {
         "src": "./platform/pnpm-lock.yaml",
         "dest": "/opt/hobwork/platform/pnpm-lock.yaml"
+      },
+      {
+        "src": "../packages/sdk/package.json",
+        "dest": "/opt/hobwork/sdk/package.json"
+      },
+      {
+        "src": "../packages/sdk/hobwork.schema.json",
+        "dest": "/opt/hobwork/sdk/hobwork.schema.json"
+      },
+      {
+        "src": "../packages/sdk/src",
+        "dest": "/opt/hobwork/sdk/src"
       }
     ],
     "commands": [
       "npm install --global pnpm@12.5.1",
       "cd /opt/hobwork/platform && pnpm install --frozen-lockfile --store-dir /opt/hobwork/pnpm-store",
+      "mkdir -p /opt/hobwork/platform/node_modules/@hobwork && mv /opt/hobwork/sdk /opt/hobwork/platform/node_modules/@hobwork/sdk",
       "rm -rf /opt/hobwork/pnpm-store /root/.npm /root/.cache /root/.local /tmp/*",
       "ln -s /opt/hobwork/platform/node_modules /node_modules",
       "mkdir -p /workspace"

@@ -119,3 +119,78 @@ test('start without a sandbox fails clearly', async () => {
   await createBranch(host, 'filament', 'vm')
   await expect(createWorkspaceManager(host).start('filament', 'vm')).rejects.toThrow('not available')
 })
+
+function testVm() {
+  const vm = { busy: false, stale: false, stopped: false }
+  return {
+    vm,
+    handle: {
+      stop: async () => {
+        vm.stopped = true
+      },
+      busy: () => vm.busy,
+      isStale: () => vm.stale,
+    },
+  }
+}
+
+test('stops VMs that were not used for the idle timeout', async () => {
+  const started: ReturnType<typeof testVm>['vm'][] = []
+  const workspaces = createWorkspaceManager(host, {
+    idleTimeoutMs: 60_000,
+    startVm: async () => {
+      const { vm, handle } = testVm()
+      started.push(vm)
+      return handle
+    },
+  })
+  await createBranch(host, 'filament', 'a')
+  await createBranch(host, 'filament', 'b')
+  await workspaces.start('filament', 'a')
+  await workspaces.start('filament', 'b')
+  const lastUsed = Date.parse(workspaces.get('filament', 'a')?.lastUsedAt ?? '')
+
+  await workspaces.stopIdle(lastUsed + 30_000)
+  expect(started.map((vm) => vm.stopped)).toEqual([false, false])
+
+  started[1]!.busy = true
+  await workspaces.stopIdle(lastUsed + 120_000)
+  expect(started.map((vm) => vm.stopped)).toEqual([true, false])
+  expect(workspaces.get('filament', 'a')?.status).toBe('stopped')
+  expect(workspaces.get('filament', 'b')?.status).toBe('running')
+
+  await workspaces.stopAll()
+  expect(started[1]?.stopped).toBe(true)
+  expect(workspaces.get('filament', 'b')?.status).toBe('stopped')
+})
+
+test('the idle check runs on its own', async () => {
+  const { vm, handle } = testVm()
+  const workspaces = createWorkspaceManager(host, { idleTimeoutMs: 50, startVm: async () => handle })
+  await createBranch(host, 'filament', 'vm')
+  await workspaces.start('filament', 'vm')
+  await vi.waitFor(() => expect(vm.stopped).toBe(true), { timeout: 2000 })
+  expect(workspaces.get('filament', 'vm')?.status).toBe('stopped')
+})
+
+test('a stale VM is replaced on the next start unless it is busy', async () => {
+  const started: ReturnType<typeof testVm>[] = []
+  const workspaces = createWorkspaceManager(host, {
+    startVm: async () => {
+      const vm = testVm()
+      started.push(vm)
+      return vm.handle
+    },
+  })
+  await createBranch(host, 'filament', 'vm')
+  const first = await workspaces.start('filament', 'vm')
+  started[0]!.vm.stale = true
+  started[0]!.vm.busy = true
+  expect(await workspaces.start('filament', 'vm')).toBe(first)
+
+  started[0]!.vm.busy = false
+  const second = await workspaces.start('filament', 'vm')
+  expect(second).not.toBe(first)
+  expect(started[0]?.vm.stopped).toBe(true)
+  expect(workspaces.get('filament', 'vm')?.status).toBe('running')
+})

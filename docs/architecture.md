@@ -190,6 +190,8 @@ Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_
 
 The MCP server's instructions point agents to the project's `AGENTS.md` and explain the core rules.
 
+The endpoint is streamable HTTP at `/mcp`, stateless (a fresh server per request), authenticated with a bearer agent token until MCP OAuth replaces it. File tools act on the branch workspace checkout on the host and reject paths and symlinks that lead outside it. `main` is readable through a host-only checkout reset to the branch tip on each read. Writes, `bash` and `commit` on `main` are refused. `search` matches in a worker thread with a deadline, so an agent-supplied regular expression cannot block the host. `bash` runs through the workspace VM's `exec` (see `ExecWorkspaceVm` in `server/src/workspaces.ts`) with a timeout, and long output is cut in the middle.
+
 ### Rules for agents
 
 Written into `AGENTS.md` in every project and into the MCP server instructions:

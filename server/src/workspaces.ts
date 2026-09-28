@@ -22,6 +22,28 @@ export type WorkspaceVm = {
   stop(): Promise<void>
 }
 
+export type ExecOptions = {
+  // Relative to the workspace files directory ('.' for its root). The backend maps
+  // it to wherever it mounts that directory in the guest.
+  cwd: string
+  timeoutMs: number
+  // Aborted when the caller gives up (timeout or cancelled request). The backend
+  // should kill the command.
+  signal?: AbortSignal
+  onOutput?: (stream: 'stdout' | 'stderr', chunk: string) => void
+}
+
+export type ExecResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+// What agent tools need from a workspace VM. `command` is a shell command line.
+export type ExecWorkspaceVm = WorkspaceVm & {
+  exec(command: string, options: ExecOptions): Promise<ExecResult>
+}
+
 // Seam for the sandbox layer: start a VM with the workspace directory mounted
 // read-write. The returned handle is kept while the workspace runs.
 export type StartWorkspaceVm<Vm extends WorkspaceVm> = (workspace: Workspace) => Promise<Vm>
@@ -185,6 +207,20 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     }
   }
 
+  // Brings the checkout to the branch tip in the project repo, discarding local
+  // changes. Only for checkouts nothing else writes to, such as main's.
+  function sync(project: string, branch: string): Promise<Workspace> {
+    validateBranchName(branch)
+    return serialized(project, branch, async () => {
+      const workspace = await openUnlocked(project, branch)
+      const remote = `refs/remotes/origin/${branch}`
+      await workspaceGit(project, branch, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${remote}`])
+      await workspaceGit(project, branch, ['reset', '--quiet', '--hard', remote])
+      await workspaceGit(project, branch, ['clean', '--quiet', '-fdx'])
+      return workspace
+    })
+  }
+
   function stop(project: string, branch: string): Promise<void> {
     return serialized(project, branch, () => stopUnlocked(project, branch))
   }
@@ -249,5 +285,19 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     host.db.prepare("UPDATE workspaces SET status = 'stopped' WHERE status != 'stopped'").run()
   }
 
-  return { get, list, open, start, stop, remove, deleteBranch, touch, commit, diff, resetStatuses }
+  return {
+    canStartVms: options.startVm !== undefined,
+    get,
+    list,
+    open,
+    sync,
+    start,
+    stop,
+    remove,
+    deleteBranch,
+    touch,
+    commit,
+    diff,
+    resetStatuses,
+  }
 }

@@ -4,16 +4,18 @@ import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
 import { repoPath, type Host } from './host.ts'
 import { installHooks, listProjects } from './projects.ts'
-import { createWorkspaceManager } from './workspaces.ts'
+import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
 
 const config = loadConfig()
 const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir: config.dataDir }
 
 // Keeps hooks current in repos created by an older host version.
 for (const project of listProjects(host)) installHooks(repoPath(host, project.name))
-createWorkspaceManager(host).resetStatuses()
+// No VM backend until the sandbox layer is wired in, so bash reports that it is unavailable.
+const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
+workspaces.resetStatuses()
 
-const server = createApp(host)
+const server = createApp(host, { workspaces })
 
 server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)

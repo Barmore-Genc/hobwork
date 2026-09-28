@@ -149,3 +149,21 @@ export async function diffBranch(
   if (!branchSha) throw new ProjectError(`Unknown ref "${branch}" in ${project}`)
   return git(['--git-dir', repo, 'diff', `${baseSha}...${branchSha}`])
 }
+
+// Returns undefined when the file does not exist at that ref.
+export async function readFileAtRef(
+  host: Host,
+  project: string,
+  ref: string,
+  path: string,
+): Promise<string | undefined> {
+  const repo = repoFor(host, project)
+  const sha = await resolveRef(repo, ref)
+  if (!sha) throw new ProjectError(`Unknown ref "${ref}" in ${project}`)
+  try {
+    return await git(['--git-dir', repo, 'show', `${sha}:${path}`])
+  } catch (err) {
+    if (err instanceof GitError) return undefined
+    throw err
+  }
+}

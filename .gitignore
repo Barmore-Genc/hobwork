@@ -15,3 +15,4 @@ xcuserdata/
 
 # Guest image build output
 /images/build/
+.claude/worktrees/

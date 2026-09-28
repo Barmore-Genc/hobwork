@@ -1,0 +1,12 @@
+name: hobwork-ha
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: hobwork-ha
+    ports:
+      - '18123:8123'
+    volumes:
+      - ./data:/config
+      - ./configuration.yaml:/config/configuration.yaml:ro
+    environment:
+      TZ: UTC

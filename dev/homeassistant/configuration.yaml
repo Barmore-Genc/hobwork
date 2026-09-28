@@ -1,0 +1,49 @@
+default_config:
+
+homeassistant:
+  name: Hobwork Test
+  unit_system: metric
+  time_zone: UTC
+  latitude: 52.52
+  longitude: 13.405
+  elevation: 34
+  currency: EUR
+  country: DE
+
+input_boolean:
+  test_switch:
+    name: Test Switch
+
+input_button:
+  test_button:
+    name: Test Button
+
+input_number:
+  test_number:
+    name: Test Number
+    min: 0
+    max: 100
+    step: 1
+    initial: 10
+
+template:
+  - sensor:
+      - name: Test Doubled
+        unique_id: hobwork_test_doubled
+        state: "{{ (states('input_number.test_number') | float(0)) * 2 }}"
+
+# Pressing the button fires a custom bus event, for testing `platform: event` triggers.
+automation:
+  - alias: Test Button Emits Event
+    id: hobwork_test_button_event
+    triggers:
+      - trigger: state
+        entity_id: input_button.test_button
+    actions:
+      - event: hobwork_test_event
+        event_data:
+          source: test_button
+
+# Provide virtual devices with device triggers, no hardware needed.
+kitchen_sink:
+demo:

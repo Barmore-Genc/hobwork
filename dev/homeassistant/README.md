@@ -11,6 +11,13 @@ node dev/homeassistant/setup.ts reset    # stop and wipe state and token
 
 - URL: `http://localhost:18123` (login `hobwork` / `hobwork-dev-password`).
 - Tests read `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN` from the environment, or from the gitignored `.env.local` written by `setup.ts`.
+- The host's integration tests against this instance are skipped unless `HOBWORK_HA_TESTS=1` is set:
+
+  ```
+  HOBWORK_HA_TESTS=1 pnpm --filter @hobwork/server test src/homeassistant
+  ```
+
+- To connect a local host to it, start the host with the values from `.env.local` in its environment (`HOBWORK_HA_URL`, `HOBWORK_HA_TOKEN`).
 - Config is `configuration.yaml` (committed, mounted read-only). HA state lives in `data/` (gitignored).
 
 ## Available entities

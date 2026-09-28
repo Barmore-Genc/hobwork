@@ -16,9 +16,11 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/ws": "^8.18.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "ws": "^8.22.0"
   },
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",

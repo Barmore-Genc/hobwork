@@ -12,12 +12,14 @@ import {
   searchCheckout,
   writeCheckoutFile,
 } from '../files.ts'
+import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { runBash } from './bash.ts'
 import { registerDeliveryTools } from './delivery.ts'
+import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 
 export type McpContext = {
@@ -25,6 +27,7 @@ export type McpContext = {
   workspaces: WorkspaceManager<ExecWorkspaceVm>
   delivery: Delivery
   agent: Agent
+  homeAssistant?: HomeAssistant
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
@@ -85,7 +88,7 @@ function formatReadResult(content: string, offset: number, limit: number): strin
   return notes.length ? `${body}\n\n[${notes.join(' ')}]` : body
 }
 
-export function createMcpServer({ host, workspaces, delivery, agent }: McpContext): McpServer {
+export function createMcpServer({ host, workspaces, delivery, agent, homeAssistant }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
   // main is never written through a workspace, so its checkout is refreshed to
@@ -416,6 +419,7 @@ export function createMcpServer({ host, workspaces, delivery, agent }: McpContex
   )
 
   registerDeliveryTools(server, { host, delivery, agent })
+  if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
 
   return server
 }

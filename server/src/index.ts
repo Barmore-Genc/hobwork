@@ -3,6 +3,7 @@ import { createApp } from './app.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
 import { createDelivery } from './delivery.ts'
+import { createHomeAssistant } from './homeassistant/client.ts'
 import { repoPath, type Host } from './host.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
@@ -22,13 +23,17 @@ failInterruptedRuns(host)
 // project code unsandboxed and must never be used here.
 const delivery = createDelivery(host, { workspaces })
 
-const server = createApp(host, { workspaces, delivery })
+const homeAssistant = createHomeAssistant({ connection: () => config.homeAssistant })
+homeAssistant.start()
+
+const server = createApp(host, { workspaces, delivery, homeAssistant })
 
 server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)
 })
 
 function shutdown() {
+  homeAssistant.stop()
   server.close(() => {
     host.db.close()
     process.exit(0)

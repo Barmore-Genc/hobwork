@@ -11,7 +11,7 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 - `apple/` (planned): Xcode projects for the iOS and macOS apps, bundle ID prefix `dev.bgenc.hobwork`. Not part of the pnpm workspace.
 - `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.
 - `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin.
-- `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). See its README.
+- `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). The host connects to HA when `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN` are set. Integration tests against it run with `HOBWORK_HA_TESTS=1`. See its README.
 - `data/`: runtime data (gitignored). Override with `HOBWORK_DATA_DIR`. Port: `HOBWORK_PORT` (default 7420).
 
 Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspace.yaml`). Root scripts use `pnpm -r`, and tsconfig and oxlint are configured per package, so non-JS directories are never scanned. Do not add a root-level tsconfig `include` or root oxlint config.

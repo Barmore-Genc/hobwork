@@ -9,7 +9,8 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 - `packages/sdk/` (`@hobwork/sdk`): SDK types and the `hobwork.json` JSON schema (`hobwork.schema.json`).
 - `templates/project/`: template for new projects (not a workspace package).
 - `apple/` (planned): Xcode projects for the iOS and macOS apps, bundle ID prefix `dev.bgenc.hobwork`. Not part of the pnpm workspace.
-- `images/` (planned): Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set). Not part of the pnpm workspace.
+- `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.
+- `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin.
 - `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). See its README.
 - `data/`: runtime data (gitignored). Override with `HOBWORK_DATA_DIR`. Port: `HOBWORK_PORT` (default 7420).
 
@@ -19,6 +20,9 @@ Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspac
 
 - `pnpm dev`: host (`node --watch`) and web in parallel.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test`: run across the workspace.
+- `images/build.sh`: build the guest image (needs Docker). Required for the VM commands below.
+- `pnpm -C server test:vm`: sandbox tests that boot real VMs (skipped by `pnpm test`). Some need egress to `example.com` and `registry.npmjs.org`.
+- `pnpm -C server bench:sandbox [vm|vfs]`: sandbox benchmarks.
 
 ## Connecting Claude Code to a local host
 

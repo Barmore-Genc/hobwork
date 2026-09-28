@@ -1,0 +1,50 @@
+{
+  "imageName": "hobwork",
+  "arch": "aarch64",
+  "distro": "alpine",
+  "env": {
+    "PATH": "/opt/hobwork/platform/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "npm_config_update_notifier": "false"
+  },
+  "alpine": {
+    "version": "3.23.0",
+    "kernelPackage": "linux-virt",
+    "kernelImage": "vmlinuz-virt",
+    "rootfsPackages": [
+      "linux-virt",
+      "rng-tools",
+      "bash",
+      "ca-certificates",
+      "curl",
+      "e2fsprogs",
+      "e2fsprogs-extra",
+      "git",
+      "nodejs",
+      "npm"
+    ],
+    "initramfsPackages": [],
+    "krunfwVersion": "v5.2.1"
+  },
+  "rootfs": {
+    "label": "gondolin-root"
+  },
+  "postBuild": {
+    "copy": [
+      {
+        "src": "./platform/package.json",
+        "dest": "/opt/hobwork/platform/package.json"
+      },
+      {
+        "src": "./platform/pnpm-lock.yaml",
+        "dest": "/opt/hobwork/platform/pnpm-lock.yaml"
+      }
+    ],
+    "commands": [
+      "npm install --global pnpm@12.5.1",
+      "cd /opt/hobwork/platform && pnpm install --frozen-lockfile --store-dir /opt/hobwork/pnpm-store",
+      "rm -rf /opt/hobwork/pnpm-store /root/.npm /root/.cache /root/.local /tmp/*",
+      "ln -s /opt/hobwork/platform/node_modules /node_modules",
+      "mkdir -p /workspace"
+    ]
+  }
+}

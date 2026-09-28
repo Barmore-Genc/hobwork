@@ -27,6 +27,8 @@ Done when: `pnpm dev` starts host and web, `pnpm test` runs, the web UI loads.
 
 Done when: the host can start a VM with a directory mounted, run a command with streamed output, and stop it, with numbers from `hobwork-host`.
 
+Status: done except the `hobwork-host` numbers, which are blocked on KVM access there (see architecture.md). Mac numbers, the dependency layering, the workspace file layout and the internal endpoint are in architecture.md.
+
 ## Phase 2: Projects and git
 
 - Bare repos under `data/repos/`, project records in the host DB.

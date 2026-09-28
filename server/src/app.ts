@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
+import type { HomeAssistant } from './homeassistant/client.ts'
 import type { Host } from './host.ts'
 import { createMcpHandler, MCP_PATH, type McpAuthenticator } from './mcp/http.ts'
 import { listProjects } from './projects.ts'
@@ -17,6 +18,7 @@ export function createApp(
     workspaces?: WorkspaceManager<ExecWorkspaceVm>
     delivery?: Delivery
     authenticate?: McpAuthenticator
+    homeAssistant?: HomeAssistant
   } = {},
 ): Server {
   const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
@@ -25,6 +27,7 @@ export function createApp(
     workspaces,
     delivery: options.delivery ?? createDelivery(host, { workspaces }),
     authenticate: options.authenticate,
+    homeAssistant: options.homeAssistant,
   })
 
   return createServer((req: IncomingMessage, res: ServerResponse) => {

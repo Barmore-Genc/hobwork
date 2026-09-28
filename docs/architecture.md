@@ -214,7 +214,7 @@ Runtime: `invoke` (call a route or trigger a cron/event by hand, on `main` or in
 
 Secrets: `list_secrets` (names and bound hosts only, never values).
 
-Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_services`, and `ha_listen` (wait for a trigger to fire, so an agent can ask the user to press a button and see the resulting payload).
+Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_services`, `ha_list_device_triggers` (ready-made trigger definitions for a device), and `ha_listen` (wait for a trigger to fire, so an agent can ask the user to press a button and see the resulting payload). Listings take filters and are paged, since real installs have thousands of entities.
 
 The MCP server's instructions point agents to the project's `AGENTS.md` and explain the core rules.
 
@@ -337,7 +337,7 @@ Planned capabilities:
 
 ## Home Assistant
 
-The host keeps one WebSocket connection to HA, authenticated with a long-lived access token entered in the Hobwork settings.
+The host keeps one WebSocket connection to HA, authenticated with a long-lived access token entered in the Hobwork settings. Until the settings UI exists, the URL and token come from `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN`. The connection is pinged, and reconnects with exponential backoff (1s up to 60s) when it drops.
 
 ### HA to Hobwork (triggers)
 
@@ -347,7 +347,9 @@ HA's WebSocket API has `subscribe_trigger`: the client sends a trigger definitio
 2. A Zigbee button is pressed. ZHA or Zigbee2MQTT turns it into a device trigger, event or state change in HA. HA matches it against the subscription and pushes the trigger variables to Hobwork.
 3. The host invokes the handler with the trigger variables, waking the project VM if needed.
 
-Any trigger HA supports works (device, state, numeric_state, event, zone, time, template), with the same syntax as in an HA automation, and HA does the filtering. On reconnect (e.g. HA restart) the host subscribes again. Triggers that fire while the connection is down are lost, and this is logged.
+Any trigger HA supports works (device, state, numeric_state, event, zone, time, template), with the same syntax as in an HA automation, and HA does the filtering. The `homeassistant` block is passed to HA unchanged. HA accepts both the current `"trigger": "state"` key and the older `"platform": "state"`; templates and docs use `trigger`, and device triggers from `ha_list_device_triggers` (which use `platform`) work as they are. The handler receives HA's trigger variables (`{ trigger: { platform, entity_id, from_state, to_state, ... } }`), the same object `ha_listen` returns.
+
+On deploy the host diffs the project's triggers against its active subscriptions: unchanged triggers keep their subscription, changed ones are subscribed again, removed ones are unsubscribed. A trigger HA refuses (bad syntax, unknown device) is reported in the deploy result. On reconnect (e.g. HA restart) the host subscribes again. Triggers that fire while the connection is down are lost, and this is logged with the time range.
 
 Agents find device IDs, entities and trigger payloads through the HA MCP tools. `ha_listen` lets an agent subscribe a trigger temporarily and ask the user to press the button, to see the real payload before writing the handler.
 

@@ -2,10 +2,18 @@ import { join } from 'node:path'
 import { createApp } from './app.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
+import { repoPath, type Host } from './host.ts'
+import { installHooks, listProjects } from './projects.ts'
+import { createWorkspaceManager } from './workspaces.ts'
 
 const config = loadConfig()
-const db = openHostDb(join(config.dataDir, 'hobwork.db'))
-const server = createApp(db)
+const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir: config.dataDir }
+
+// Keeps hooks current in repos created by an older host version.
+for (const project of listProjects(host)) installHooks(repoPath(host, project.name))
+createWorkspaceManager(host).resetStatuses()
+
+const server = createApp(host)
 
 server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)
@@ -13,7 +21,7 @@ server.listen(config.port, config.host, () => {
 
 function shutdown() {
   server.close(() => {
-    db.close()
+    host.db.close()
     process.exit(0)
   })
 }

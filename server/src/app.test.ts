@@ -1,15 +1,16 @@
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createApp } from './app.ts'
-import { openHostDb } from './db.ts'
+import { createProject } from './projects.ts'
+import { createTestHost } from './test-host.ts'
 
 let base: string
 let close: () => Promise<void>
-let db: ReturnType<typeof openHostDb>
+let host: ReturnType<typeof createTestHost>
 
 beforeEach(async () => {
-  db = openHostDb(':memory:')
-  const server = createApp(db)
+  host = createTestHost()
+  const server = createApp(host)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   close = () => new Promise((resolve) => server.close(() => resolve()))
@@ -17,12 +18,12 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await close()
-  db.close()
+  host.dispose()
 })
 
 test('GET /api/projects returns projects in the shape the web UI expects', async () => {
   expect(await (await fetch(`${base}/api/projects`)).json()).toEqual([])
-  db.prepare('INSERT INTO projects (name) VALUES (?)').run('filament')
+  await createProject(host, 'filament')
   expect(await (await fetch(`${base}/api/projects`)).json()).toEqual([
     { name: 'filament', defaultBranch: 'main' },
   ])

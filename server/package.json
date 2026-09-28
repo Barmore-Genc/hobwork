@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "node --watch src/index.ts",
     "start": "node src/index.ts",
+    "create-project": "node src/cli/create-project.ts",
+    "create-token": "node src/cli/create-token.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

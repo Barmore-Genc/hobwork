@@ -163,6 +163,7 @@ The guest image contains one **platform dependency set** (React, Tailwind, Vite,
 - Each project is a bare repo on the host: `data/repos/<project>.git`.
 - `main` is the deployed version. Nobody pushes to it directly. The only way in is a merge through the pipeline.
 - Agents do work on branches. Each branch can have an **agent workspace** VM with the branch checked out.
+- A workspace's checkout lives on the host at `data/workspaces/<project>/<branch>/`, with the branch's files in `files/` and the git directory in `git/`. The VM mounts only `files/`. The host runs all git commands for the workspace (`commit`, `diff`, `log`) with an explicit git directory, so nothing the VM writes (git config, hooks, filters) is ever executed on the host. `commit` pushes to the branch in the bare repo.
 - Branch data is isolated: a workspace gets a copy of the project DB taken when the workspace starts. Pipeline runs and tests get an empty DB with migrations applied.
 
 ## Agent access

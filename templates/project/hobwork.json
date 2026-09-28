@@ -1,0 +1,8 @@
+{
+  "routes": {
+    "GET /greeting": { "handler": "src/greeting-route.ts" }
+  },
+  "crons": {
+    "morning-greeting": { "schedule": "0 8 * * *", "handler": "src/morning-greeting.ts" }
+  }
+}

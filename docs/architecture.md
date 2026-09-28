@@ -42,7 +42,7 @@ Named after hobs, the house spirits that quietly do chores around the home.
 
 - **Host**: Node (>= 23.6, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `colossus` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
 - **Web UI**: React, TypeScript, Tailwind, Vite. Served by the host.
-- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, a larger disk and the platform dependency set.
+- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, e2fsprogs and the platform dependency set (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
 - **SDK** (`@hobwork/sdk`): the library project code imports to talk to the host (storage, logs, secrets-aware fetch, devices, calling other projects).
 - **Apple apps**: iOS and macOS (maybe tvOS later). Bundle ID prefix `dev.bgenc.hobwork`. A WebView for dashboards plus native capabilities exposed to scripts.
 
@@ -59,21 +59,25 @@ The host never executes project code itself. Anything from a project repo runs i
 
 Gondolin does not work under Bun (HTTPS egress hangs, gondolin#73), which is why the host is Node.
 
-All Gondolin use goes through a small `Sandbox` interface in the host so the backend can be swapped (e.g. Docker) if it ever needs to be.
+All Gondolin use goes through a small `Sandbox` interface in the host (`server/src/sandbox/sandbox.ts`) so the backend can be swapped (e.g. Docker) if it ever needs to be. It covers: create a VM (memory, CPUs, disk size, image, mounts, env, egress allowlist, secrets, internal host handler), exec with streamed output, timeout and kill, ingress to a guest port, file read/write, and stop. `@earendil-works/gondolin` is pinned to an exact version because the project is young and changes often.
 
-Measured on an Apple Silicon Mac (HVF, 512MB VMs):
+- **Exec** runs `/bin/sh -lc <command>`. Several commands can run at once in one VM, including next to a long-running server.
+- **Kill and timeout**: Gondolin cannot signal a guest process (aborting an exec only stops waiting). Every exec gets a unique `HOBWORK_EXEC_ID` env var, which child processes inherit. A kill runs a second exec that finds the processes with that variable in `/proc/*/environ` and sends SIGTERM, then SIGKILL after 2s. This also catches children that started their own session.
+- **Blocked egress** is reported to the host through a callback (for logging). Requests to a host that does not resolve get a 502 instead of a 403.
+
+Measured with `pnpm -C server bench:sandbox` (Hobwork image, Gondolin 0.12.0, 512MB / 2 vCPU VMs) on an Apple Silicon Mac (M-series, 14 cores, HVF):
 
 | | |
 |---|---|
-| Create to first command | 300-450ms (one outlier 1.3s) |
-| Command on a running VM | ~100ms |
-| Node startup in guest | 100-170ms |
-| Host RSS per VM | ~260MB fresh, ~380MB after use |
-| 8 VMs in parallel | ready in 1.2s, ~2.1GB total |
-| Concurrent commands in one VM | work, including alongside a long-running server |
-| HTTPS request through egress proxy | ~700ms including TLS setup |
+| Create to first command | median 470ms (360-500ms) |
+| Command on a running VM | median 2ms |
+| `node -e 0` in guest | median 29ms |
+| 10 concurrent `sleep 1` in one VM | 1.1s total |
+| Host RSS per VM | 262MB fresh, 444MB after running tsc and node |
+| 8 VMs in parallel | ready in 1.1s, 2.1GB host RSS total |
+| HTTPS GET through egress proxy | curl median 36ms, node fetch 177ms including node startup |
 
-Numbers on `colossus` with KVM are still to be measured.
+Numbers on `colossus` are blocked: it has no `/dev/kvm`. The `kvm` module is loaded but `kvm_intel`/`kvm_amd` is not, and the user is not in the `kvm` group. Once that is fixed, run the same script there (see `images/README.md`).
 
 ### VM kinds
 
@@ -158,6 +162,30 @@ The guest image contains one **platform dependency set** (React, Tailwind, Vite,
 - Updating the platform set means a new image version. Before switching, Hobwork runs every project's pipeline against the new image. Projects that fail stay on the old image until an agent fixes them.
 - Projects can add extra npm packages in their `package.json`, installed on top of the platform set. This is allowed but discouraged, and `AGENTS.md` says so.
 
+How the layering works (prototyped in `server/src/sandbox/gondolin.test.ts`):
+
+- The platform set is a normal pnpm install at `/opt/hobwork/platform` (`images/platform/package.json` and its lockfile, exact versions). `/node_modules` is a symlink to `/opt/hobwork/platform/node_modules`, and `/opt/hobwork/platform/node_modules/.bin` is on `PATH`.
+- Node, TypeScript, Vite and Vitest all resolve packages by walking up parent directories to `/node_modules`, so a project anywhere in the VM finds the platform packages and their types with no configuration. `NODE_PATH` is not used because ES modules ignore it.
+- A project's `package.json` lists only its extras. `pnpm install` puts them in the project's own `node_modules`, which is found before `/node_modules`, so an extra could also override a platform package.
+- The template sets `autoInstallPeers: false` in `pnpm-workspace.yaml`. Without it, pnpm installs a second React for an extra that has React as a peer dependency. With it, the peer resolves to the platform React through the same parent-directory lookup.
+- Installing extras needs egress to `registry.npmjs.org`. Only the install step gets it.
+
+### Workspace file layout
+
+Agent workspaces mount the branch checkout from the host read-write at `/workspace`, so the host (MCP file tools, git) and the VM see the same files. `node_modules` inside it lives on the VM's own disk (a bind mount the `Sandbox` sets up for `Mount.vmDisk` paths, hidden from the host side). It only holds extras, is reinstalled when the VM starts, and is gone when it stops.
+
+Measured with `pnpm -C server bench:sandbox vfs` on the Mac (generated project: 40 TSX modules using zod, date-fns and React, 20 Vitest files; 2GB VM; medians of 3):
+
+| Layout | `tsc --noEmit` 2 vCPU | `vitest run` 2 vCPU | `tsc --noEmit` 4 vCPU | `vitest run` 4 vCPU |
+|---|---|---|---|---|
+| (a) everything mounted, full `node_modules` in the mount | 1.79s | 23.3s | 1.55s | 11.4s |
+| (b) everything on the VM disk | 0.90s | 12.7s | 0.74s | 5.1s |
+| (c) source mounted, platform set from the image | 0.95s | 12.2s | 0.78s | 5.3s |
+| (d) source mounted, full `node_modules` on the VM disk | 0.96s | 12.2s | 0.83s | 5.3s |
+
+- The Gondolin filesystem bridge doubles the time when `node_modules` goes through it, and copying the platform set into a mount takes 10s. With `node_modules` on the VM disk, a mounted checkout is as fast as a checkout on the VM disk, so there is no reason to copy the checkout into the VM.
+- Vitest time is dominated by module imports, not the filesystem: every test file runs isolated and imports `date-fns` from scratch (~750ms in the guest, ~420ms in a Docker container on the same Mac). `--no-isolate` brings the run to 1.2s. Pipeline and workspace VMs get 4 vCPUs. The template should make its Vitest config cheap per file (for example `pool: 'threads'` or pre-bundling large dependencies); decide in Phase 2.
+
 ### Branches and workspaces
 
 - Each project is a bare repo on the host: `data/repos/<project>.git`.
@@ -234,6 +262,16 @@ Pipeline runs are recorded (step, status, output, duration) and visible to agent
 - The host owns scheduling and trigger subscriptions. A cron tick, webhook call or trigger wakes the VM if it is asleep.
 - Deploy: start the new VM, wait until it is ready, switch traffic, drain and stop the old one.
 - Handlers call back to the host (DB, logs, devices, events) through the SDK over an internal endpoint that only the project's VMs can reach.
+
+### Internal endpoint
+
+The SDK talks to the host at `http://hobwork.internal/` (HTTPS works too, through Gondolin's TLS interception). The hostname does not exist anywhere. Every sandbox is created with its own `internal` handler, and Gondolin's egress `onRequest` hook answers requests for `hobwork.internal` with that handler's `Response` before any DNS lookup, allowlist check or upstream connection.
+
+- The handler is bound to the VM when it is created, so the host knows which project, version and workspace a call comes from without a token in the guest.
+- Nothing else on the host is reachable. Host services on `127.0.0.1`, `10.0.2.2` and internal ranges are blocked by the egress policy, and no TCP port is forwarded.
+- Secrets are substituted after `onRequest`, and none is bound to `hobwork.internal`, so the handler only ever sees placeholders.
+
+Rejected: an allowed internal host (a real host port through `allowedInternalHosts`) would need auth tokens in the guest and exposes a real socket.
 
 ### Invocations and logs
 
@@ -321,8 +359,6 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 
 ## Open questions
 
-- Does the Gondolin VFS bridge perform well enough for `node_modules` in workspaces, or do workspaces need the checkout on the VM's own disk?
-- What is the internal endpoint for SDK to host calls? Options: an intercepted hostname in the egress hooks, or an allowed internal host.
 - Project routes: public URLs (for webhooks and NFC links) vs authenticated only. Probably per route.
 - Can one project call another project's routes or emit events to it?
 - Where do Hobwork's own backups go (repos, DBs, secrets)?

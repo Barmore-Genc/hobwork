@@ -1,0 +1,87 @@
+// Hostname that guests use to reach the host (SDK calls). Requests to it never
+// leave the host: the sandbox answers them with `SandboxOptions.internal`.
+export const INTERNAL_HOST = 'hobwork.internal'
+
+export type Mount = {
+  hostPath: string
+  readonly?: boolean
+  // Paths relative to the mount root (e.g. `node_modules`, `.env`) that the
+  // guest must not see. Guest writes to them go to memory and are discarded.
+  hide?: string[]
+  // Paths relative to the mount root (e.g. `node_modules`) that live on the VM's own
+  // disk instead of the host, because the host filesystem bridge is slow for many
+  // small files. Hidden from the host side. Contents are discarded on stop.
+  vmDisk?: string[]
+}
+
+export type Secret = {
+  value: string
+  // The real value is only sent to these hosts. Wildcards like `*.example.com` work.
+  hosts: string[]
+}
+
+export type InternalHandler = (request: Request) => Response | Promise<Response>
+
+export type EgressBlocked = { hostname: string, ip: string, port: number }
+
+export type SandboxOptions = {
+  // Directory with the guest image (manifest.json, kernel, initramfs, rootfs).
+  image: string
+  memory?: string
+  cpus?: number
+  // Minimum root disk size, e.g. `4G`. Writes to the root disk are discarded on stop.
+  diskSize?: string
+  // Guest path -> host directory.
+  mounts?: Record<string, Mount>
+  env?: Record<string, string>
+  // Hosts the guest may reach over HTTP(S). Everything else gets a 403.
+  egress?: string[]
+  // Env var name -> secret. The guest only ever sees a placeholder.
+  secrets?: Record<string, Secret>
+  internal?: InternalHandler
+  onEgressBlocked?: (event: EgressBlocked) => void
+  label?: string
+}
+
+export type OutputChunk = { stream: 'stdout' | 'stderr', text: string }
+
+export type ExecOptions = {
+  cwd?: string
+  env?: Record<string, string>
+  timeoutMs?: number
+  signal?: AbortSignal
+  // When set, output is streamed here and not buffered into the result.
+  onOutput?: (chunk: OutputChunk) => void
+}
+
+export type ExecResult = {
+  exitCode: number
+  // Set when the process was ended by a signal (e.g. 9 or 15 after a kill).
+  signal?: number
+  timedOut: boolean
+  killed: boolean
+  stdout: string
+  stderr: string
+}
+
+export type SandboxProcess = {
+  result: Promise<ExecResult>
+  // Ends the process and everything it started: SIGTERM, then SIGKILL after a grace period.
+  kill(): Promise<void>
+}
+
+export interface Sandbox {
+  readonly id: string
+  // `command` runs through a login shell (`/bin/sh -lc`). Several commands can run at once.
+  exec(command: string, options?: ExecOptions): SandboxProcess
+  // Routes HTTP requests on the returned host URL to a server listening on the guest's
+  // 127.0.0.1:<port>. Calling it again with another port moves the route.
+  ingress(port: number): Promise<string>
+  readFile(path: string): Promise<Buffer>
+  writeFile(path: string, data: string | Uint8Array): Promise<void>
+  // Host process ID of the VM, for resource accounting. Null when not running.
+  hostPid(): number | null
+  stop(): Promise<void>
+}
+
+export type SandboxFactory = (options: SandboxOptions) => Promise<Sandbox>

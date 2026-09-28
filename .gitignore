@@ -16,3 +16,6 @@ xcuserdata/
 # Guest image build output
 /images/build/
 .claude/worktrees/
+
+# Home Assistant dev instance runtime state
+/dev/homeassistant/data/

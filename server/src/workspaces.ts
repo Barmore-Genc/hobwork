@@ -20,6 +20,11 @@ export type Workspace = {
 
 export type WorkspaceVm = {
   stop(): Promise<void>
+  // True while a command runs. Busy VMs are never stopped for being idle.
+  busy?(): boolean
+  // True when the VM no longer matches the workspace (e.g. its egress
+  // allowlist changed). The next start replaces it unless it is busy.
+  isStale?(): boolean
 }
 
 export type ExecOptions = {
@@ -76,12 +81,19 @@ function toWorkspace(host: Host, row: Record<string, unknown>): Workspace {
 const SELECT = `SELECT w.id, p.name AS project, w.branch, w.status, w.created_at, w.last_used_at
   FROM workspaces w JOIN projects p ON p.id = w.project_id`
 
+export type WorkspaceManagerOptions<Vm extends WorkspaceVm> = {
+  startVm?: StartWorkspaceVm<Vm>
+  // VMs not used for this long are stopped. Unset means never.
+  idleTimeoutMs?: number
+}
+
 export function createWorkspaceManager<Vm extends WorkspaceVm>(
   host: Host,
-  options: { startVm?: StartWorkspaceVm<Vm> } = {},
+  options: WorkspaceManagerOptions<Vm> = {},
 ) {
   const vms = new Map<number, Vm>()
   const queues = new Map<string, Promise<unknown>>()
+  let idleTimer: NodeJS.Timeout | undefined
 
   // Checkout, git and VM operations on one workspace run one at a time, so two
   // tool calls cannot clone, commit or start the same workspace concurrently.
@@ -101,6 +113,11 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     const row = host.db
       .prepare(`${SELECT} WHERE p.name = ? AND w.branch = ?`)
       .get(project, branch)
+    return row ? toWorkspace(host, row) : undefined
+  }
+
+  function getById(id: number): Workspace | undefined {
+    const row = host.db.prepare(`${SELECT} WHERE w.id = ?`).get(id)
     return row ? toWorkspace(host, row) : undefined
   }
 
@@ -179,18 +196,77 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     return serialized(project, branch, async () => {
       const workspace = await openUnlocked(project, branch)
       const existing = vms.get(workspace.id)
-      if (existing) return existing
+      if (existing) {
+        if (existing.busy?.() || !existing.isStale?.()) return existing
+        await stopUnlocked(project, branch)
+      }
       setStatus(workspace.id, 'starting')
       try {
         const vm = await startVm({ ...workspace, status: 'starting' })
         vms.set(workspace.id, vm)
         setStatus(workspace.id, 'running')
+        scheduleIdleCheck()
         return vm
       } catch (err) {
         setStatus(workspace.id, 'stopped')
         throw err
       }
     })
+  }
+
+  function isIdle(workspace: Workspace, now: number): boolean {
+    const { idleTimeoutMs } = options
+    const vm = vms.get(workspace.id)
+    if (idleTimeoutMs === undefined || !vm || vm.busy?.()) return false
+    return now - Date.parse(workspace.lastUsedAt) >= idleTimeoutMs
+  }
+
+  // Stops VMs that have not been used for the idle timeout.
+  async function stopIdle(now = Date.now()): Promise<void> {
+    const idle = [...vms.keys()]
+      .map(getById)
+      .filter((w): w is Workspace => w !== undefined && isIdle(w, now))
+    await Promise.all(
+      idle.map(({ project, branch }) =>
+        serialized(project, branch, async () => {
+          // A command may have started while this was queued.
+          const current = get(project, branch)
+          if (current && isIdle(current, now)) await stopUnlocked(project, branch)
+        }).catch((err: unknown) => console.error(`Stopping idle workspace ${project}/${branch} failed`, err)),
+      ),
+    )
+  }
+
+  function scheduleIdleCheck(): void {
+    const { idleTimeoutMs } = options
+    if (idleTimeoutMs === undefined || idleTimer) return
+    idleTimer = setInterval(
+      () => {
+        void stopIdle().then(() => {
+          if (vms.size === 0 && idleTimer) {
+            clearInterval(idleTimer)
+            idleTimer = undefined
+          }
+        })
+      },
+      Math.min(Math.max(idleTimeoutMs / 4, 100), 60_000),
+    )
+    idleTimer.unref()
+  }
+
+  async function stopAll(): Promise<void> {
+    clearInterval(idleTimer)
+    idleTimer = undefined
+    const running = [...vms.keys()]
+      .map(getById)
+      .filter((w): w is Workspace => w !== undefined)
+    await Promise.all(
+      running.map(({ project, branch }) =>
+        stop(project, branch).catch((err: unknown) =>
+          console.error(`Stopping workspace ${project}/${branch} failed`, err),
+        ),
+      ),
+    )
   }
 
   async function stopUnlocked(project: string, branch: string): Promise<void> {
@@ -321,6 +397,8 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     sync,
     start,
     stop,
+    stopIdle,
+    stopAll,
     remove,
     deleteBranch,
     touch,

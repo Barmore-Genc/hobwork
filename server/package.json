@@ -11,7 +11,7 @@
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox",
+    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox src/guest-vm",
     "bench:sandbox": "node scripts/bench-sandbox.ts"
   },
   "devDependencies": {

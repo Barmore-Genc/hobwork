@@ -38,6 +38,8 @@ Status: done except the `colossus` numbers, which are blocked on KVM access ther
 
 Done when: a project can be created, cloned over HTTP, a branch pushed, and a push to `main` is rejected.
 
+Status: done. Workspace and pipeline VMs run on the `Sandbox` with idle stop, covered end to end by `pnpm -C server test:vm` (template project checked in a workspace VM and merged through a pipeline VM over MCP).
+
 ## Phase 3: MCP server
 
 - Streamable HTTP MCP endpoint with static agent tokens for now (OAuth comes in phase 8).

@@ -42,7 +42,7 @@ Named after hobs, the house spirits that quietly do chores around the home.
 
 - **Host**: Node (>= 23.6, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `colossus` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
 - **Web UI**: React, TypeScript, Tailwind, Vite. Served by the host.
-- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, e2fsprogs and the platform dependency set (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
+- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, e2fsprogs and the platform dependency set including `@hobwork/sdk` (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
 - **SDK** (`@hobwork/sdk`): the library project code imports to talk to the host (storage, logs, secrets-aware fetch, devices, calling other projects).
 - **Apple apps**: iOS and macOS (maybe tvOS later). Bundle ID prefix `dev.bgenc.hobwork`. A WebView for dashboards plus native capabilities exposed to scripts.
 
@@ -166,9 +166,12 @@ How the layering works (prototyped in `server/src/sandbox/gondolin.test.ts`):
 
 - The platform set is a normal pnpm install at `/opt/hobwork/platform` (`images/platform/package.json` and its lockfile, exact versions). `/node_modules` is a symlink to `/opt/hobwork/platform/node_modules`, and `/opt/hobwork/platform/node_modules/.bin` is on `PATH`.
 - Node, TypeScript, Vite and Vitest all resolve packages by walking up parent directories to `/node_modules`, so a project anywhere in the VM finds the platform packages and their types with no configuration. `NODE_PATH` is not used because ES modules ignore it.
-- A project's `package.json` lists only its extras. `pnpm install` puts them in the project's own `node_modules`, which is found before `/node_modules`, so an extra could also override a platform package.
+- A project's `package.json` lists only its extras (the template has scripts and no dependencies). `pnpm install` puts them in the project's own `node_modules`, which is found before `/node_modules`, so an extra could also override a platform package.
+- `images/platform/package.json` is the single definition of the platform set. The host reads it (`server/src/platform.ts`) to tell extras apart: a dependency not in it (and not `@hobwork/sdk`) is an extra. Workspace and pipeline VMs run `pnpm install` only when a project has extras.
 - The template sets `autoInstallPeers: false` in `pnpm-workspace.yaml`. Without it, pnpm installs a second React for an extra that has React as a peer dependency. With it, the peer resolves to the platform React through the same parent-directory lookup.
-- Installing extras needs egress to `registry.npmjs.org`. Only the install step gets it.
+- Installing extras needs egress to `registry.npmjs.org`. Egress is fixed when a VM is created, so pipeline VMs can reach the registry (and nothing else) for the whole run, not only during the install step. Workspace VMs can reach it too, so agents can `pnpm add` extras.
+
+`@hobwork/sdk` is part of the platform set. The image build copies `packages/sdk` (its `package.json`, `src/` and schema) to `/opt/hobwork/platform/node_modules/@hobwork/sdk`, so project code resolves it through `/node_modules` like any platform package, in workspace, pipeline and runtime VMs alike. It is versioned with the image: an SDK change needs an image rebuild, and every project's pipeline runs against the new SDK before it switches, the same as for other platform updates. Rejected: mounting `packages/sdk` from the host read-only, which would let the SDK drift from what a deployed version was tested against. The SDK is shipped as TypeScript source. That works for types and for Vite builds; Phase 5 decides whether its runtime part is compiled to JavaScript (Node does not strip types inside `node_modules`).
 
 ### Workspace file layout
 
@@ -184,7 +187,8 @@ Measured with `pnpm -C server bench:sandbox vfs` on the Mac (generated project: 
 | (d) source mounted, full `node_modules` on the VM disk | 0.96s | 12.2s | 0.83s | 5.3s |
 
 - The Gondolin filesystem bridge doubles the time when `node_modules` goes through it, and copying the platform set into a mount takes 10s. With `node_modules` on the VM disk, a mounted checkout is as fast as a checkout on the VM disk, so there is no reason to copy the checkout into the VM.
-- Vitest time is dominated by module imports, not the filesystem: every test file runs isolated and imports `date-fns` from scratch (~750ms in the guest, ~420ms in a Docker container on the same Mac). `--no-isolate` brings the run to 1.2s. Pipeline and workspace VMs get 4 vCPUs. The template should make its Vitest config cheap per file (for example `pool: 'threads'` or pre-bundling large dependencies); decide in Phase 2.
+- Vitest time is dominated by module imports, not the filesystem: every test file runs isolated and imports `date-fns` from scratch (~750ms in the guest, ~420ms in a Docker container on the same Mac). `--no-isolate` brings the run to 1.2s. Pipeline and workspace VMs get 4 vCPUs.
+- The template's Vitest config sets `isolate: false`, with `restoreMocks`, `unstubGlobals` and `unstubEnvs` so mocks and stubs do not leak between tests. On the template with 10 extra test files importing zod and date-fns (4 vCPUs): 3.6-3.9s isolated, 3.0-3.7s with `pool: 'threads'`, 0.8s with `isolate: false`. Test files share one module cache, which `AGENTS.md` tells agents.
 
 ### Branches and workspaces
 
@@ -193,6 +197,15 @@ Measured with `pnpm -C server bench:sandbox vfs` on the Mac (generated project: 
 - Agents do work on branches. Each branch can have an **agent workspace** VM with the branch checked out.
 - A workspace's checkout lives on the host at `data/workspaces/<project>/<branch>/`, with the branch's files in `files/` and the git directory in `git/`. The VM mounts only `files/`. The host runs all git commands for the workspace (`commit`, `diff`, `log`) with an explicit git directory, so nothing the VM writes (git config, hooks, filters) is ever executed on the host. `commit` pushes to the branch in the bare repo.
 - Branch data is isolated: a workspace gets a copy of the project DB taken when the workspace starts. Pipeline runs and tests get an empty DB with migrations applied.
+
+Workspace VMs (`server/src/guest-vm.ts`):
+
+- Started by the first `bash` call on a branch: 4 vCPUs, 2GB memory, 4GB root disk, `files/` at `/workspace` with `node_modules` on the VM disk. `bash`'s `cwd` is relative to `/workspace`. Extras are installed on start. A failed install does not fail the start, so the agent can still run commands and see the error with `pnpm install`.
+- Egress: the branch's `hobwork.json` `egress` plus `registry.npmjs.org`. When `egress` changes, the next `bash` call replaces the VM (unless a command is still running), so agents can test a new host without a restart tool.
+- Idle stop: a VM with no `bash` call for `HOBWORK_WORKSPACE_IDLE_MINUTES` (default 30) is stopped, unless a command is running. Every `bash` call updates `last_used_at` when it starts and when it ends. The default is well above the 10 minute `bash` timeout. A stopped VM starts again on the next call. Stopping loses processes and the VM-disk `node_modules`, and nothing else, since the files are on the host.
+- The host stops all workspace and pipeline VMs on SIGINT and SIGTERM.
+- Pipeline VMs use the same resources and layout with a fresh VM per run and only the registry allowed.
+- Both are enabled when a guest image exists (`images/build/<arch>` or `HOBWORK_IMAGE_DIR`). Without one the host logs that `bash` and `merge` are unavailable.
 
 ## Agent access
 
@@ -252,9 +265,9 @@ Details:
 - `merge` takes only committed changes and refuses while the workspace has uncommitted ones.
 - The candidate is built in a temporary host-side clone: the branch is squashed into one commit (author: the agent, committer: Hobwork, message: the agent's summary) and rebased onto `main`. Squashing first means only the branch's end result has to apply. On conflict, the conflicting files are returned and the agent redoes the change on a new branch from `main`.
 - Merges and restores run one at a time per project, so each candidate is tested against the `main` it lands on.
-- The pipeline VM gets a clean checkout of the candidate with no git directory. `hobwork.json` and `package.json` are read on the host from git, never from the checkout. Extra dependencies are the `package.json` dependencies not in the platform set. The platform set is defined by `templates/project/package.json`.
+- The pipeline VM gets a clean checkout of the candidate with no git directory. `hobwork.json` and `package.json` are read on the host from git, never from the checkout. Extra dependencies are the `package.json` dependencies not in the platform set (see [Dependencies](#dependencies)).
 - After a successful merge, the branch and its workspace checkout are reset to the new `main` (ignored files like `node_modules` stay), so the agent can keep working on the same branch. If the branch changed while the merge ran, it is left as it was.
-- The pipeline VM backend is a seam (`StartPipelineVm` in `server/src/pipeline/runner.ts`). `server/src/pipeline/host-backend.ts` runs commands on the host without a sandbox and exists only for tests.
+- The pipeline VM backend is a seam (`StartPipelineVm` in `server/src/pipeline/runner.ts`), implemented on the `Sandbox` in `server/src/guest-vm.ts`. `server/src/pipeline/host-backend.ts` runs commands on the host without a sandbox and exists only for tests.
 
 ## Versions and rollback
 

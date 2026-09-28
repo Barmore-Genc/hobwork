@@ -30,3 +30,9 @@ test('rejects incomplete or invalid Home Assistant settings', () => {
   expect(() => loadConfig({ HOBWORK_HA_URL: 'ha.local', HOBWORK_HA_TOKEN: 'x' })).toThrow('HOBWORK_HA_URL')
   expect(() => loadConfig({ HOBWORK_HA_URL: 'ftp://ha.local', HOBWORK_HA_TOKEN: 'x' })).toThrow('http')
 })
+
+test('workspace idle timeout', () => {
+  expect(loadConfig({}).workspaceIdleTimeoutMs).toBe(30 * 60_000)
+  expect(loadConfig({ HOBWORK_WORKSPACE_IDLE_MINUTES: '0.5' }).workspaceIdleTimeoutMs).toBe(30_000)
+  expect(() => loadConfig({ HOBWORK_WORKSPACE_IDLE_MINUTES: '0' })).toThrow('HOBWORK_WORKSPACE_IDLE_MINUTES')
+})

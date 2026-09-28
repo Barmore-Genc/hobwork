@@ -10,6 +10,7 @@ export type Config = {
   port: number
   host: string
   homeAssistant?: HomeAssistantConnection
+  workspaceIdleTimeoutMs: number
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -36,10 +37,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`HOBWORK_PORT must be an integer from 0 to 65535, got "${env.HOBWORK_PORT}"`)
   }
+  const idleMinutes = Number(env.HOBWORK_WORKSPACE_IDLE_MINUTES ?? 30)
+  if (!(idleMinutes > 0)) {
+    throw new Error(
+      `HOBWORK_WORKSPACE_IDLE_MINUTES must be a positive number, got "${env.HOBWORK_WORKSPACE_IDLE_MINUTES}"`,
+    )
+  }
   return {
     dataDir: resolve(repoRoot, env.HOBWORK_DATA_DIR ?? 'data'),
     port,
     host: env.HOBWORK_HOST ?? '127.0.0.1',
     homeAssistant: loadHomeAssistant(env),
+    workspaceIdleTimeoutMs: idleMinutes * 60_000,
   }
 }

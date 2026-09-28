@@ -8,7 +8,8 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 - `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk`.
 - `ui/`: dashboard pages (React + Tailwind), served at `/p/<project>/`. Call the project's routes with relative URLs (`fetch('api/...')`).
 - `migrations/`: project DB migrations (`0001_name.sql`, ...), applied in order on deploy.
-- `tests/`: Vitest tests.
+- `tests/`: Vitest tests. Test files share one module cache to keep the suite fast, so do not rely on module-level state being fresh in each file. Mocks, stubbed globals and env vars are reset after every test.
+- `package.json`: scripts, plus extra npm packages only. The platform packages and `@hobwork/sdk` come with the VM and are not listed here.
 
 ## Workflow
 
@@ -24,5 +25,5 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 - Every change needs tests. `merge` refuses changes that fail typecheck, lint, tests or build.
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them. Older versions must keep working after a restore.
 - Debug with `get_logs` and `list_invocations`. Do not guess.
-- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` (and hosts bound to secrets). Use `ctx.fetch`.
-- Prefer the platform packages: React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns. Add another npm package only when none of these does the job.
+- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` (and hosts bound to secrets). Use `ctx.fetch`. In the branch workspace, a change to `egress` applies from the next `bash` command, which restarts the workspace VM.
+- Prefer the platform packages: React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns. Add another npm package only when none of these does the job, with `pnpm add <package>` in `bash`. Extra packages are installed again every time the workspace VM starts.

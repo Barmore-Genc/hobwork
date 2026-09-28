@@ -20,6 +20,17 @@ Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspac
 - `pnpm dev`: host (`node --watch`) and web in parallel.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test`: run across the workspace.
 
+## Connecting Claude Code to a local host
+
+The MCP endpoint is `/mcp` (streamable HTTP, stateless). Create an agent token, then add the server:
+
+```sh
+pnpm --filter @hobwork/server create-token claude-code
+claude mcp add --transport http hobwork http://localhost:7420/mcp --header "Authorization: Bearer <token>"
+```
+
+`bash` needs a workspace VM backend. Without one it returns a tool error and the other tools still work.
+
 ## Conventions
 
 - Server and SDK use native type stripping: erasable syntax only (no enums, namespaces, parameter properties), `import type` for types, `.ts` extensions in relative imports.

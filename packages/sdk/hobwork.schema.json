@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hobwork.dev/schemas/hobwork.json",
+  "title": "hobwork.json",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "handlerPath": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+  },
+  "properties": {
+    "crons": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schedule", "handler"],
+        "properties": {
+          "schedule": { "type": "string", "pattern": "^\\S+( \\S+){4}$" },
+          "handler": { "$ref": "#/definitions/handlerPath" }
+        }
+      }
+    },
+    "webhooks": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handler"],
+        "properties": {
+          "handler": { "$ref": "#/definitions/handlerPath" }
+        }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "propertyNames": { "pattern": "^(GET|POST|PUT|PATCH|DELETE) /\\S*$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handler"],
+        "properties": {
+          "handler": { "$ref": "#/definitions/handlerPath" }
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["homeassistant", "handler"],
+        "properties": {
+          "homeassistant": { "type": "object" },
+          "handler": { "$ref": "#/definitions/handlerPath" }
+        }
+      }
+    },
+    "egress": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" }
+  }
+}

@@ -7,8 +7,9 @@
     "node": ">=23.6"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "dev": "pnpm -r --parallel --if-present dev",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test"
   }
 }

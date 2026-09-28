@@ -33,7 +33,7 @@ pnpm --filter @hobwork/server create-token claude-code
 claude mcp add --transport http hobwork http://localhost:7420/mcp --header "Authorization: Bearer <token>"
 ```
 
-`bash` needs a workspace VM backend. Without one it returns a tool error and the other tools still work.
+`bash` needs a workspace VM backend and `merge` needs a pipeline VM backend. Without them these tools return an error and the other tools still work.
 
 ## Conventions
 

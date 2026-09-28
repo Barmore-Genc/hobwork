@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { git, HOBWORK_IDENTITY } from './git.ts'
 import { repoPath, type Host } from './host.ts'
+import { recordVersion } from './versions.ts'
 
 export const templateDir = resolve(import.meta.dirname, '../../templates/project')
 
@@ -89,14 +90,17 @@ export async function createProject(host: Host, name: string): Promise<Project> 
   try {
     await git(['init', '--bare', '--initial-branch', DEFAULT_BRANCH, repo])
     installHooks(repo)
-    await commitTemplate(repo, name, staging)
+    const commit = await commitTemplate(repo, name, staging)
     const row = host.db
       .prepare(
         'INSERT INTO projects (name, default_branch) VALUES (?, ?) RETURNING id, name, default_branch, created_at',
       )
       .get(name, DEFAULT_BRANCH)
     if (!row) throw new Error('Project insert returned no row')
-    return toProject(row)
+    const project = toProject(row)
+    // Version 1 is the template, so even the first merge can be restored away from.
+    recordVersion(host, { projectId: project.id, commit, summary: TEMPLATE_COMMIT_MESSAGE })
+    return project
   } catch (err) {
     rmSync(repo, { recursive: true, force: true })
     throw err
@@ -105,7 +109,9 @@ export async function createProject(host: Host, name: string): Promise<Project> 
   }
 }
 
-async function commitTemplate(repo: string, name: string, staging: string): Promise<void> {
+const TEMPLATE_COMMIT_MESSAGE = 'Create project from template'
+
+async function commitTemplate(repo: string, name: string, staging: string): Promise<string> {
   const tree = join(staging, 'tree')
   cpSync(templateDir, tree, { recursive: true })
   const packageJson = join(tree, 'package.json')
@@ -117,9 +123,10 @@ async function commitTemplate(repo: string, name: string, staging: string): Prom
   await git([...base, 'add', '--all'], { env })
   const treeId = (await git([...base, 'write-tree'], { env })).trim()
   const commit = (
-    await git(['--git-dir', repo, 'commit-tree', treeId, '-m', 'Create project from template'], {
+    await git(['--git-dir', repo, 'commit-tree', treeId, '-m', TEMPLATE_COMMIT_MESSAGE], {
       env,
     })
   ).trim()
   await git(['--git-dir', repo, 'update-ref', `refs/heads/${DEFAULT_BRANCH}`, commit, ''])
+  return commit
 }

@@ -23,6 +23,7 @@ import {
   type Secret,
   type SpawnOptions,
 } from './sandbox.ts'
+import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 import { hostMatches } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 import { systemEnv } from './system-env.ts'
@@ -44,6 +45,8 @@ done
 true
 `
 
+const hostNetworks = hostNetworksBlockList()
+
 export async function createGondolinSandbox(options: SandboxOptions): Promise<Sandbox> {
   const internal = options.internal
   const egress = options.egress ?? []
@@ -60,6 +63,10 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
       onBlocked?.({ hostname, ip: '', port: Number(port) || (protocol === 'https:' ? 443 : 80) })
       return false
     },
+    // Gondolin's own range check misses NAT64, 6to4 and IPv4-compatible
+    // encodings of private IPv4 addresses and the LAN's global IPv6 prefixes,
+    // so an allowed name could still lead to a LAN device.
+    isIpAllowed: (info) => isPublicAddress(info.ip, { extraBlocked: hostNetworks() }),
     // Gondolin injects secrets after onRequest, so the internal handler and
     // the interceptor only see placeholders.
     onRequest: requestHook({

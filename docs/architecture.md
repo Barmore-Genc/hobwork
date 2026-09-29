@@ -52,7 +52,7 @@ The host never executes hob code itself. Anything from a hob repo runs inside a 
 
 [Gondolin](https://github.com/earendil-works/gondolin) runs each sandbox as a QEMU micro-VM. The host implements the guest's network stack and filesystem in TypeScript, which gives us:
 
-- **Egress allowlist**: only HTTP(S) to allowed hosts. Blocked requests get a 403. Internal ranges are blocked by default.
+- **Egress allowlist**: only HTTP(S) to allowed hosts. Blocked requests get a 403. Internal ranges are blocked by default. Gondolin's range check does not cover NAT64, 6to4 or IPv4-compatible encodings of private IPv4 addresses, or the global IPv6 prefixes of the LAN, so the sandbox also passes an `isIpAllowed` hook (`server/src/public-address.ts`) that refuses those, other reserved ranges, and the networks of the host's own interfaces (re-read every 30 seconds). NAT64 and 6to4 addresses of public IPv4 hosts are allowed.
 - **Secret placeholders**: the guest sees `GONDOLIN_SECRET_...` in env vars. The host swaps in the real value in request headers, only for the hosts the secret is bound to. Query string substitution is off.
 - **Mounts**: host directories or in-memory filesystems mapped into the guest.
 - **Ingress**: HTTP gateway into a server listening on `127.0.0.1` in the guest.

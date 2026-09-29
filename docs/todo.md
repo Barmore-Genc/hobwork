@@ -58,10 +58,6 @@ Sections are in the order to work on them.
 
 Everything in a workspace VM runs as root, so any process (a dependency's install script, a test) can read the agent's `HOBWORK_SESSION` from `/proc` and merge. Run agent commands as an unprivileged guest user, keep the session token in a root-owned helper that only the `hobwork` CLI reaches, and set `kernel.yama.ptrace_scope` to 1 and `hidepid=2` on `/proc`. Needs an image rebuild.
 
-### Egress
-
-Check whether a guest reaches LAN devices' global IPv6 addresses or NAT64 addresses through the egress check. If so, pass Gondolin an `isIpAllowed` hook that refuses the host's LAN prefixes and those ranges.
-
 ### Sign-in
 
 - **OIDC flow state on the server**: the flow cookie holds an opaque ID instead of the state, so app subdomains cannot plant a flow. Requests with a security cookie name more than once are treated as signed out.

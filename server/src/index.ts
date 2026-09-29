@@ -26,7 +26,7 @@ import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
 import { createStorageUsage } from './storage.ts'
 import { createWorkspaceApi } from './workspace-api.ts'
-import { createWorkspaceManager, type InteractiveWorkspaceVm } from './workspaces.ts'
+import { createWorkspaceManager, type InteractiveWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
 const config = loadConfig()
 const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir: config.dataDir }
@@ -68,8 +68,14 @@ if (vmOptions) console.log(`guest image: ${image}`)
 else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
 
-const workspaces = createWorkspaceManager<InteractiveWorkspaceVm>(host, {
-  startVm: vmOptions && workspaceVmBackend(vmOptions, (workspace) => workspaceApi(workspace)),
+const workspaces: WorkspaceManager<InteractiveWorkspaceVm> = createWorkspaceManager<InteractiveWorkspaceVm>(host, {
+  startVm:
+    vmOptions &&
+    workspaceVmBackend(
+      vmOptions,
+      (workspace) => workspaceApi(workspace),
+      (workspace, token) => workspaces.sessionAgent(workspace.project, workspace.branch, token) !== undefined,
+    ),
   idleTimeoutMs: config.workspaceIdleTimeoutMs,
 })
 workspaces.resetStatuses()

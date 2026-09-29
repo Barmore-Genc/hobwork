@@ -1,5 +1,5 @@
 import type { Device, DeviceInfo } from '../devices.ts'
-import type { DeviceRequest, DeviceResponse } from './protocol.ts'
+import { internalHeaders, type DeviceRequest, type DeviceResponse } from './protocol.ts'
 
 // The runner and the handler bundle each have their own copy of this class, so
 // instanceof checks a brand instead of the prototype chain.
@@ -69,7 +69,7 @@ export function httpDeviceSender(baseUrl: string, invocation?: () => number | un
   return async (request) => {
     const res = await fetch(new URL('/v1/devices', baseUrl), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: internalHeaders(),
       body: JSON.stringify({ ...request, invocation: invocation?.() }),
     })
     const body = (await res.json().catch(() => undefined)) as DeviceResponse | { error?: string } | undefined

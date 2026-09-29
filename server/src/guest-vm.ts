@@ -11,6 +11,7 @@ import type {
   StartWorkspaceVm,
   Workspace,
 } from './workspaces.ts'
+import { SESSION_HEADER } from './workspaces.ts'
 
 export const GUEST_DIR = '/workspace'
 export const NPM_REGISTRY = 'registry.npmjs.org'
@@ -160,9 +161,12 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
 }
 
 // `internal` answers the VM's calls to hobwork.internal (the `hobwork` CLI).
+// `hasSession` says whether a token belongs to a running command in the
+// workspace; the DB, Home Assistant and device routes refuse calls without one.
 export function workspaceVmBackend(
   options: GuestVmOptions,
   internal?: (workspace: Workspace) => InternalHandler,
+  hasSession?: (workspace: Workspace, token: string) => boolean,
 ): StartWorkspaceVm<GuestWorkspaceVm> {
   return async (workspace) => {
     const label = `workspace ${workspace.project}/${workspace.branch}`
@@ -181,7 +185,15 @@ export function workspaceVmBackend(
         ...base,
         mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
         internal: (request) => {
-          if (environmentApi && ENVIRONMENT_PATHS.has(new URL(request.url).pathname)) return environmentApi(request)
+          if (ENVIRONMENT_PATHS.has(new URL(request.url).pathname)) {
+            if (!hasSession?.(workspace, request.headers.get(SESSION_HEADER) ?? '')) {
+              return Response.json(
+                { error: 'This only works in commands started over SSH or with the bash tool, which set HOBWORK_SESSION' },
+                { status: 401 },
+              )
+            }
+            if (environmentApi) return environmentApi(request)
+          }
           return cliApi?.(request) ?? Response.json({ error: 'not found' }, { status: 404 })
         },
       })

@@ -85,6 +85,7 @@ export type CommitAuthor = { name: string; email: string }
 // Env var with the session token of the agent a command runs for. The `hobwork`
 // CLI in the VM sends it back, so its calls act as that agent.
 export const SESSION_ENV = 'HOBWORK_SESSION'
+export const SESSION_HEADER = 'x-hobwork-session'
 
 export type WorkspaceSession = {
   env: Record<string, string>

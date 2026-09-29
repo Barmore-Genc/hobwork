@@ -1,5 +1,5 @@
 import type { Db, Row, SqlParams, SqlValue, Statement, StatementResult } from '../index.ts'
-import type { DbRequest, DbResponse, WireResult, WireStatement, WireValue } from './protocol.ts'
+import { internalHeaders, type DbRequest, type DbResponse, type WireResult, type WireStatement, type WireValue } from './protocol.ts'
 
 export class DbError extends Error {
   code?: string
@@ -77,7 +77,7 @@ export function httpDbSender(baseUrl: string, invocation?: () => number | undefi
   return async (request: DbRequest): Promise<DbResponse> => {
     const res = await fetch(new URL('/v1/db', baseUrl), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: internalHeaders(),
       body: JSON.stringify({ ...request, invocation: invocation?.() }),
     })
     const body = (await res.json().catch(() => undefined)) as DbResponse | { error?: string } | undefined

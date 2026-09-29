@@ -8,14 +8,67 @@ function message(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err)
 }
 
-function NewKey({ created, onDone }: { created: CreatedToken; onDone: () => void }) {
-  const [copied, setCopied] = useState(false)
-  const command = `claude mcp add --transport http hobwork ${window.location.origin}/mcp --header "Authorization: Bearer ${created.token}"`
+const MCP_URL = `${window.location.origin}/mcp`
 
-  async function copy(text: string) {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-  }
+function CopyField({ value, label, small = false }: { value: string; label: string; small?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+      <code
+        className={`min-w-0 flex-1 rounded-md border border-border bg-bg px-3 py-2.5 font-mono break-all select-all ${small ? 'text-[0.8rem]' : 'text-sm'}`}
+      >
+        {value}
+      </code>
+      <Button
+        onClick={async () => {
+          await navigator.clipboard.writeText(value)
+          setCopied(true)
+        }}
+      >
+        {copied ? 'Copied' : label}
+      </Button>
+    </div>
+  )
+}
+
+function ConnectBySignIn() {
+  return (
+    <section aria-labelledby="connect" className="rounded-lg border border-border bg-surface p-5 sm:p-6">
+      <h2 id="connect" className="text-lg font-semibold font-display">
+        Connect an agent
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        Add Hobwork to the agent with this URL. When it opens Hobwork in your browser, allow access, and it shows up
+        below.
+      </p>
+      <div className="mt-4">
+        <CopyField value={MCP_URL} label="Copy URL" />
+      </div>
+      <div className="mt-6 grid gap-6 md:grid-cols-2">
+        <div>
+          <h3 className="font-semibold">claude.ai and Claude Desktop</h3>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted">
+            <li>Open Settings, then Connectors.</li>
+            <li>Choose Add custom connector.</li>
+            <li>Paste the URL and leave the OAuth fields empty.</li>
+            <li>Choose Connect.</li>
+          </ol>
+        </div>
+        <div className="min-w-0">
+          <h3 className="font-semibold">Claude Code</h3>
+          <p className="mt-2 text-sm text-muted">Run these in a terminal:</p>
+          <div className="mt-2 space-y-2">
+            <CopyField value={`claude mcp add --transport http hobwork ${MCP_URL}`} label="Copy" small />
+            <CopyField value="claude mcp login hobwork" label="Copy" small />
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function NewKey({ created, onDone }: { created: CreatedToken; onDone: () => void }) {
+  const command = `claude mcp add --transport http hobwork ${MCP_URL} --header "Authorization: Bearer ${created.token}"`
 
   return (
     <section
@@ -26,23 +79,15 @@ function NewKey({ created, onDone }: { created: CreatedToken; onDone: () => void
         New key for {created.agent.name}
       </h2>
       <p className="mt-2 text-muted">Copy it now. Hobwork shows it only once. If it gets lost, create another key.</p>
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
-        <code className="min-w-0 flex-1 rounded-md border border-border bg-bg px-3 py-2.5 font-mono text-sm break-all select-all">
-          {created.token}
-        </code>
-        <Button variant="primary" onClick={() => copy(created.token)}>
-          {copied ? 'Copied' : 'Copy key'}
-        </Button>
+      <div className="mt-4">
+        <CopyField value={created.token} label="Copy key" />
       </div>
       <details className="mt-5 text-sm">
         <summary className="cursor-pointer text-muted hover:text-fg">Connect Claude Code with this key</summary>
         <p className="mt-2 text-muted">Run this in a terminal:</p>
-        <code className="mt-2 block rounded-md border border-border bg-bg px-3 py-2.5 font-mono text-[0.8rem] break-all">
-          {command}
-        </code>
-        <Button className="mt-3" onClick={() => copy(command)}>
-          Copy command
-        </Button>
+        <div className="mt-2">
+          <CopyField value={command} label="Copy command" small />
+        </div>
       </details>
       <div className="mt-6 border-t border-border pt-4">
         <Button variant="quiet" onClick={onDone}>
@@ -333,20 +378,24 @@ export function AgentsPage() {
     <div>
       <PageHeading>Agent access</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
-        Agents such as Claude build and change projects with a key, or by signing in when you connect them from the
-        app. An SSH key lets an agent open a shell in a project workspace. Access works for every project, so revoke
-        what you no longer use.
+        Agents such as Claude build and change projects. They sign in through your browser, or use a key if they cannot.
+        An SSH key lets an agent open a shell in a project workspace. Access works for every project, so revoke what
+        you no longer use.
       </p>
 
       <div className="mt-10 space-y-10">
+        <ConnectBySignIn />
+
         {created ? (
           <NewKey created={created} onDone={() => setCreated(null)} />
         ) : (
           <form onSubmit={create} className="rounded-lg border border-border bg-surface p-5 sm:p-6">
             <label htmlFor="agent-name" className="text-lg font-semibold font-display">
-              Give an agent access
+              Connect with a key
             </label>
-            <p className="mt-1 text-sm text-muted">Name it after where it runs, so you recognize it later.</p>
+            <p className="mt-1 text-sm text-muted">
+              For agents that cannot sign in. Name it after where it runs, so you recognize it later.
+            </p>
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
               <input
                 id="agent-name"

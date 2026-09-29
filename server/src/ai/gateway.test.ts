@@ -161,6 +161,13 @@ test('records a failed upstream as 502 and rethrows', async () => {
   expect(host.db.prepare('SELECT status FROM ai_requests').get()).toEqual({ status: 502 })
 })
 
+test('asks for usage whatever the guest sent', async () => {
+  await call(gateway(), { ...chat(), usage: { include: false } })
+  await call(gateway(), { ...chat(), usage: 'no' })
+  await call(gateway(), chat())
+  expect(sent.map((s) => s.body.usage)).toEqual([{ include: true }, { include: true }, { include: true }])
+})
+
 test('reads usage from streamed responses', async () => {
   const stream = [
     ': OPENROUTER PROCESSING',

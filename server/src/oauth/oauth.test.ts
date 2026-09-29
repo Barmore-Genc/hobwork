@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createAgentToken } from '../agents.ts'
+import { parseTrustedProxies } from '../client-address.ts'
 import { addSshKey, generateEd25519KeyPair, listSshKeys } from '../ssh/keys.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
@@ -681,6 +682,33 @@ test('registration is rate limited per address and unused clients are capped', a
   expect((await jsonOf(full)).error_description).toContain('Too many apps')
   now += 25 * 60 * 60 * 1000
   expect((await register()).status).toBe(201)
+})
+
+test('behind a trusted proxy the limits apply to each forwarded client', async () => {
+  await app.close()
+  app = await startTestApp(host, { selfPublicUrl: true, web: { now: () => now, trustedProxies: parseTrustedProxies('127.0.0.1') } })
+  const register = (forwardedFor: string) =>
+    fetch(`${app.base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': forwardedFor },
+      body: JSON.stringify({ redirect_uris: ['https://app.example/callback'], token_endpoint_auth_method: 'none' }),
+    })
+  for (let i = 0; i < 30; i++) expect((await register('198.51.100.1')).status).toBe(201)
+  expect((await register('198.51.100.1')).status).toBe(429)
+  expect((await register('203.0.113.9, 198.51.100.1')).status).toBe(429)
+  expect((await register('198.51.100.2')).status).toBe(201)
+  expect((await register('198.51.100.1, 198.51.100.2')).status).toBe(201)
+})
+
+test('without trusted proxies a forwarded address does not escape the limit', async () => {
+  const register = (forwardedFor: string) =>
+    fetch(`${app.base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': forwardedFor },
+      body: JSON.stringify({ redirect_uris: ['https://app.example/callback'], token_endpoint_auth_method: 'none' }),
+    })
+  for (let i = 0; i < 30; i++) expect((await register(`198.51.100.${i}`)).status).toBe(201)
+  expect((await register('198.51.100.200')).status).toBe(429)
 })
 
 test('authorization requests are rate limited per address and pending ones are capped', async () => {

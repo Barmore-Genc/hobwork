@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
+import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
 import type { ApnsConfig } from './devices/apns.ts'
 
 export type HomeAssistantConnection = {
@@ -46,6 +47,8 @@ export type Config = {
   apns?: ApnsConfig
   // Team ID and bundle ID of the app that may open NFC tag URLs (universal links).
   appleAppId: string
+  // Reverse proxies whose X-Forwarded-For header names the client.
+  trustedProxies: TrustedProxies
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -185,5 +188,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     backup: loadBackupConfig(env),
     apns: loadApns(env),
     appleAppId: loadAppleAppId(env),
+    trustedProxies: parseTrustedProxies(env.HOBWORK_TRUSTED_PROXIES),
   }
 }

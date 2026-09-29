@@ -29,8 +29,9 @@ const REVOKE_PATH = '/oauth/revoke'
 // The web UI page that shows consent and authorization errors.
 const CONNECT_PAGE = '/connect'
 
-// Per client address. Behind a reverse proxy every client shares the proxy's
-// address, so these are high enough for a household connecting its apps.
+// Per client address. Behind a reverse proxy that is not in
+// HOBWORK_TRUSTED_PROXIES every client shares the proxy's address, so these
+// are high enough for a household connecting its apps.
 const REGISTRATIONS_PER_HOUR = 30
 const AUTHORIZATIONS_PER_10_MINUTES = 60
 
@@ -58,10 +59,6 @@ function single(params: URLSearchParams, name: string): string | undefined {
   return values[0] === '' ? undefined : values[0]
 }
 
-function clientAddress(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? 'unknown'
-}
-
 function oauthError(res: ServerResponse, err: OAuthError, headers: Record<string, string> = {}) {
   res.writeHead(err.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
   res.end(JSON.stringify({ error: err.code, error_description: err.message }))
@@ -72,11 +69,13 @@ export function createOAuthServer(options: {
   publicUrl: string
   auth: Auth
   mcpPath: string
+  clientAddress: (req: IncomingMessage) => string | undefined
   fetchDocument?: (url: URL) => Promise<FetchedDocument>
   now?: () => number
 }) {
   const { db, publicUrl, auth } = options
   const now = options.now ?? Date.now
+  const clientAddress = (req: IncomingMessage) => options.clientAddress(req) ?? 'unknown'
   const issuer = publicUrl
   const resource = `${publicUrl}${options.mcpPath}`
   const resourceMetadataUrl = `${publicUrl}${PROTECTED_RESOURCE_PATH}${options.mcpPath}`

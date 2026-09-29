@@ -50,9 +50,8 @@ struct HealthSample: Codable, Equatable, Sendable {
     var unit: String?
     var stage: String?
     var workoutType: String?
-    var source: String
 
-    init(type: HealthType, start: Date, end: Date, value: Double? = nil, unit: String? = nil, stage: String? = nil, workoutType: String? = nil, source: String) {
+    init(type: HealthType, start: Date, end: Date, value: Double? = nil, unit: String? = nil, stage: String? = nil, workoutType: String? = nil) {
         self.type = type
         self.start = ISODate.format(start)
         self.end = ISODate.format(end)
@@ -60,26 +59,24 @@ struct HealthSample: Codable, Equatable, Sendable {
         self.unit = unit
         self.stage = stage
         self.workoutType = workoutType
-        self.source = source
     }
 
     init?(_ sample: HKSample, type: HealthType) {
-        let source = sample.sourceRevision.source.name
         let minutes = sample.endDate.timeIntervalSince(sample.startDate) / 60
         switch type {
         case .steps, .heartRate, .restingHeartRate, .activeEnergy, .bodyMass:
             guard let sample = sample as? HKQuantitySample, let unit = type.unit else { return nil }
-            self.init(type: type, start: sample.startDate, end: sample.endDate, value: sample.quantity.doubleValue(for: unit.unit), unit: unit.name, source: source)
+            self.init(type: type, start: sample.startDate, end: sample.endDate, value: sample.quantity.doubleValue(for: unit.unit), unit: unit.name)
         case .sleep:
             guard let sample = sample as? HKCategorySample, let stage = HKCategoryValueSleepAnalysis(rawValue: sample.value).map(Self.stage) else { return nil }
-            self.init(type: type, start: sample.startDate, end: sample.endDate, stage: stage, source: source)
+            self.init(type: type, start: sample.startDate, end: sample.endDate, stage: stage)
         case .mindfulness:
-            self.init(type: type, start: sample.startDate, end: sample.endDate, value: minutes, unit: "min", source: source)
+            self.init(type: type, start: sample.startDate, end: sample.endDate, value: minutes, unit: "min")
         case .workouts:
             guard let workout = sample as? HKWorkout else { return nil }
             self.init(
                 type: type, start: workout.startDate, end: workout.endDate, value: minutes, unit: "min",
-                workoutType: Self.name(of: workout.workoutActivityType), source: source
+                workoutType: Self.name(of: workout.workoutActivityType)
             )
         }
     }

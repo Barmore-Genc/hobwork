@@ -644,7 +644,7 @@ test('Focus and Health events go to every project with a matching trigger, filte
   ])
 
   invoked = []
-  const samples = [{ type: 'steps', start: '2026-09-28T10:00:00Z', end: '2026-09-28T11:00:00Z', value: 800, unit: 'count', source: 'iPhone' }]
+  const samples = [{ type: 'steps', start: '2026-09-28T10:00:00Z', end: '2026-09-28T11:00:00Z', value: 800, unit: 'count' }]
   await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'steps', samples } })
   await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'weight', samples } })
   await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'steps', samples: Array(501).fill(samples[0]) } })

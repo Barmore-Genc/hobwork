@@ -45,15 +45,6 @@ The host's APNs client is tested against a local HTTP/2 server, and the Apple ap
 
 There is no component library in core; project UIs use the theme's Tailwind utilities. If agents keep rewriting the same components across projects, ship them in the platform set.
 
-## No tracking data from the Apple apps
-
-The apps send only what a person explicitly chose to share. No location, no device identifiers (`identifierForVendor`, the advertising ID), no Wi-Fi or network names, and nothing else that could look like tracking. A check of the iOS app found none of these, but two things to fix:
-
-- Health samples carry `source` (`sourceRevision.source.name`), which is the name of the device or app that recorded them, such as "Kaan's Apple Watch". Drop it from the app, the SDK type (`HealthSample` in `packages/sdk/src/devices.ts`) and the tests.
-- `NSHealthUpdateUsageDescription` is set although the app never writes to Health (`requestAuthorization(toShare: [])`). Remove it.
-
-Write the rule down in `docs/architecture.md` and `apple/README.md` so new capabilities follow it.
-
 ## Renaming projects to hobs
 
 Call projects "hobs" everywhere people and agents see them: web UI and iOS app copy, MCP tool names and descriptions (`create_hob`, `list_hobs`), the `hobwork` CLI, the template's AGENTS.md, `hobwork.json` docs and `docs/`. Code identifiers and DB tables can keep `project`. The MCP server instructions define a hob in one line, since agents know "project" without explanation. Do it before more agents and saved prompts depend on the current tool names.

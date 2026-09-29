@@ -27,10 +27,10 @@ struct HealthTests {
 
     @Test func encodesSamples() async throws {
         reader.samples = [
-            HealthSample(type: .steps, start: isoDate("2026-05-04T08:00:00Z"), end: isoDate("2026-05-04T08:10:00Z"), value: 812, unit: "count", source: "iPhone"),
+            HealthSample(type: .steps, start: isoDate("2026-05-04T08:00:00Z"), end: isoDate("2026-05-04T08:10:00Z"), value: 812, unit: "count"),
         ]
         let value = try await makeCapability().handle(method: "query", args: json(#"{"type":"steps","from":"2026-05-04T00:00:00Z","to":"2026-05-05T00:00:00Z","limit":10}"#))
-        #expect(value == json(#"[{"type":"steps","start":"2026-05-04T08:00:00Z","end":"2026-05-04T08:10:00Z","value":812,"unit":"count","source":"iPhone"}]"#))
+        #expect(value == json(#"[{"type":"steps","start":"2026-05-04T08:00:00Z","end":"2026-05-04T08:10:00Z","value":812,"unit":"count"}]"#))
         #expect(reader.queries.first?.3 == 10)
     }
 
@@ -94,11 +94,11 @@ struct HealthTests {
     }
 
     @Test func encodesSampleEvents() throws {
-        let samples = [HealthSample(type: .sleep, start: isoDate("2026-05-04T01:00:00Z"), end: isoDate("2026-05-04T01:30:00Z"), stage: "core", source: "Watch")]
+        let samples = [HealthSample(type: .sleep, start: isoDate("2026-05-04T01:00:00Z"), end: isoDate("2026-05-04T01:30:00Z"), stage: "core")]
         let event = try HealthDelivery.event(type: .sleep, samples: samples)
         #expect(event.capability == "health")
         #expect(event.name == "samples")
-        #expect(event.data == json(#"{"type":"sleep","samples":[{"type":"sleep","start":"2026-05-04T01:00:00Z","end":"2026-05-04T01:30:00Z","stage":"core","source":"Watch"}]}"#))
+        #expect(event.data == json(#"{"type":"sleep","samples":[{"type":"sleep","start":"2026-05-04T01:00:00Z","end":"2026-05-04T01:30:00Z","stage":"core"}]}"#))
     }
 
     @Test func keepsSharingStateInTheAppGroupFile() {

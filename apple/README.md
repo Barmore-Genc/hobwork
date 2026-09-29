@@ -101,6 +101,8 @@ It pairs a device, asks for a web session, sets and clears the push token, conne
 
 The app lists a capability in `hello` only when it is set up and allowed. People set them up under Settings in the app: allow alarms, allow Screen Time and create app sets (a name such as `social` and apps, categories and websites from the system picker), choose the Health types to share, and add the Hobwork Focus filter to a Focus in the Settings app. NFC needs no setup; Settings has a "Scan Tag" button that sends any tag's link to the host. `hobwork://nfc/<tag>` and, with Associated Domains, `https://<host>/nfc/<tag>` report the tag as scanned. On macOS, Settings has only notifications and Focus; the Focus filter is added in System Settings, Focus.
 
+The app sends only what a person explicitly chose to share. It sends no location, no device identifiers (`identifierForVendor`, the advertising ID), no Wi-Fi or network names, and nothing else that could look like tracking. New capabilities follow this rule.
+
 `Hobwork/Capabilities/NFC/NFCIntents.swift` has two App Intents for tags with other links, which iOS opens in Safari: "Scan NFC Tag" opens the app and scans (Action Button, Control Center, Siri), and "Send Tag to Hobwork" sends a link to the host in the background, for a Shortcuts personal automation "When I tap an NFC tag". See "Tags with other links" in `docs/architecture.md`.
 
 A command arrives over the socket, by a command push the notification service extension runs, or by a prompt push (NFC) that the app runs when tapped. The command log in the app group makes each command run once and answers repeats with the first result.

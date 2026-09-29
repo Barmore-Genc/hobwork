@@ -56,6 +56,8 @@ test('OIDC settings and allowlist', () => {
     name: 'Pocket ID',
   })
   expect(config.allowlist).toEqual({ emails: ['kaan@example.com'], subjects: ['abc-123'] })
+  expect(loadConfig({ HOBWORK_ALLOWED_USERS: ' * ' }).allowlist).toEqual({ emails: [], subjects: [], everyone: true })
+  expect(() => loadConfig({ HOBWORK_ALLOWED_USERS: '*, kaan@example.com' })).toThrow('either *')
 })
 
 test('rejects incomplete or invalid Home Assistant settings', () => {

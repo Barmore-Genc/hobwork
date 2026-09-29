@@ -69,6 +69,13 @@ test('subjects on the allowlist match any identity of the user', () => {
   const user = signInOidcUser(host.db, allowlist, { ...kaan, subject: 'sub-guest', email: null })!
   expect(isAllowed(host.db, { emails: [], subjects: ['sub-guest'] }, user)).toBe(true)
   expect(isAllowed(host.db, { emails: [], subjects: ['other'] }, user)).toBe(false)
+  expect(isAllowed(host.db, { emails: [], subjects: [], everyone: true }, user)).toBe(true)
+})
+
+test('with everyone allowed, any identity from the provider signs in', () => {
+  const everyone = { emails: [], subjects: [], everyone: true }
+  const user = signInOidcUser(host.db, everyone, { ...kaan, subject: 'sub-new', email: 'new@example.com' })
+  expect(user?.email).toBe('new@example.com')
 })
 
 test('cookie is __Host- prefixed and Secure behind https', () => {

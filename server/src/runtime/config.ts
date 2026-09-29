@@ -3,6 +3,7 @@ import { git, GitError } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { TriggerEntry } from '../homeassistant/triggers.ts'
 import { ProjectError } from '../projects.ts'
+import type { CspSources } from './csp.ts'
 import type { InvocationKind } from './logs.ts'
 
 export type Entry = { handler: string }
@@ -13,6 +14,7 @@ export type ProjectConfig = {
   webhooks: Record<string, Entry>
   triggers: Record<string, Entry & TriggerEntry>
   egress: string[]
+  csp: CspSources
   idleTimeoutMs: number
 }
 
@@ -35,6 +37,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     webhooks: json.webhooks ?? {},
     triggers: json.triggers ?? {},
     egress: json.egress ?? [],
+    csp: json.csp ?? {},
     idleTimeoutMs: json.idleTimeout ? parseDuration(json.idleTimeout) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }

@@ -7,6 +7,7 @@ import { getProject, renamedProject, type Project } from '../projects.ts'
 import { BuildError } from '../runtime/builds.ts'
 import { sendJson, sendRuntimeError, serveRoute } from '../runtime/http.ts'
 import { ICONS_PREFIX, MANIFEST_PATH, sendUiText, serveAppIcons, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
+import type { CspSources } from '../runtime/csp.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
@@ -71,6 +72,11 @@ export function createAppHttp(options: {
     const origin = origins.origin(target)
     if (!origin) return undefined
     return { project, target, origin, scope: { projectId: project.id, branch: target.branch ?? null } }
+  }
+
+  // A version whose hobwork.json cannot be read gets the default policy.
+  async function cspOf(app: Resolved): Promise<CspSources | undefined> {
+    return runtime?.csp(app.target.project, app.target.branch).catch(() => undefined)
   }
 
   async function resolveHost(hostHeader: string | undefined): Promise<Resolved | undefined> {
@@ -147,7 +153,7 @@ export function createAppHttp(options: {
       console.error(`Building the UI of ${app.target.project} failed`, err)
       return sendUiText(res, publicUrl, 503, `${app.target.project} could not be prepared. Try again in a moment.`)
     }
-    serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), hobworkOrigin: publicUrl })
+    serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), hobworkOrigin: publicUrl, csp: await cspOf(app) })
   }
 
   // Only a build that is already stored: these answer without a session, and
@@ -195,7 +201,7 @@ export function createAppHttp(options: {
         branch: app.target.branch,
         path: pathname.slice(API_PREFIX.length - 1),
         url: url.href,
-        headers: frameHeaders,
+        headers: uiHeaders(publicUrl, await cspOf(app)),
       })
     }
     if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', frameHeaders)

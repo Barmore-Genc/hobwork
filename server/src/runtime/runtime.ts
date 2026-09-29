@@ -31,6 +31,7 @@ import { listVersions } from '../versions.ts'
 import { createDeployHealth, DEFAULT_AUTO_REVERT_POLICY, type AutoRevertPolicy, type DeployHealth } from './auto-revert.ts'
 import { cleanupBuilds, type BuildCleanupOptions } from './build-cleanup.ts'
 import { buildDir, createBuilder, treeOf } from './builds.ts'
+import type { CspSources } from './csp.ts'
 import { allHandlers, entriesOf, readProjectConfig, type ProjectConfig } from './config.ts'
 import {
   appendLog,
@@ -800,6 +801,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async route(project: string, branch?: string): Promise<{ routes: Route[]; version: number | null }> {
       const deployed = await deployedFor(project, branch)
       return { routes: deployed.routes, version: deployed.version }
+    },
+    // The extra Content-Security-Policy sources the deployed version (or the branch) declares.
+    async csp(project: string, branch?: string): Promise<CspSources> {
+      return (await deployedFor(project, branch)).config.csp
     },
     // What the deployed version declares in hobwork.json.
     async config(project: string): Promise<{ config: ProjectConfig; version: number | null }> {

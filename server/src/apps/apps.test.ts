@@ -96,7 +96,7 @@ const page = { accept: 'text/html,application/xhtml+xml' }
 test('a signed-out deep link goes through Hobwork sign-in and lands on the same page', async () => {
   const start = await send(`${FILAMENT}/spools/7?tab=1`, { headers: page })
   expect(start.status).toBe(302)
-  expect(start.headers['content-security-policy']).toBe(FRAME_ANCESTORS)
+  expect(start.headers['content-security-policy']).toContain(FRAME_ANCESTORS)
   const handoff = new URL(location(start))
   expect(handoff.origin).toBe(TEST_PUBLIC_URL)
   expect(handoff.pathname).toBe('/auth/app')
@@ -133,7 +133,7 @@ test('a signed-out deep link goes through Hobwork sign-in and lands on the same 
   const landed = await send(`${FILAMENT}/spools/7?tab=1`, { headers: { ...page, cookie: appCookie } })
   expect(landed.status).toBe(200)
   expect(landed.body).toContain('<head><base href="/"><title>Spools</title>')
-  expect(landed.headers['content-security-policy']).toBe(FRAME_ANCESTORS)
+  expect(landed.headers['content-security-policy']).toContain(FRAME_ANCESTORS)
 
   const route = await send(`${FILAMENT}/api/spools`, { headers: { cookie: appCookie } })
   expect(route.status).toBe(200)
@@ -266,7 +266,7 @@ test('app origins serve only the UI, never handler bundles or other files', asyn
   const asset = await send(`${FILAMENT}/assets/index-abc123.js`, { headers })
   expect(asset.status).toBe(200)
   expect(asset.headers['cache-control']).toContain('immutable')
-  expect(asset.headers['content-security-policy']).toBe(FRAME_ANCESTORS)
+  expect(asset.headers['content-security-policy']).toContain(FRAME_ANCESTORS)
   for (const path of [
     '/handlers/src/spools.js',
     '/%68andlers/src/spools.js',
@@ -345,4 +345,57 @@ test('the project page links to the app origin', async () => {
   const { cookie } = signedIn(host)
   const detail = JSON.parse((await send(`${TEST_PUBLIC_URL}/api/projects/filament`, { headers: { cookie } })).body)
   expect(detail.appUrl).toBe(FILAMENT)
+})
+
+test('UI and route responses on an app origin carry the default policy and nosniff', async () => {
+  const { cookie } = signedIn(host)
+  const headers = { cookie: appSessionCookie(host, cookie, 'filament') }
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    FRAME_ANCESTORS,
+  ].join('; ')
+  for (const path of ['/', '/assets/index-abc123.js', '/api/spools', '/api/missing']) {
+    const res = await send(`${FILAMENT}${path}`, { headers: { ...headers, ...page } })
+    expect(res.headers['content-security-policy'], path).toBe(policy)
+    expect(res.headers['x-content-type-options'], path).toBe('nosniff')
+  }
+})
+
+test('hobwork.json adds sources to the policy, and a handler policy is sent as well', async () => {
+  const bundle = [
+    'mkdir -p dist/handlers/src',
+    `printf '<!doctype html><html><head></head><body></body></html>' > dist/index.html`,
+    `printf 'export default async () => new Response("x", { headers: { "content-security-policy": "sandbox" } })' > dist/handlers/src/csp.js`,
+  ].join(' && ')
+  await createProject(host, 'loose')
+  await release('loose', {
+    'package.json': fakePackageJson({ build: bundle }),
+    'hobwork.json': JSON.stringify({
+      routes: { 'GET /csp': { handler: 'src/csp.ts' } },
+      csp: { 'script-src': ['https://cdn.example.com'], 'connect-src': ['wss://live.example.com:8443'], 'worker-src': ['https://w.example.com'] },
+    }),
+  })
+  const { cookie } = signedIn(host)
+  const headers = { cookie: appSessionCookie(host, cookie, 'loose') }
+  const base = 'http://loose.apps.hobwork.test'
+  const ui = await send(`${base}/`, { headers: { ...headers, ...page } })
+  const policy = ui.headers['content-security-policy'] as string
+  expect(policy).toContain("script-src 'self' https://cdn.example.com;")
+  expect(policy).toContain("connect-src 'self' wss://live.example.com:8443;")
+  expect(policy).toContain("worker-src 'self' https://w.example.com;")
+  expect(policy).toContain(FRAME_ANCESTORS)
+  expect(policy).toContain("object-src 'none'")
+
+  const route = await send(`${base}/api/csp`, { headers })
+  expect(route.status).toBe(200)
+  // Node joins repeated headers with a comma, which browsers read as two policies.
+  expect(route.headers['content-security-policy']).toBe(`${policy}, sandbox`)
 })

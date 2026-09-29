@@ -6,7 +6,14 @@
   "additionalProperties": false,
   "definitions": {
     "handlerPath": { "type": "string", "minLength": 1 },
-    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "cspHost": { "type": "string", "pattern": "^(https?|wss?)://(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\\d{1,5})?(/[^\\s;,'\"\\\\]*)?$" },
+    "cspSources": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/cspHost" } },
+    "cspSourcesWithSchemes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "anyOf": [{ "$ref": "#/definitions/cspHost" }, { "enum": ["data:", "blob:"] }] }
+    }
   },
   "properties": {
     "crons": {
@@ -91,6 +98,27 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
+    },
+    "csp": {
+      "description": "Extra sources for the Content-Security-Policy of the hob's app. By default the app runs only scripts from its own origin (no inline scripts) and loads styles, images, fonts and connections from its own origin (also inline styles, and data: and blob: images, data: fonts). Each directive lists what to allow in addition: http(s):// or ws(s):// origins (\"https://cdn.example.com\", \"https://*.example.com\", \"wss://live.example.com\"), data: or blob: where the directive takes them, and in script-src the keywords \"'unsafe-inline'\", \"'unsafe-eval'\" and \"'wasm-unsafe-eval'\", which remove the protection against injected scripts. frame-ancestors cannot be changed.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "script-src": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "anyOf": [{ "$ref": "#/definitions/cspHost" }, { "enum": ["'unsafe-inline'", "'unsafe-eval'", "'wasm-unsafe-eval'"] }] }
+        },
+        "style-src": { "$ref": "#/definitions/cspSourcesWithSchemes" },
+        "img-src": { "$ref": "#/definitions/cspSourcesWithSchemes" },
+        "font-src": { "$ref": "#/definitions/cspSourcesWithSchemes" },
+        "connect-src": { "$ref": "#/definitions/cspSourcesWithSchemes" },
+        "media-src": { "$ref": "#/definitions/cspSourcesWithSchemes" },
+        "frame-src": { "$ref": "#/definitions/cspSources" },
+        "worker-src": { "$ref": "#/definitions/cspSources" },
+        "manifest-src": { "$ref": "#/definitions/cspSources" },
+        "form-action": { "$ref": "#/definitions/cspSources" }
+      }
     },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
     "icon": {

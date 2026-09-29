@@ -14,7 +14,7 @@ import {
   type WorkspaceManager,
 } from '../workspaces.ts'
 import { createSshGateway, parseTarget } from './gateway.ts'
-import { addSshKey } from './keys.ts'
+import { addSshKey, generateEd25519KeyPair } from './keys.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 
@@ -82,9 +82,9 @@ beforeEach(async () => {
   await createBranch(host, 'filament', 'spools')
   workspaces = createWorkspaceManager<InteractiveWorkspaceVm>(host, { startVm: async () => fakeVm() })
   agent = ensureAgent(host.db, 'laptop')
-  key = ssh2.utils.generateKeyPairSync('ed25519')
+  key = generateEd25519KeyPair()
   addSshKey(host.db, agent.id, key.public)
-  gateway = createSshGateway({ host, workspaces, hostKey: ssh2.utils.generateKeyPairSync('ed25519').private })
+  gateway = createSshGateway({ host, workspaces, hostKey: generateEd25519KeyPair().private })
   await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
   port = (gateway.address() as AddressInfo).port
 })
@@ -163,7 +163,7 @@ test('commands run with a session for the key\'s agent, closed when they end', a
 })
 
 test('unknown keys and passwords are rejected', async () => {
-  const other = ssh2.utils.generateKeyPairSync('ed25519')
+  const other = generateEd25519KeyPair()
   await expect(connect('filament/spools', { privateKey: other.private })).rejects.toThrow('authentication methods failed')
   await expect(connect('filament/spools', { password: 'hunter2' })).rejects.toThrow('authentication methods failed')
   expect(spawned).toEqual([])

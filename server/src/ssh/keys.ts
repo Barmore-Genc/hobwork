@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import ssh2, { type ParsedKey } from 'ssh2'
 import { getAgent, type Agent } from '../agents.ts'
@@ -20,6 +20,47 @@ const MAX_KEY_CHARS = 16 * 1024
 // Same format as `ssh-keygen -l`.
 export function fingerprint(keyData: Buffer): string {
   return `SHA256:${createHash('sha256').update(keyData).digest('base64').replace(/=+$/, '')}`
+}
+
+// Not ssh2.utils.generateKeyPairSync: it strips leading zero bytes from the raw
+// Ed25519 public key, so about 1 in 256 generated pairs are unparseable.
+export function generateEd25519KeyPair(): { public: string; private: string } {
+  const { privateKey } = generateKeyPairSync('ed25519')
+  const jwk = privateKey.export({ format: 'jwk' })
+  const pub = Buffer.from(String(jwk.x), 'base64url')
+  const seed = Buffer.from(String(jwk.d), 'base64url')
+  const publicWire = Buffer.concat([sshString('ssh-ed25519'), sshString(pub)])
+  const check = randomBytes(4)
+  const unpadded = Buffer.concat([
+    check,
+    check,
+    sshString('ssh-ed25519'),
+    sshString(pub),
+    sshString(Buffer.concat([seed, pub])),
+    sshString(''),
+  ])
+  const padding = Buffer.from(Array.from({ length: (8 - (unpadded.length % 8)) % 8 }, (_, i) => i + 1))
+  const body = Buffer.concat([
+    Buffer.from('openssh-key-v1\0'),
+    sshString('none'),
+    sshString('none'),
+    sshString(''),
+    Buffer.from([0, 0, 0, 1]),
+    sshString(publicWire),
+    sshString(Buffer.concat([unpadded, padding])),
+  ])
+  const lines = body.toString('base64').match(/.{1,70}/g)?.join('\n')
+  return {
+    public: `ssh-ed25519 ${publicWire.toString('base64')}`,
+    private: `-----BEGIN OPENSSH PRIVATE KEY-----\n${lines}\n-----END OPENSSH PRIVATE KEY-----\n`,
+  }
+}
+
+function sshString(value: string | Buffer): Buffer {
+  const data = Buffer.from(value)
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(data.length)
+  return Buffer.concat([length, data])
 }
 
 export function parsePublicKey(line: string): { algorithm: string; keyData: string; comment: string } {

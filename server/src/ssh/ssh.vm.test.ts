@@ -17,7 +17,7 @@ import { createTestHost } from '../test-host.ts'
 import { createWorkspaceApi } from '../workspace-api.ts'
 import { createWorkspaceManager, type InteractiveWorkspaceVm } from '../workspaces.ts'
 import { createSshGateway } from './gateway.ts'
-import { addSshKey } from './keys.ts'
+import { addSshKey, generateEd25519KeyPair } from './keys.ts'
 
 type SshRun = { stdout: string; stderr: string; code: number }
 
@@ -50,7 +50,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('SSH gateway with real VMs'
       ),
     )
     addSshKey(host.db, ensureAgent(host.db, 'laptop').id, readFileSync(join(dir, 'key.pub'), 'utf8'))
-    gateway = createSshGateway({ host, workspaces, hostKey: ssh2.utils.generateKeyPairSync('ed25519').private })
+    gateway = createSshGateway({ host, workspaces, hostKey: generateEd25519KeyPair().private })
     await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
     port = (gateway.address() as AddressInfo).port
   })

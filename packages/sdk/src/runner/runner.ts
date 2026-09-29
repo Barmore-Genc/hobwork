@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { format } from 'node:util'
 import type { Context, Handler, Invocation, LogLevel, Logger } from '../index.ts'
+import { createDbClient, httpDbSender } from './db-client.ts'
 import { createHostClient, type HostClient } from './host-client.ts'
 import {
   handlerModulePath,
@@ -21,6 +22,8 @@ export type RunnerOptions = {
   // Loaded before the runner reports ready, so a handler that fails to import
   // fails the start instead of every invocation.
   handlers: string[]
+  // Secret name -> placeholder, handed to handlers as ctx.secrets.
+  secrets?: Record<string, string>
 }
 
 export type Runner = {
@@ -87,6 +90,8 @@ function send(res: ServerResponse, status: number, body: unknown) {
 export async function startRunner(options: RunnerOptions, port: number): Promise<Runner> {
   const client: HostClient = createHostClient(options.internalUrl)
   const current = new AsyncLocalStorage<Invocation>()
+  const db = createDbClient(httpDbSender(options.internalUrl, () => current.getStore()?.id))
+  const secrets = Object.freeze({ ...options.secrets })
 
   // Console output inside an invocation belongs to it. Output outside any
   // invocation (module top level, stray timers) goes to the runner's own
@@ -136,6 +141,8 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         payload: message.payload,
         fetch: globalThis.fetch.bind(globalThis),
         log,
+        db,
+        secrets,
       }
       const value = await current.run(invocation, () => handler(ctx))
       return { ok: true, response: await toSerializedResponse(value) }

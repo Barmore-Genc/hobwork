@@ -5,13 +5,44 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 ## Layout
 
 - `hobwork.json`: every entry point (routes, crons, webhooks, triggers), egress hosts and settings. Hobwork only runs what is declared here.
-- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch` and `ctx.log`.
+- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch`, `ctx.log`, `ctx.db` and `ctx.secrets`.
 - Routes and webhooks answer with what the handler returns: a `Response` is sent as is, any other value as JSON, `undefined` as 204. A thrown error answers 500 and is recorded with its stack trace. Route `"GET /spools/:id"` answers `GET /p/<project>/api/spools/42`. A webhook is called at a secret URL that `rotate_webhook_token` returns.
 - Crons use 5-field cron syntax in the Hobwork host's time zone.
 - `ui/`: dashboard pages (React + Tailwind), served at `/p/<project>/`. Call the project's routes with relative URLs (`fetch('api/...')`).
-- `migrations/`: project DB migrations (`0001_name.sql`, ...), applied in order on deploy.
+- `migrations/`: project DB migrations (`0001_name.sql`, ...), applied in order on deploy. See [Data](#data).
 - `tests/`: Vitest tests. Test files share one module cache to keep the suite fast, so do not rely on module-level state being fresh in each file. Mocks, stubbed globals and env vars are reset after every test.
 - `package.json`: scripts, plus extra npm packages only. The platform packages and `@hobwork/sdk` come with the VM and are not listed here.
+
+## Data
+
+Each project has one SQLite DB. The schema comes from `migrations/`; handlers read and write rows with `ctx.db`:
+
+```ts
+const spools = await ctx.db.query<{ id: number; color: string }>('SELECT id, color FROM spools WHERE grams > ?', [100])
+const spool = await ctx.db.get('SELECT * FROM spools WHERE id = :id', { id: 7 })
+const { lastInsertRowid } = await ctx.db.run('INSERT INTO spools (color) VALUES (?)', ['red'])
+await ctx.db.batch([
+  { sql: 'UPDATE spools SET grams = grams - ? WHERE id = ?', params: [20, 7] },
+  { sql: 'INSERT INTO prints (spool_id, grams) VALUES (?, ?)', params: [7, 20] },
+])
+```
+
+- Every call is one request to Hobwork, so there are no interactive transactions. `batch` runs its statements in one transaction and rolls all of them back if one fails. For read-then-write logic, use one statement (`UPDATE ... WHERE`, `INSERT ... ON CONFLICT`, `RETURNING`) or a batch.
+- One statement per SQL string. Statements cannot change the schema, use `PRAGMA` (other than introspection like `table_info`), `ATTACH` or `VACUUM`. Values are numbers, strings, `null` and `Uint8Array`; booleans are stored as 1 and 0.
+- Migrations: add a new file for every change and never edit one that was merged. Create tables with `STRICT`. Only add tables, columns and indexes: `merge` applies new migrations to a copy of the production DB and refuses SQL errors and anything that drops or renames a table or column, so older versions keep working after a restore.
+- Tests: `createTestDb()` from `@hobwork/sdk/testing` is a fresh in-memory DB with every migration applied and the same rules as `ctx.db`. `createTestContext({ ... })` builds a handler context with one (override `fetch`, `log`, `secrets` or `db` as needed).
+- In the workspace, `hobwork sql "SELECT ..."` runs a statement on the branch DB: a copy of the production DB taken when the workspace VM started, with the branch's migrations applied. Editing an applied migration on the branch starts the branch DB over from a fresh copy.
+- Slow queries (over 500ms) and a DB over 100 MB are logged as `db` events and shown in `get_project`. Add an index in a migration, or delete old rows.
+
+## Secrets
+
+Users add secrets in Hobwork and bind each one to the hosts it may be sent to. `list_secrets` shows which exist. Handlers never see values: `ctx.secrets.NAME` is a placeholder, and Hobwork replaces it with the real value in request headers sent to a bound host:
+
+```ts
+await ctx.fetch('https://api.example.com/v1/spools', { headers: { authorization: `Bearer ${ctx.secrets.SPOOL_API_KEY}` } })
+```
+
+The placeholder is only replaced in headers, not in the URL or body. Hosts a secret is bound to are reachable without listing them in `egress`. If a secret is missing, ask the user to add it.
 
 ## Workflow
 
@@ -30,5 +61,5 @@ In a shell in the workspace (over SSH, `ssh <project>/<branch>@<hobwork host>`),
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them. Older versions must keep working after a restore.
 - Debug with `get_logs` and `list_invocations`. Do not guess. Console output and `ctx.log` lines are stored per invocation.
 - If a merged version fails completely (its runtime does not start, or every invocation fails for several minutes), Hobwork restores the previous version and logs why. Check `get_logs` for `auto-revert` events.
-- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` (and hosts bound to secrets). Use `ctx.fetch`. In the branch workspace, a change to `egress` applies from the next `bash` command, which restarts the workspace VM.
+- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` and hosts bound to secrets. Use `ctx.fetch`. Blocked requests get a 403 and an `egress-blocked` line in `get_logs`. In the branch workspace, a change to `egress` or to secrets applies from the next `bash` command, which restarts the workspace VM.
 - Prefer the platform packages: React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns. Add another npm package only when none of these does the job, with `pnpm add <package>` in `bash`. Extra packages are installed again every time the workspace VM starts.

@@ -13,7 +13,9 @@ const USAGE = `Usage: hobwork <command>
   commit "<message>"     commit all changes and push them to the branch
   merge "<summary>"      run the pipeline, merge into main and deploy
   logs [-f] [-n <lines>] project logs; -f keeps printing new lines
-  invocations [-n <count>]  recent handler invocations`
+  invocations [-n <count>]  recent handler invocations
+  sql "<statement>"      run one SQL statement on the branch DB, a copy of the
+                         production DB taken when the workspace VM started`
 
 type CliResult = { output: string; ok: boolean; cursor?: number }
 
@@ -79,6 +81,25 @@ function print(result: CliResult): void {
   if (!result.ok) process.exitCode = 1
 }
 
+// The branch DB answers like ctx.db does in a handler.
+async function sql(statement: string): Promise<void> {
+  const res = await fetch(new URL('/v1/db', BASE_URL), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ statements: [{ sql: statement }], transaction: false }),
+  })
+  const body = (await res.json().catch(() => undefined)) as
+    | { ok: true; results: { rows: unknown[]; changes: number }[] }
+    | { ok: false; error: { message: string } }
+    | { error?: string }
+    | undefined
+  if (!body || !('ok' in body)) throw new Error(body?.error ?? `The host answered HTTP ${res.status}`)
+  if (!body.ok) throw new Error(body.error.message)
+  const [result] = body.results
+  if (result?.rows.length) process.stdout.write(`${result.rows.map((row) => JSON.stringify(row)).join('\n')}\n`)
+  else process.stdout.write(result?.changes ? `${result.changes} rows changed\n` : 'No rows\n')
+}
+
 async function followLogs(lines: number): Promise<void> {
   let result = await call('GET', `/v1/workspace/logs?limit=${lines}`)
   for (;;) {
@@ -101,6 +122,8 @@ async function main(argv: string[]): Promise<void> {
     case 'logs':
       if (args.includes('-f')) return followLogs(count(args, 20))
       return print(await call('GET', `/v1/workspace/logs?limit=${count(args, 50)}`))
+    case 'sql':
+      return sql(text(args, 'SQL statement'))
     case 'invocations':
       return print(await call('GET', `/v1/workspace/invocations?limit=${count(args, 20)}`))
     case undefined:

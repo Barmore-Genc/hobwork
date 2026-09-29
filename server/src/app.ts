@@ -5,6 +5,7 @@ import { createOidcLogin } from './auth/oidc.ts'
 import { createPasskeys } from './auth/passkeys.ts'
 import { createAuthRoutes } from './auth/routes.ts'
 import type { Allowlist, OidcConfig } from './config.ts'
+import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
@@ -15,6 +16,7 @@ import type { FetchedDocument } from './oauth/metadata-fetch.ts'
 import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import type { SecretStore } from './secrets.ts'
 import { createStaticRoutes } from './static.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
@@ -36,6 +38,8 @@ export function createApp(
     authenticate?: McpAuthenticator
     homeAssistant?: HomeAssistant
     runtime?: Runtime
+    data?: ProjectData
+    secrets?: SecretStore
     web?: WebOptions
   } = {},
 ): Server {
@@ -62,6 +66,8 @@ export function createApp(
     resourceMetadataUrl: oauth.resourceMetadataUrl,
     homeAssistant: options.homeAssistant,
     runtime: options.runtime,
+    data: options.data,
+    secrets: options.secrets,
   })
 
   const handleAuth = createAuthRoutes({
@@ -71,7 +77,7 @@ export function createApp(
     passkeys: createPasskeys({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist, auth, now: web.now }),
     oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
   })
-  const handleApi = createApiRoutes({ host, auth, delivery, runtime: options.runtime })
+  const handleApi = createApiRoutes({ host, auth, delivery, runtime: options.runtime, secrets: options.secrets })
   const handleRuntime =
     options.runtime &&
     createRuntimeHttp(host, options.runtime, (req) => authenticate(req) !== undefined || auth.sessionUser(req) !== undefined)

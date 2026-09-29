@@ -18,9 +18,9 @@ export type StartPipelineVm = (options: { dir: string }) => Promise<ExecWorkspac
 
 export type StepOutcome = { status: 'passed' | 'failed' | 'skipped'; output: string }
 
-// Phase 6 applies the candidate's new migrations to a copy of the production DB
-// here. Until then the step is skipped.
-export type MigrationDryRun = (candidate: { project: string; commit: string; dir: string }) => Promise<StepOutcome>
+// Applies the candidate's new migrations to a copy of the production DB.
+// `gitDir` contains `commit`. Files are read from there, not from the checkout.
+export type MigrationDryRun = (candidate: { project: string; gitDir: string; commit: string }) => Promise<StepOutcome>
 
 export type PipelineOptions = {
   startVm: StartPipelineVm
@@ -72,7 +72,7 @@ const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
 const skipMigrations: MigrationDryRun = async () => ({
   status: 'skipped',
-  output: 'Migration dry run is not available yet',
+  output: 'This host has no migration dry run',
 })
 
 // Read from git rather than the checkout so a symlinked file cannot make the
@@ -189,7 +189,7 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
       if (outcome.status === 'passed') await saveBuild(host, { project: candidate.project, gitDir, commit, dir: await dir() })
       return outcome
     },
-    migrations: async () => migrationDryRun({ project: candidate.project, commit, dir: await dir() }),
+    migrations: () => migrationDryRun({ project: candidate.project, gitDir, commit }),
   }
 
   let failedStep: PipelineStepName | undefined

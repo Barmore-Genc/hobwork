@@ -1,0 +1,6 @@
+CREATE TABLE spools (
+  id INTEGER PRIMARY KEY,
+  color TEXT NOT NULL UNIQUE,
+  grams REAL,
+  label BLOB
+) STRICT;

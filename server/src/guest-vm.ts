@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join, posix, resolve } from 'node:path'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
-import type { InternalHandler, Sandbox, SandboxFactory, SandboxOptions } from './sandbox/sandbox.ts'
+import type { EgressBlocked, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
 import type {
   ExecOptions,
   ExecResult,
@@ -23,13 +23,35 @@ const INSTALL_CLI = [
   'chmod 755 /usr/local/bin/hobwork',
 ].join(' && ')
 
+// Answered by the workspace environment (the branch DB); everything else on
+// hobwork.internal goes to the CLI API.
+const DB_PATH = '/v1/db'
+
 const VM_RESOURCES = { memory: '2G', cpus: 4, diskSize: '4G' }
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
+
+// What a workspace VM gets from the rest of the host: secrets, their hosts,
+// and the internal endpoint with the branch DB.
+export type VmEnvironment = {
+  egress: string[]
+  secrets: Record<string, Secret>
+  internal?: InternalHandler
+  onEgressBlocked?: (event: EgressBlocked) => void
+}
+
+export type WorkspaceEnvironment = {
+  // Called while a workspace VM starts.
+  start(workspace: Workspace): Promise<VmEnvironment>
+  // Changes when start() would return different secrets or hosts, so the VM is replaced.
+  fingerprint(workspace: Workspace): string
+  stop?(workspace: Workspace): Promise<void>
+}
 
 export type GuestVmOptions = {
   image: string
   createSandbox: SandboxFactory
   log?: (message: string) => void
+  workspaceEnvironment?: WorkspaceEnvironment
 }
 
 export type GuestWorkspaceVm = InteractiveWorkspaceVm & {
@@ -65,7 +87,13 @@ export function hasExtraDependencies(dir: string): boolean {
 
 // `dir` is mounted read-write at /workspace. node_modules lives on the VM disk:
 // the filesystem bridge is slow for many small files, and it only holds extras.
-function sandboxOptions(options: GuestVmOptions, dir: string, egress: string[], label: string): SandboxOptions {
+function sandboxOptions(
+  options: GuestVmOptions,
+  dir: string,
+  egress: string[],
+  label: string,
+  environment?: VmEnvironment,
+): SandboxOptions {
   return {
     image: options.image,
     ...VM_RESOURCES,
@@ -74,7 +102,12 @@ function sandboxOptions(options: GuestVmOptions, dir: string, egress: string[], 
     env: { CI: 'true' },
     egress,
     label,
-    onEgressBlocked: ({ hostname }) => options.log?.(`${label}: blocked egress to ${hostname}`),
+    secrets: environment?.secrets,
+    internal: environment?.internal,
+    onEgressBlocked: (event) => {
+      options.log?.(`${label}: blocked egress to ${event.hostname || event.ip}`)
+      environment?.onEgressBlocked?.(event)
+    },
   }
 }
 
@@ -125,17 +158,33 @@ export function workspaceVmBackend(
 ): StartWorkspaceVm<GuestWorkspaceVm> {
   return async (workspace) => {
     const label = `workspace ${workspace.project}/${workspace.branch}`
+    const environments = options.workspaceEnvironment
+    const fingerprint = environments?.fingerprint(workspace) ?? ''
+    const environment = await environments?.start(workspace)
     // The registry is always reachable so agents can add and install extras.
-    const egress = [...new Set([NPM_REGISTRY, ...hobworkEgress(workspace.dir)])]
-    const base = sandboxOptions(options, workspace.dir, egress, label)
-    const sandbox = await options.createSandbox({
-      ...base,
-      mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
-      internal: internal?.(workspace),
-    })
+    const egressOf = (extra: string[]) => new Set([NPM_REGISTRY, ...hobworkEgress(workspace.dir), ...extra])
+    const egress = [...egressOf(environment?.egress ?? [])]
+    const base = sandboxOptions(options, workspace.dir, egress, label, environment)
+    const cliApi = internal?.(workspace)
+    const dbApi = environment?.internal
+    let sandbox: Sandbox
+    try {
+      sandbox = await options.createSandbox({
+        ...base,
+        mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
+        internal: (request) => {
+          if (dbApi && new URL(request.url).pathname === DB_PATH) return dbApi(request)
+          return cliApi?.(request) ?? Response.json({ error: 'not found' }, { status: 404 })
+        },
+      })
+    } catch (err) {
+      await environments?.stop?.(workspace)
+      throw err
+    }
     const cli = await sandbox.exec(INSTALL_CLI).result.catch((err: unknown) => err as Error)
     if (cli instanceof Error || cli.exitCode !== 0) {
       await sandbox.stop()
+      await environments?.stop?.(workspace)
       throw new Error(`Could not install the hobwork CLI in ${label}: ${cli instanceof Error ? cli.message : cli.stderr}`)
     }
     const vm = execVm(sandbox)
@@ -152,9 +201,13 @@ export function workspaceVmBackend(
     return {
       ...vm,
       egress,
-      stop: () => sandbox.stop(),
+      stop: async () => {
+        await sandbox.stop()
+        await environments?.stop?.(workspace)
+      },
       isStale: () => {
-        const current = new Set([NPM_REGISTRY, ...hobworkEgress(workspace.dir)])
+        if ((environments?.fingerprint(workspace) ?? '') !== fingerprint) return true
+        const current = egressOf(environment?.egress ?? [])
         return current.size !== egress.length || egress.some((host) => !current.has(host))
       },
     }

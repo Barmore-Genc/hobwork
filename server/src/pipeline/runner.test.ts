@@ -74,11 +74,11 @@ test('installs only when the project has dependencies outside the platform set',
 test('uses the migration dry run hook', async () => {
   const run = await runPipeline(
     host,
-    { startVm: passing, migrationDryRun: async ({ dir }) => ({ status: 'failed', output: `bad migration in ${dir !== ''}` }) },
+    { startVm: passing, migrationDryRun: async ({ commit }) => ({ status: 'failed', output: `bad migration in ${commit.length}` }) },
     { project: 'filament', ...(await seed()) },
   )
   expect(run).toMatchObject({ status: 'failed', failedStep: 'migrations' })
-  expect(run.steps.at(-1)?.output).toBe('bad migration in true')
+  expect(run.steps.at(-1)?.output).toBe('bad migration in 40')
 })
 
 test('fails a step that times out or whose VM cannot start', async () => {

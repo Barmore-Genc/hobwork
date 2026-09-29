@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
+import { randomBytes } from 'node:crypto'
+import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
 import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
@@ -11,18 +13,20 @@ import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
 import { signedIn, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
+import { createSecretStore } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
 import { getInvocation, listInvocations, queryLogs } from './logs.ts'
 import { createRuntime, type Runtime, type RuntimeOptions } from './runtime.ts'
-import { fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
+import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
 import { rotateWebhookToken } from './webhooks.ts'
 
 let host: ReturnType<typeof createTestHost>
 let sandboxes: FakeRuntimeSandboxes
 let runtime: Runtime
 let server: Server | undefined
+let data: ProjectData | undefined
 
 const HOBWORK_JSON = {
   routes: {
@@ -106,6 +110,8 @@ afterEach(async () => {
     server = undefined
   }
   await runtime?.stop()
+  await data?.stop()
+  data = undefined
   host.dispose()
 })
 
@@ -247,12 +253,13 @@ test('invocations fail with an explanation when no runtime backend is configured
   expect(!outcome.ok && outcome.error.message).toContain('no runtime VM backend')
 })
 
-async function withDelivery() {
+async function withDelivery(options: Partial<RuntimeOptions> = {}) {
   const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
   let delivery: ReturnType<typeof createDelivery> | undefined
   start({
     revert: (request) => delivery!.restore(request),
     autoRevert: { windowMs: 60_000, minFailures: 3, minFailingMs: 0 },
+    ...options,
   })
   delivery = createDelivery(host, { workspaces, deploy: runtime.deploy })
   return delivery
@@ -341,4 +348,98 @@ test('trigger registry messages go to the project log', () => {
   const lines = queryLogs(host, { project: 'filament', limit: 10 })
   expect(lines).toEqual([expect.objectContaining({ event: 'trigger', level: 'error' })])
   expect(lines[0]?.message).toContain('refused trigger "button"')
+})
+
+function bodyOf(outcome: Awaited<ReturnType<Runtime['invoke']>>): unknown {
+  if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message}`)
+  return JSON.parse(Buffer.from(outcome.response.body, 'base64').toString())
+}
+
+const COUNTER_JSON = { ...HOBWORK_JSON, routes: { ...HOBWORK_JSON.routes, 'POST /hits': { handler: 'src/hits.ts' } } }
+const COUNTER = {
+  'migrations/0001_hits.sql': 'CREATE TABLE hits (id INTEGER PRIMARY KEY, label TEXT NOT NULL) STRICT;',
+  'handlers/hits.js': `export default async (ctx) => {
+    await ctx.db.run('INSERT INTO hits (label) VALUES (?)', ['visit'])
+    return ctx.db.get('SELECT count(*) AS n FROM hits')
+  }`,
+}
+
+test('deploy applies migrations and handlers keep data in the project DB across invocations', async () => {
+  data = createProjectData(host)
+  start({ data })
+  await deploy(projectFiles({ hobwork: COUNTER_JSON, handlers: COUNTER }))
+  const hit = () => runtime.invoke('filament', { kind: 'route', name: 'POST /hits', manual: true })
+  expect(bodyOf(await hit())).toEqual({ n: 1 })
+  ;[...sandboxes.running][0]!.crash()
+  await until(() => sandboxes.running.size === 0 || queryLogs(host, { project: 'filament', limit: 50 }).some((l) => l.event === 'crash'))
+  expect(bodyOf(await hit())).toEqual({ n: 2 })
+  const applied = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.event === 'db')
+  expect(applied?.message).toBe('Applied migrations: 0001_hits.sql')
+})
+
+test('a version whose migration fails on deploy is reverted', async () => {
+  data = createProjectData(host)
+  await withDelivery({ data })
+  const good = await deploy(projectFiles({ hobwork: COUNTER_JSON, handlers: COUNTER }))
+  const broken = projectFiles({
+    hobwork: COUNTER_JSON,
+    handlers: { ...COUNTER, 'migrations/0002_bad.sql': 'CREATE TABLE hits (id INTEGER PRIMARY KEY) STRICT;' },
+  })
+  await expect(deploy(broken)).rejects.toThrow(`Restoring version ${good} automatically`)
+  await until(() => runtime.status('filament').version === good + 2)
+  const failed = queryLogs(host, { project: 'filament', limit: 100 }).find((l) => l.event === 'migration')
+  expect(failed?.message).toContain('0002_bad.sql failed: table hits already exists')
+})
+
+test('slow queries are logged with their invocation', async () => {
+  data = createProjectData(host, { slowQueryMs: 0 })
+  start({ data })
+  await deploy(projectFiles({ hobwork: COUNTER_JSON, handlers: COUNTER }))
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'POST /hits', manual: true })
+  const slow = queryLogs(host, { project: 'filament', invocationId: outcome.invocationId, limit: 10 }).filter((l) => l.event === 'db')
+  expect(slow.map((l) => l.message.split(':')[1]?.trim())).toEqual([
+    "INSERT INTO hits (label) VALUES (?). Add an index in a migration or narrow the query",
+    'SELECT count(*) AS n FROM hits. Add an index in a migration or narrow the query',
+  ])
+  expect(data.status('filament').slowQueries.count).toBe(2)
+})
+
+test('secrets reach runtime VMs as placeholders, their hosts join egress, and a change starts a new VM', async () => {
+  const secrets = createSecretStore(host, randomBytes(32))
+  secrets.set({ project: 'filament', name: 'SPOOL_API_KEY', value: 'real-value', hosts: ['api.spools.example'] })
+  secrets.set({ name: 'SHARED_TOKEN', value: 'shared', hosts: ['shared.example'] })
+  start({ secrets })
+  await deploy(
+    projectFiles({
+      hobwork: { ...HOBWORK_JSON, egress: ['weather.example'] },
+      handlers: { 'handlers/spools.js': 'export default async (ctx) => ctx.secrets' },
+    }),
+  )
+  const [options] = sandboxes.created
+  expect(options?.egress?.sort()).toEqual(['api.spools.example', 'shared.example', 'weather.example'])
+  expect(options?.secrets).toEqual({
+    SHARED_TOKEN: { value: 'shared', hosts: ['shared.example'] },
+    SPOOL_API_KEY: { value: 'real-value', hosts: ['api.spools.example'] },
+  })
+  const route = () => runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  expect(bodyOf(await route())).toEqual({
+    SHARED_TOKEN: `${FAKE_PLACEHOLDER_PREFIX}SHARED_TOKEN`,
+    SPOOL_API_KEY: `${FAKE_PLACEHOLDER_PREFIX}SPOOL_API_KEY`,
+  })
+
+  secrets.set({ project: 'filament', name: 'SPOOL_API_KEY', value: 'rotated' })
+  await route()
+  expect(sandboxes.created).toHaveLength(2)
+  expect(sandboxes.created[1]?.secrets?.SPOOL_API_KEY?.value).toBe('rotated')
+  await until(() => sandboxes.running.size === 1)
+  const stop = queryLogs(host, { project: 'filament', source: 'runtime', limit: 50 }).find((l) => l.event === 'stop')
+  expect(stop?.message).toContain('secrets changed')
+})
+
+test('blocked egress is logged to the project log', async () => {
+  start()
+  await deploy()
+  sandboxes.created[0]?.onEgressBlocked?.({ hostname: 'tracker.example', ip: '', port: 443 })
+  const blocked = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.event === 'egress-blocked')
+  expect(blocked).toMatchObject({ level: 'warn', message: expect.stringContaining('tracker.example:443') })
 })

@@ -26,6 +26,12 @@ export type Context = {
   fetch: typeof fetch
   // Log lines are stored with the invocation. console.log and friends work too.
   log: Logger
+  // The project DB. See `Db`.
+  db: Db
+  // Secret name -> placeholder. Send the placeholder in a request header to a
+  // host the secret is bound to, and Hobwork replaces it with the real value on
+  // the way out. The real value never reaches handler code.
+  secrets: Record<string, string>
 }
 
 export type RequestContext = Context & { request: Request }
@@ -35,3 +41,35 @@ export type RequestContext = Context & { request: Request }
 export type Handler<C extends Context = Context> = (ctx: C) => unknown
 
 export type RequestHandler = Handler<RequestContext>
+
+// Values SQLite stores. Booleans are stored as 1 and 0. Integers come back as
+// numbers, so integers beyond Number.MAX_SAFE_INTEGER are not supported.
+export type SqlValue = null | number | bigint | string | boolean | Uint8Array
+
+// `?` placeholders take an array, `:name`, `@name` and `$name` placeholders an
+// object keyed by the name without its prefix.
+export type SqlParams = SqlValue[] | Record<string, SqlValue>
+
+export type Row = Record<string, null | number | string | Uint8Array>
+
+export type Statement = { sql: string; params?: SqlParams }
+
+export type RunResult = {
+  // Rows inserted, updated or deleted.
+  changes: number
+  lastInsertRowid: number
+}
+
+export type StatementResult = RunResult & { rows: Row[] }
+
+// Every call is one request to the host, so there are no interactive
+// transactions: `batch` runs its statements in one transaction and rolls all of
+// them back if one fails. Each SQL string holds one statement. The schema comes
+// from migrations/*.sql, so statements cannot create, change or drop tables.
+export interface Db {
+  query<T = Row>(sql: string, params?: SqlParams): Promise<T[]>
+  // First row, or undefined.
+  get<T = Row>(sql: string, params?: SqlParams): Promise<T | undefined>
+  run(sql: string, params?: SqlParams): Promise<RunResult>
+  batch(statements: Statement[]): Promise<StatementResult[]>
+}

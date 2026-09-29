@@ -75,13 +75,15 @@ Status: done, covered end to end by `pnpm -C server test:vm` (template project m
 - DB size and slow query warnings.
 - Secrets: encrypted storage, bound hosts, placeholders in VMs. Egress allowlist from `hobwork.json` and secret hosts. Blocked requests logged.
 
+Status: done, covered end to end by `pnpm -C server test:vm` (a deployed handler keeps rows across invocations, tests use `createTestDb` in the VM, `hobwork sql` reaches the branch DB, a migration that fails on production data blocks the merge, a secret bound to `postman-echo.com` is substituted while the guest sees the placeholder, and requests to other hosts, including ones that do not resolve, are blocked and logged). Secrets have JSON APIs and a host CLI; their web UI is Phase 7. Deferred: backups of project DBs, interrupting a runaway query instead of abandoning its worker, and invoking handlers against a branch DB.
+
 ## Phase 7: Web UI
 
 - Login: pocket-id (OIDC) first.
 - Projects overview, versions list with restore, invocations and logs, secrets management, agent access management.
 - Serve project UIs at `/p/<project>/` with the theme stylesheet. Theme wired into the project template's Tailwind config.
 
-Status: done are OIDC login with an allowlist, sessions and CSRF protection, the theme package served at `/theme/theme.css`, the host serving the built UI, the projects overview, versions with restore, and agent access management. Tested against Pocket ID in Docker (`dev/pocket-id/`). Project routes (`/p/<project>/api/*`) accept a signed-in user's session. Still to do: invocations and logs pages, secrets management (needs Phase 6), serving project UIs at `/p/<project>/`, and wiring the theme into the project template.
+Status: done are OIDC login with an allowlist, sessions and CSRF protection, the theme package served at `/theme/theme.css`, the host serving the built UI, the projects overview, versions with restore, and agent access management. Tested against Pocket ID in Docker (`dev/pocket-id/`). Project routes (`/p/<project>/api/*`) accept a signed-in user's session. Still to do: invocations and logs pages, secrets management (the JSON API exists), serving project UIs at `/p/<project>/`, and wiring the theme into the project template.
 
 ## Phase 8: Auth and access
 

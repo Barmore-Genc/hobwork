@@ -22,7 +22,7 @@ pnpm -C images/platform install --lockfile-only --ignore-workspace
 
 ## On colossus (x86_64 Linux)
 
-Needs Docker, `qemu-system-x86_64`, `qemu-img`, Node >= 23.6 and read-write access to `/dev/kvm`.
+Needs Docker, `qemu-system-x86_64`, `qemu-img`, Node >= 24.12 and read-write access to `/dev/kvm`.
 
 ```sh
 npx pnpm@12.5.1 install

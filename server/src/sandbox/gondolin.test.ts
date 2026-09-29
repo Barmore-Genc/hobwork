@@ -183,6 +183,13 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     expect(blocked).toContain('example.com')
   })
 
+  test('egress to a host that does not resolve is blocked and reported too', async () => {
+    blocked.length = 0
+    const result = await sandbox.exec('curl -s -o /dev/null -w "%{http_code}" https://nothing-here.invalid/').result
+    expect(result.stdout).toBe('403')
+    expect(blocked).toEqual(['nothing-here.invalid'])
+  })
+
   test('host services are not reachable from the guest', async () => {
     const server = createServer((_req, res) => res.end('host service'))
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

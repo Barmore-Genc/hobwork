@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.5.1",
   "engines": {
-    "node": ">=23.6"
+    "node": ">=24.12"
   },
   "scripts": {
     "dev": "pnpm -r --parallel --if-present dev",

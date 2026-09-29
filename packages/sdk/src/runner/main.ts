@@ -12,6 +12,10 @@ try {
       appDir: process.env.HOBWORK_APP_DIR ?? '/app',
       internalUrl: process.env.HOBWORK_INTERNAL_URL ?? 'http://hobwork.internal',
       handlers: JSON.parse(process.env.HOBWORK_HANDLERS ?? '[]') as string[],
+      // The sandbox puts each secret's placeholder in an env var of the same name.
+      secrets: Object.fromEntries(
+        (JSON.parse(process.env.HOBWORK_SECRETS ?? '[]') as string[]).map((name) => [name, process.env[name] ?? '']),
+      ),
     },
     Number(process.env.HOBWORK_RUNNER_PORT ?? RUNNER_PORT),
   )

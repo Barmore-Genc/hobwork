@@ -18,6 +18,9 @@ export type FakeRuntimeSandboxes = {
 
 type FakeSandbox = Sandbox & { options: SandboxOptions; crash(): void }
 
+// What the fake puts in a secret's env var instead of its value.
+export const FAKE_PLACEHOLDER_PREFIX = 'FAKE_SECRET_'
+
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   return (server.address() as AddressInfo).port
@@ -81,6 +84,8 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
           const child = spawn(process.execPath, [join(mountPath(options, match[1]!), 'main.ts')], {
             env: {
               ...process.env,
+              ...options.env,
+              ...Object.fromEntries(Object.keys(options.secrets ?? {}).map((name) => [name, `${FAKE_PLACEHOLDER_PREFIX}${name}`])),
               ...execOptions.env,
               HOBWORK_APP_DIR: mountPath(options, execOptions.env?.HOBWORK_APP_DIR ?? '/app'),
               HOBWORK_INTERNAL_URL: internalUrl,

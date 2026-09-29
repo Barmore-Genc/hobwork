@@ -48,6 +48,31 @@ export type LogLine = {
 // POST http://hobwork.internal/v1/logs
 export type LogBatch = { lines: LogLine[] }
 
+// Blobs and bigints do not survive JSON as they are.
+export type WireValue = null | number | string | { $blob: string } | { $bigint: string }
+
+export type WireStatement = { sql: string; params?: WireValue[] | Record<string, WireValue> }
+
+// POST http://hobwork.internal/v1/db
+export type DbRequest = {
+  statements: WireStatement[]
+  // Runs the statements in one transaction (Db.batch).
+  transaction: boolean
+  // Set by the runner inside an invocation, so slow queries are logged with it.
+  invocation?: number
+}
+
+export type WireResult = {
+  rows: Record<string, WireValue>[]
+  changes: number
+  lastInsertRowid: number
+}
+
+// `statement` is the index of the statement that failed.
+export type DbResponse =
+  | { ok: true; results: WireResult[] }
+  | { ok: false; error: { message: string; code?: string; statement?: number } }
+
 // Where `pnpm build` puts a handler, relative to the build's root (the
 // project's dist/). The template's vite.config.ts writes the same layout.
 export function handlerModulePath(handler: string): string {

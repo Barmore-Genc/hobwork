@@ -40,7 +40,7 @@ Named after hobs, the house spirits that quietly do chores around the home.
       project)                            run)
 ```
 
-- **Host**: Node (>= 23.6, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `colossus` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
+- **Host**: Node (>= 24.12 for `node:sqlite`'s authorizer and defensive mode, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `colossus` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
 - **Web UI**: React, TypeScript, Tailwind, Vite. Served by the host.
 - **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, e2fsprogs and the platform dependency set including `@hobwork/sdk` (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
 - **SDK** (`@hobwork/sdk`): the library project code imports to talk to the host (storage, logs, secrets-aware fetch, devices, calling other projects).
@@ -63,7 +63,7 @@ All Gondolin use goes through a small `Sandbox` interface in the host (`server/s
 
 - **Exec** runs `/bin/sh -lc <command>`. Several commands can run at once in one VM, including next to a long-running server.
 - **Kill and timeout**: Gondolin cannot signal a guest process (aborting an exec only stops waiting). Every exec gets a unique `HOBWORK_EXEC_ID` env var, which child processes inherit. A kill runs a second exec that finds the processes with that variable in `/proc/*/environ` and sends SIGTERM, then SIGKILL after 2s. This also catches children that started their own session.
-- **Blocked egress** is reported to the host through a callback (for logging). Requests to a host that does not resolve get a 502 instead of a 403.
+- **Blocked egress** is reported to the host through a callback (for logging). Gondolin checks its allowlist only after resolving the name, so a host that does not resolve would get a 502 and never reach the callback. The sandbox therefore checks the hostname against the allowlist first (`isRequestAllowed`, same pattern matching as Gondolin), which answers 403 and reports it.
 
 Measured with `pnpm -C server bench:sandbox` (Hobwork image, Gondolin 0.12.0, 512MB / 2 vCPU VMs) on an Apple Silicon Mac (M-series, 14 cores, HVF):
 
@@ -200,12 +200,12 @@ Measured with `pnpm -C server bench:sandbox vfs` on the Mac (generated project: 
 - `main` is the deployed version. Nobody pushes to it directly. The only way in is a merge through the pipeline.
 - Agents do work on branches. Each branch can have an **agent workspace** VM with the branch checked out.
 - A workspace's checkout lives on the host at `data/workspaces/<project>/<branch>/`, with the branch's files in `files/` and the git directory in `git/`. The VM mounts only `files/`. The host runs all git commands for the workspace (`commit`, `diff`, `log`) with an explicit git directory, so nothing the VM writes (git config, hooks, filters) is ever executed on the host. `commit` pushes to the branch in the bare repo.
-- Branch data is isolated: a workspace gets a copy of the project DB taken when the workspace starts. Pipeline runs and tests get an empty DB with migrations applied.
+- Branch data is isolated: a workspace gets a copy of the project DB taken when the workspace VM starts. Tests get an empty DB with migrations applied. See [Data](#data).
 
 Workspace VMs (`server/src/guest-vm.ts`):
 
 - Started by the first `bash` call on a branch: 4 vCPUs, 2GB memory, 4GB root disk, `files/` at `/workspace` with `node_modules` on the VM disk. `bash`'s `cwd` is relative to `/workspace`. Extras are installed on start. A failed install does not fail the start, so the agent can still run commands and see the error with `pnpm install`.
-- Egress: the branch's `hobwork.json` `egress` plus `registry.npmjs.org`. When `egress` changes, the next `bash` call replaces the VM (unless a command is still running), so agents can test a new host without a restart tool.
+- Egress: the branch's `hobwork.json` `egress`, the hosts of the project's secrets, and `registry.npmjs.org`. Secrets are passed as placeholders like in the runtime. When `egress` or the secrets change, the next `bash` call replaces the VM (unless a command is still running), so agents can test a new host without a restart tool. Blocked requests are logged to the project log with the branch name.
 - Idle stop: a VM with no `bash` call for `HOBWORK_WORKSPACE_IDLE_MINUTES` (default 30) is stopped, unless a command is running. Every `bash` call updates `last_used_at` when it starts and when it ends. The default is well above the 10 minute `bash` timeout. A stopped VM starts again on the next call. Stopping loses processes and the VM-disk `node_modules`, and nothing else, since the files are on the host.
 - The host stops all workspace and pipeline VMs on SIGINT and SIGTERM.
 - Pipeline VMs use the same resources and layout with a fresh VM per run and only the registry allowed.
@@ -271,7 +271,7 @@ Written into `AGENTS.md` in every project and into the MCP server instructions:
 2. Validate `hobwork.json`.
 3. Install extra dependencies, if the project has any. Platform packages are already in the image.
 4. `typecheck`, `lint`, `test`, `build` (package.json scripts from the template). `build` bundles handlers and dashboards with Vite.
-5. Apply new migrations to a copy of the production DB, as a dry run.
+5. Apply new migrations to a copy of the production DB, as a dry run (see [Data](#data)).
 6. On success: squash-merge into `main` with the agent's summary as the commit message, apply migrations for real, deploy.
 7. On failure: return the failing step with its output to the agent. No human is involved. The agent fixes and calls `merge` again.
 
@@ -318,8 +318,8 @@ Implementation (`server/src/runtime/`):
 - **Handler bundles.** The template's `vite.config.ts` builds two Vite environments in one `vite build`: the dashboard (`dist/ui/`, `dist/assets/`) and the handlers. Every handler in `hobwork.json` becomes `dist/handlers/<path without extension>.js`, an ES module with all dependencies bundled in (Node built-ins stay external), so the runtime VM needs no `node_modules`.
 - **Runner delivery.** The runner is `packages/sdk/src/runner/` and uses only Node built-ins. The host mounts that directory read-only at `/opt/hobwork/runner` and runs `node /opt/hobwork/runner/main.ts`, with the build read-only at `/app`. The runner is host code, not SDK API: it speaks the host's invoke protocol, so it has to match the host version, and outside `node_modules` Node runs its TypeScript directly. Project code depends only on the context type from the SDK in the image, so context changes must stay additive for builds tested against an older SDK to keep working.
 - **Protocol** (`packages/sdk/src/runner/protocol.ts`). The host POSTs `/invoke` on the runner's ingress with the invocation (ID, kind, name, manual), the handler path, the serialized request (method, URL, headers, base64 body), route params and payload. The runner answers with the serialized response or the error (name, message, stack). `GET /ready` answers once every handler module loaded. Console output inside an invocation (tracked with `AsyncLocalStorage`) and `ctx.log` lines are batched to `POST http://hobwork.internal/v1/logs` and flushed before the invocation answers. Output outside any invocation goes to the runner's stdout, which the host records as runtime logs.
-- **VMs** get 512MB and 2 vCPUs, the project's `egress`, and an internal handler bound to the project. A blocked egress request is logged as an `egress-blocked` event.
-- **Deploy** (the delivery `Deploy` hook): ensure the build, switch crons and HA triggers (`syncProjectTriggers`) to the new version, start the new VM and wait for `/ready`, switch, then retire the old VM: wait for its running invocations (up to the invocation timeout) and stop it. Without a runtime VM backend the bookkeeping still happens and invocations fail with an explanation.
+- **VMs** get 512MB and 2 vCPUs, the project's `egress` plus the hosts of its secrets, the secrets as placeholders, and an internal handler bound to the project. A blocked egress request is logged as an `egress-blocked` event. Secrets are fixed when a VM starts, so an invocation that finds them changed starts a new VM and retires the old one.
+- **Deploy** (the delivery `Deploy` hook): ensure the build, apply the version's new migrations to the project DB (a failure counts as "did not start" and triggers auto-revert), switch crons and HA triggers (`syncProjectTriggers`) to the new version, start the new VM and wait for `/ready`, switch, then retire the old VM: wait for its running invocations (up to the invocation timeout) and stop it. Without a runtime VM backend the bookkeeping still happens and invocations fail with an explanation.
 - **Invocations** time out after 5 minutes on the host. Gondolin cannot signal the handler, so it may keep running until the VM stops. A runner that exits is logged as a `crash`, and the next invocation starts a new VM.
 - **Routes** at `/p/<project>/api/*` require an agent token (`Authorization: Bearer`) for now. The check is a `RouteAuthorizer` function in `server/src/runtime/http.ts`, which Phase 7 extends with user sessions for dashboards. `authorization`, `cookie` and `proxy-authorization` headers are never passed to the handler. Request bodies are limited to 10MB.
 - **Webhooks** at `/hooks/<project>/<name>/<token>` accept any method. Tokens are 256 random bits, stored as SHA-256 hashes in `webhook_tokens`, and created or replaced with `rotate_webhook_token`, which shows the URL once. A webhook without a token cannot be called. Unknown project, webhook and token all answer 404. The handler sees the URL without the token.
@@ -345,23 +345,55 @@ Agents read this through MCP (`list_invocations`, `get_logs`, `tail_logs`) and t
 Storage (`server/migrations/0004_runtime.sql`, `server/src/runtime/logs.ts`):
 
 - `invocations`: kind (`route`, `webhook`, `cron`, `trigger`), name (route key or entry name), `manual`, status (`running`, `ok`, `error`), HTTP status for routes and webhooks, error and stack. Invocations still running at host start are marked failed.
-- `logs`: one row per line with source (`handler`, `runtime`, `pipeline`), level, an optional invocation, and for lifecycle lines an event kind (`start`, `stop`, `crash`, `deploy`, `auto-revert`, `egress-blocked`, `trigger`, `pipeline`). Pipeline runs log one line per step with up to 2,000 characters of its output; `pipeline_status` has all of it. Log line IDs are the cursor for `get_logs` and `tail_logs`.
+- `logs`: one row per line with source (`handler`, `runtime`, `pipeline`), level, an optional invocation, and for lifecycle lines an event kind (`start`, `stop`, `crash`, `deploy`, `auto-revert`, `egress-blocked`, `trigger`, `pipeline`, `migration`, `db`). Pipeline runs log one line per step with up to 2,000 characters of its output; `pipeline_status` has all of it. Log line IDs are the cursor for `get_logs` and `tail_logs`.
 - Bounds: messages are cut to 8,000 characters in the middle, an invocation keeps at most 1,000 lines (then one line saying the rest was dropped), and rows older than 30 days or beyond the newest 200,000 lines per project are pruned hourly. MCP output is cut at whole lines with a cursor to continue, and `tail_logs` waits at most 60 seconds.
 
 ## Data
 
-- **Host DB**: SQLite for Hobwork's own state (users, agents, tokens, projects, versions, invocations, logs, pipeline runs, secrets metadata).
-- **Project DBs**: one SQLite file per project, owned by the host. Project code reaches it through the SDK, which sends queries to the host. VMs do not open DB files directly, because SQLite locking and WAL shared memory do not work reliably through the guest filesystem bridge across VMs.
-- Migrations: `migrations/*.sql` in the repo, applied in order on deploy, tracked in the project DB.
-- Warnings: the host watches DB size and slow queries per project and reports them in logs and project status, so agents notice before it becomes a problem.
-- All SQLite databases use WAL, `busy_timeout`, `synchronous = NORMAL`, `foreign_keys = ON` and `STRICT` tables.
+- **Host DB**: SQLite for Hobwork's own state (users, agents, tokens, projects, versions, invocations, logs, pipeline runs, secrets).
+- **Project DBs**: one SQLite file per project at `data/projects/<project>/db.sqlite`, owned by the host. Project code reaches it through the SDK, which sends queries to the host. VMs do not open DB files directly, because SQLite locking and WAL shared memory do not work reliably through the guest filesystem bridge across VMs.
+- All SQLite databases use WAL, `busy_timeout`, `synchronous = NORMAL`, `foreign_keys = ON` and `STRICT` tables. Project DB connections also turn on SQLite's defensive mode.
+
+### Query API
+
+Handlers get `ctx.db` (`packages/sdk/src/index.ts`): `query(sql, params)` (rows), `get` (first row), `run` (`changes`, `lastInsertRowid`) and `batch(statements)`. Parameters are an array for `?` or an object for named placeholders. Values are null, numbers, strings, bigints, booleans (stored as 1 and 0) and `Uint8Array`. Blobs and bigints travel as `{ $blob }` and `{ $bigint }` in JSON.
+
+- **Transport**: the runner POSTs `{ statements, transaction, invocation }` to `http://hobwork.internal/v1/db` (`DbRequest` in `packages/sdk/src/runner/protocol.ts`). The answer is the rows and change counts, or the SQLite error with the index of the failing statement (`DbError` in the handler).
+- **Transactions**: there are no interactive transactions. A transaction held open across HTTP round trips would hold the project's write lock while handler code runs, and a handler that crashes or times out would leave it open. `batch` sends all its statements in one request, and the host runs them in one `BEGIN IMMEDIATE` transaction that rolls back on the first error. Read-then-write logic uses single statements (`UPDATE ... WHERE`, `INSERT ... ON CONFLICT`, `RETURNING`) or a batch.
+- **Rules** (`packages/sdk/src/db/execute.ts`, enforced with SQLite's authorizer and a small lexer): one statement per SQL string (node:sqlite would silently ignore the rest); no schema changes, which belong in migrations so the dry run sees them; no `BEGIN` or `SAVEPOINT`; no `ATTACH`, `VACUUM` or `load_extension`, which could read or write files on the host; only introspection PRAGMAs (`table_info` and similar); no writes to `hobwork_migrations`. Results are limited to 10,000 rows.
+- **Execution**: each open project DB has a worker thread with one connection (`server/src/data/db-pool.ts`), so a slow query blocks that project's queries and not the host. A query that runs longer than 30s is abandoned: SQLite cannot be interrupted from Node, so the worker is terminated and the next query opens a new connection. Workers close after 5 idle minutes.
+- **Isolation**: the internal handler is bound to the VM when it is created, so a runtime VM reaches only its project's DB and a workspace VM only its branch DB.
+
+### Migrations
+
+- `migrations/NNNN_name.sql` in the repo, applied in version order, each in its own transaction, and recorded with a SHA-256 checksum in `hobwork_migrations` in the project DB. Forward-only: there are no down migrations. The host reads the files from git, never from a checkout, and refuses symlinks, so a migration cannot make the host read other files.
+- **Deploy** applies the new migrations of the deployed version before it starts. A restore of an older version has fewer migrations, and nothing is undone.
+- **Dry run** (the pipeline's `migrations` step, `server/src/data/project-data.ts`): all migrations are applied to an empty in-memory DB (what tests and new projects start from), then the new ones to a copy of the production DB. The production DB's worker writes the copy with `VACUUM INTO`, a consistent snapshot while handlers keep writing. node:sqlite's `backup()` was tried first and took seconds per copy under Vitest. The step fails with the SQL error, and also when:
+  - an applied migration's file changed,
+  - a new migration creates a table without `STRICT` (tables from earlier migrations are not checked again),
+  - a table, view or column that existed before is gone afterwards.
+- **Additive check**: comparing the schema before and after (tables and views with their columns, from `pragma_table_list` and `pragma_table_xinfo`) catches `DROP TABLE`, `DROP COLUMN` and both kinds of `RENAME` in any spelling. It still allows SQLite's usual way to change constraints: create a new table, copy the rows, drop the old table and rename the new one to the old name with the same columns. Rejected: matching `DROP` and `RENAME` in the SQL text, which cannot tell that rebuild apart from a real drop. Dropping indexes and triggers is allowed, since older versions still run without them.
+
+### Branch and test DBs
+
+- **Workspaces**: when a workspace VM starts, the host copies the production DB to `data/workspaces/<project>/<branch>/db.sqlite` (an empty DB if the project has none yet). Before each query from the VM, the branch's own `migrations/` that the copy has not seen are applied. If an applied one was edited, which is normal while developing, the branch DB starts over from a fresh production copy. The workspace VM reaches the branch DB at `hobwork.internal/v1/db`, and `hobwork sql "<statement>"` runs a statement on it.
+- **Tests**: `@hobwork/sdk/testing` has `createTestDb()`, a fresh in-memory `node:sqlite` DB inside the VM with every migration from `migrations/` applied and the same executor and rules as the host, and `createTestContext()`, a handler context with one. Each call gives an empty DB, so tests are independent, and nothing crosses the VM boundary, so tests work the same in workspace and pipeline VMs. Rejected: an internal handler with a host-side empty DB for pipeline VMs, which would make tests share one DB and depend on the host.
+
+### Warnings
+
+- Statements slower than 500ms on a production DB are logged as `db` events (with the invocation, when the runner sent one), at most once per statement text every 10 minutes, and counted.
+- DB size (file plus WAL) is checked at most once a minute after queries, and after migrations. Every time it crosses another 100 MB, a `db` warning is logged.
+- `get_project` shows `database`: size, a size warning once over 100 MB, and the slow query count, slowest time and last slow statement since the host started.
 
 ## Secrets and network
 
-- Secrets are per project (plus optional global ones), created by users in the UI. Each secret is bound to the hosts it may be sent to.
-- Values are encrypted at rest and never shown to agents or sent into VMs. VMs get placeholders.
-- A project's egress allowlist comes from `hobwork.json` plus the hosts of its secrets. Changes to `hobwork.json` show up in the version diff in the UI.
-- Blocked requests are logged, so an agent can see why a fetch failed.
+- Secrets are per project, plus global ones that every project gets. A project secret with the same name as a global one wins. Users create them and bind each one to the hosts it may be sent to. Names are env var style (`SPOOL_API_KEY`) and must not replace variables the guest relies on (`PATH`, `NODE_OPTIONS`, `HOBWORK_*` and similar). Host patterns follow Gondolin: `api.example.com` or `*.example.com`. `*` alone and `hobwork.internal` are refused.
+- **Storage** (`server/src/secrets.ts`, `secrets` table): values are encrypted with AES-256-GCM, a random 96-bit IV per value, and the project ID and name as additional authenticated data, so a ciphertext copied to another row does not decrypt.
+- **Key**: `HOBWORK_SECRET_KEY` (32 bytes as hex or base64) when set. Otherwise `data/secret.key`, generated on first start with mode 0600. The host refuses to start when the file is readable by other users. The file protects against a leaked host DB alone (a backup or copy of `hobwork.db`). The env var, e.g. from a systemd credential, also keeps the key out of backups of the data dir. With a different key, existing secrets do not decrypt and VM starts fail with that message instead of using wrong values.
+- **In VMs**: the host decrypts values only to hand them to the `Sandbox`'s `secrets` option. The guest sees `GONDOLIN_SECRET_...` placeholders in env vars of the same name, and the runner gives handlers `ctx.secrets` (name to placeholder). Gondolin replaces a placeholder with the value in request headers to the bound hosts only, after the internal handler ran, so neither handler code nor the host's internal endpoint sees values. Substitution in URLs and bodies is off.
+- **Who manages them**: users only. No API or MCP tool returns values. Agents get `list_secrets` (names, scope and bound hosts) and the names in `get_project`, and have no tool that creates, changes or deletes secrets. The web API in `server/src/api/routes.ts` needs a signed-in user and the CSRF header, so an agent token gets 401: `GET /api/projects/<name>/secrets` (the secrets the project's handlers get), `PUT /api/projects/<name>/secrets/<NAME>` with `{ value?, hosts? }` (create, or change either part), `DELETE /api/projects/<name>/secrets/<NAME>`, and `GET /api/secrets`, `PUT|DELETE /api/secrets/<NAME>` for global ones. On the host, `pnpm --filter @hobwork/server secret` does the same from a shell and reads the value from stdin.
+- **Egress**: a runtime VM may reach the `hobwork.json` `egress` hosts and the hosts of the project's secrets. Workspace VMs get the same plus `registry.npmjs.org`, pipeline VMs only the registry. Blocked requests get a 403 and an `egress-blocked` line in the project log with the host and port, so an agent can see why a fetch failed. Changes to `hobwork.json` show up in the version diff in the UI.
+- Secret changes apply without a restart: runtime and workspace VMs compare a fingerprint of the project's secrets (names, hosts, update times) and are replaced on the next invocation or `bash` call.
 
 ## Dashboards and UI
 

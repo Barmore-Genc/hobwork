@@ -182,6 +182,13 @@ test('the name can be used again right after deleting', async () => {
   expect(outcome.ok && JSON.parse(Buffer.from(outcome.response.body, 'base64').toString())).toEqual([])
 })
 
+test('deleting a project drops its storage use', async () => {
+  const id = projectId('filament')
+  const forget = vi.fn()
+  await deleteProject({ host, workspaces, delivery, runtime, data, storage: { forget } }, 'filament')
+  expect(forget).toHaveBeenCalledWith(id)
+})
+
 test('deleting needs the project name typed and a signed-in user', async () => {
   expect((await deleteRequest('filament', { confirm: 'filamen' })).status).toBe(400)
   expect((await deleteRequest('filament', {})).status).toBe(400)

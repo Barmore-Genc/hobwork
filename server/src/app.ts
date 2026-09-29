@@ -132,7 +132,14 @@ export function createApp(
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
     ...deviceUserRoutes({ db: host.db, devices }),
-    ...projectDeletionRoutes({ host, workspaces, delivery, runtime: options.runtime, data: options.data }),
+    ...projectDeletionRoutes({
+      host,
+      workspaces,
+      delivery,
+      runtime: options.runtime,
+      data: options.data,
+      storage: options.storage,
+    }),
     ...homeAssistantSettingsRoutes({
       host,
       settings: options.homeAssistantSettings,

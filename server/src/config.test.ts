@@ -18,6 +18,13 @@ test('rejects an invalid port', () => {
   expect(() => loadConfig({ HOBWORK_PORT: 'abc' })).toThrow('HOBWORK_PORT')
 })
 
+test('SSH gateway port', () => {
+  expect(loadConfig({}).sshPort).toBe(2222)
+  expect(loadConfig({ HOBWORK_SSH_PORT: '2022' }).sshPort).toBe(2022)
+  expect(loadConfig({ HOBWORK_SSH_PORT: 'off' }).sshPort).toBeUndefined()
+  expect(() => loadConfig({ HOBWORK_SSH_PORT: '99999' })).toThrow('HOBWORK_SSH_PORT')
+})
+
 test('Home Assistant is optional', () => {
   expect(loadConfig({}).homeAssistant).toBeUndefined()
   expect(

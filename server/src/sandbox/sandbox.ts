@@ -70,10 +70,29 @@ export type SandboxProcess = {
   kill(): Promise<void>
 }
 
+export type SpawnOptions = {
+  cwd?: string
+  env?: Record<string, string>
+  // Allocates a pseudo-terminal of this size. Output then arrives on stdout only.
+  pty?: { rows: number, cols: number }
+  onData: (stream: OutputChunk['stream'], data: Buffer) => void
+}
+
+// A process with stdin, for interactive sessions. Output is passed on as raw bytes.
+export type InteractiveProcess = {
+  result: Promise<{ exitCode: number, signal?: number }>
+  write(data: string | Uint8Array): void
+  // Closes stdin.
+  end(): void
+  resize(rows: number, cols: number): void
+  kill(): Promise<void>
+}
+
 export interface Sandbox {
   readonly id: string
   // `command` runs through a login shell (`/bin/sh -lc`). Several commands can run at once.
   exec(command: string, options?: ExecOptions): SandboxProcess
+  spawn(command: string, options: SpawnOptions): InteractiveProcess
   // Routes HTTP requests on the returned host URL to a server listening on the guest's
   // 127.0.0.1:<port>. Calling it again with another port moves the route.
   ingress(port: number): Promise<string>

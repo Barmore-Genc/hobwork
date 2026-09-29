@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Agent } from './agents.ts'
 import { git, GitError, HOBWORK_IDENTITY, type GitOptions } from './git.ts'
 import { repoPath, workspaceDir, type Host } from './host.ts'
 import { ProjectError, requireProject } from './projects.ts'
@@ -35,6 +37,7 @@ export type ExecOptions = {
   // Aborted when the caller gives up (timeout or cancelled request). The backend
   // should kill the command.
   signal?: AbortSignal
+  env?: Record<string, string>
   onOutput?: (stream: 'stdout' | 'stderr', chunk: string) => void
 }
 
@@ -49,11 +52,43 @@ export type ExecWorkspaceVm = WorkspaceVm & {
   exec(command: string, options: ExecOptions): Promise<ExecResult>
 }
 
+export type SpawnOptions = {
+  // Relative to the workspace files directory, like ExecOptions.cwd.
+  cwd: string
+  env?: Record<string, string>
+  // Allocates a pseudo-terminal of this size. Output then arrives on stdout only.
+  pty?: { rows: number; cols: number }
+  onData: (stream: 'stdout' | 'stderr', data: Buffer) => void
+}
+
+export type WorkspaceProcess = {
+  result: Promise<{ exitCode: number }>
+  write(data: string | Uint8Array): void
+  // Closes stdin.
+  end(): void
+  resize(rows: number, cols: number): void
+  kill(): Promise<void>
+}
+
+// Workspace VMs that also run interactive processes (SSH sessions).
+export type InteractiveWorkspaceVm = ExecWorkspaceVm & {
+  spawn(command: string, options: SpawnOptions): WorkspaceProcess
+}
+
 // Seam for the sandbox layer: start a VM with the workspace directory mounted
 // read-write. The returned handle is kept while the workspace runs.
 export type StartWorkspaceVm<Vm extends WorkspaceVm> = (workspace: Workspace) => Promise<Vm>
 
 export type CommitAuthor = { name: string; email: string }
+
+// Env var with the session token of the agent a command runs for. The `hobwork`
+// CLI in the VM sends it back, so its calls act as that agent.
+export const SESSION_ENV = 'HOBWORK_SESSION'
+
+export type WorkspaceSession = {
+  env: Record<string, string>
+  close(): void
+}
 
 export type WorkspaceManager<Vm extends WorkspaceVm> = ReturnType<typeof createWorkspaceManager<Vm>>
 
@@ -93,6 +128,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
 ) {
   const vms = new Map<number, Vm>()
   const queues = new Map<string, Promise<unknown>>()
+  const sessions = new Map<string, { project: string; branch: string; agent: Agent }>()
   let idleTimer: NodeJS.Timeout | undefined
 
   // Checkout, git and VM operations on one workspace run one at a time, so two
@@ -384,6 +420,27 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     })
   }
 
+  // Uncommitted changes as `git status --porcelain` lines.
+  function changes(project: string, branch: string): Promise<string[]> {
+    return serialized(project, branch, async () => {
+      requireWorkspace(project, branch)
+      const status = await workspaceGit(project, branch, ['status', '--porcelain', '--untracked-files=all'])
+      return status.split('\n').filter(Boolean)
+    })
+  }
+
+  // Open while a command runs for `agent` in the workspace VM.
+  function openSession(project: string, branch: string, agent: Agent): WorkspaceSession {
+    const token = randomBytes(32).toString('base64url')
+    sessions.set(token, { project, branch, agent })
+    return { env: { [SESSION_ENV]: token }, close: () => void sessions.delete(token) }
+  }
+
+  function sessionAgent(project: string, branch: string, token: string): Agent | undefined {
+    const session = sessions.get(token)
+    return session && session.project === project && session.branch === branch ? session.agent : undefined
+  }
+
   // VM handles do not survive a host restart.
   function resetStatuses(): void {
     host.db.prepare("UPDATE workspaces SET status = 'stopped' WHERE status != 'stopped'").run()
@@ -404,7 +461,10 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     touch,
     commit,
     diff,
+    changes,
     moveBranch,
+    openSession,
+    sessionAgent,
     resetStatuses,
   }
 }

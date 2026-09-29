@@ -11,7 +11,8 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
-export function createAgentToken(db: DatabaseSync, agentName: string): { agent: Agent; token: string } {
+// Creates the agent unless one with this name exists.
+export function ensureAgent(db: DatabaseSync, agentName: string): Agent {
   if (!agentName.trim()) throw new Error('Agent name must not be empty')
   const row = db
     .prepare(
@@ -21,7 +22,11 @@ export function createAgentToken(db: DatabaseSync, agentName: string): { agent: 
     )
     .get(agentName)
   if (!row) throw new Error('Agent upsert returned no row')
-  const agent = { id: Number(row.id), name: String(row.name) }
+  return { id: Number(row.id), name: String(row.name) }
+}
+
+export function createAgentToken(db: DatabaseSync, agentName: string): { agent: Agent; token: string } {
+  const agent = ensureAgent(db, agentName)
   const token = TOKEN_PREFIX + randomBytes(32).toString('base64url')
   db.prepare('INSERT INTO agent_tokens (agent_id, token_hash) VALUES (?, ?)').run(
     agent.id,

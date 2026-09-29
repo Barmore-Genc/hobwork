@@ -8,14 +8,16 @@
     "start": "node src/index.ts",
     "create-project": "node src/cli/create-project.ts",
     "create-token": "node src/cli/create-token.ts",
+    "add-ssh-key": "node src/cli/add-ssh-key.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox src/guest-vm src/runtime/runtime.vm",
+    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox src/guest-vm src/runtime/runtime.vm src/ssh/ssh.vm",
     "bench:sandbox": "node scripts/bench-sandbox.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/ssh2": "^1.15.6",
     "@types/ws": "^8.18.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
@@ -27,6 +29,7 @@
     "@modelcontextprotocol/sdk": "^1.30.1",
     "ajv": "^8.20.0",
     "openid-client": "^6.8.8",
+    "ssh2": "^1.17.0",
     "zod": "^4.6.5"
   }
 }

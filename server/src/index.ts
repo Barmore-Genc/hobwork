@@ -13,7 +13,9 @@ import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/home
 import { createRuntime } from './runtime/runtime.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
-import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
+import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
+import { createWorkspaceApi } from './workspace-api.ts'
+import { createWorkspaceManager, type InteractiveWorkspaceVm } from './workspaces.ts'
 
 const config = loadConfig()
 const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir: config.dataDir }
@@ -29,8 +31,8 @@ if (vmOptions) console.log(`guest image: ${image}`)
 else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
 
-const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
-  startVm: vmOptions && workspaceVmBackend(vmOptions),
+const workspaces = createWorkspaceManager<InteractiveWorkspaceVm>(host, {
+  startVm: vmOptions && workspaceVmBackend(vmOptions, (workspace) => workspaceApi(workspace)),
   idleTimeoutMs: config.workspaceIdleTimeoutMs,
 })
 workspaces.resetStatuses()
@@ -60,6 +62,7 @@ const delivery = createDelivery(host, {
   pipeline: pipelineVms && { startVm: pipelineVms.start },
   deploy: runtime.deploy,
 })
+const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime })
 homeAssistant.start()
 await runtime.start()
 
@@ -80,8 +83,15 @@ server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)
 })
 
+const sshPort = config.sshPort
+const ssh = sshPort === undefined ? undefined : createSshGateway({ host, workspaces, hostKey: loadHostKey(config.dataDir) })
+ssh?.listen(sshPort, config.host, () => {
+  console.log(`SSH gateway listening on ${config.host}:${sshPort}`)
+})
+
 async function shutdown() {
   homeAssistant.stop()
+  ssh?.close()
   await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
   server.close(() => {
     host.db.close()

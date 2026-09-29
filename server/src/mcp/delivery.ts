@@ -34,7 +34,7 @@ function formatRun(run: PipelineRun): string {
   return lines.join('\n')
 }
 
-function formatMerge(branch: string, result: MergeResult): CallToolResult {
+export function formatMerge(branch: string, result: MergeResult): CallToolResult {
   if (result.status === 'conflict') {
     return text(
       [

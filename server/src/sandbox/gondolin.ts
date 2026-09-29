@@ -14,11 +14,13 @@ import {
   INTERNAL_HOST,
   type ExecOptions,
   type ExecResult,
+  type InteractiveProcess,
   type Mount,
   type OutputChunk,
   type Sandbox,
   type SandboxOptions,
   type SandboxProcess,
+  type SpawnOptions,
 } from './sandbox.ts'
 
 const KILL_GRACE_MS = 2000
@@ -144,15 +146,8 @@ class GondolinSandbox implements Sandbox {
     })
 
     const kill = (): Promise<void> => {
-      killing ??= (async () => {
-        killed = true
-        await this.#signal(execId, 'TERM')
-        const exited = await Promise.race([
-          proc.then(() => true, () => true),
-          new Promise<false>((resolve) => setTimeout(resolve, KILL_GRACE_MS, false)),
-        ])
-        if (!exited) await this.#signal(execId, 'KILL')
-      })()
+      killed = true
+      killing ??= this.#kill(execId, proc)
       return killing
     }
 
@@ -186,6 +181,36 @@ class GondolinSandbox implements Sandbox {
     return { result, kill }
   }
 
+  spawn(command: string, options: SpawnOptions): InteractiveProcess {
+    const execId = randomUUID()
+    const proc = this.#vm.exec(command, {
+      cwd: options.cwd,
+      env: { ...options.env, [EXEC_ID_VAR]: execId },
+      stdin: true,
+      pty: options.pty !== undefined,
+      stdout: bytesWriter((data) => options.onData('stdout', data)),
+      stderr: bytesWriter((data) => options.onData('stderr', data)),
+    })
+    if (options.pty) proc.resize(options.pty.rows, options.pty.cols)
+    let killing: Promise<void> | undefined
+    return {
+      result: proc.then((r) => ({ exitCode: r.exitCode, signal: r.signal })),
+      write: (data) => proc.write(Buffer.from(data)),
+      end: () => proc.end(),
+      resize: (rows, cols) => proc.resize(rows, cols),
+      kill: () => (killing ??= this.#kill(execId, proc)),
+    }
+  }
+
+  async #kill(execId: string, proc: PromiseLike<unknown>): Promise<void> {
+    await this.#signal(execId, 'TERM')
+    const exited = await Promise.race([
+      Promise.resolve(proc).then(() => true, () => true),
+      new Promise<false>((resolve) => setTimeout(resolve, KILL_GRACE_MS, false)),
+    ])
+    if (!exited) await this.#signal(execId, 'KILL')
+  }
+
   async #signal(execId: string, signal: 'TERM' | 'KILL'): Promise<void> {
     await this.#vm.exec(['/bin/sh', '-c', KILL_SCRIPT, 'kill', execId, signal])
   }
@@ -213,6 +238,15 @@ class GondolinSandbox implements Sandbox {
   async stop(): Promise<void> {
     await this.#vm.close()
   }
+}
+
+function bytesWriter(onData: (data: Buffer) => void): Writable {
+  return new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      onData(chunk)
+      callback()
+    },
+  })
 }
 
 function decodingWriter(stream: OutputChunk['stream'], onOutput: (chunk: OutputChunk) => void): Writable {

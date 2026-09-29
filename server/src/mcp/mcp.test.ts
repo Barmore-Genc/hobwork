@@ -9,7 +9,12 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createTestHost } from '../test-host.ts'
-import { createWorkspaceManager, type ExecWorkspaceVm, type Workspace } from '../workspaces.ts'
+import {
+  createWorkspaceManager,
+  type ExecWorkspaceVm,
+  type Workspace,
+  type WorkspaceManager,
+} from '../workspaces.ts'
 
 let host: ReturnType<typeof createTestHost>
 let server: Server
@@ -17,14 +22,15 @@ let url: URL
 let token: string
 let client: Client
 let vmStarts: Workspace[]
+let workspaces: WorkspaceManager<ExecWorkspaceVm>
 
 // Runs commands on the host in the workspace directory, standing in for a VM.
 function fakeVm(workspace: Workspace): ExecWorkspaceVm {
   return {
     async stop() {},
-    exec(command, { cwd, signal, onOutput }) {
+    exec(command, { cwd, signal, env, onOutput }) {
       return new Promise((resolve, reject) => {
-        const child = spawn('sh', ['-c', command], { cwd: join(workspace.dir, cwd), signal })
+        const child = spawn('sh', ['-c', command], { cwd: join(workspace.dir, cwd), signal, env: { ...process.env, ...env } })
         let stdout = ''
         let stderr = ''
         child.stdout.on('data', (chunk: Buffer) => {
@@ -43,7 +49,7 @@ function fakeVm(workspace: Workspace): ExecWorkspaceVm {
 }
 
 async function listen(withVms: boolean): Promise<void> {
-  const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
+  workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
     startVm: withVms
       ? async (workspace) => {
           vmStarts.push(workspace)
@@ -232,6 +238,11 @@ test('bash runs in the branch workspace VM', async () => {
   expect(await ok('bash', { ...b, command: 'pwd', cwd: 'src' })).toMatch(/src\n?$/)
   expect(await ok('bash', { ...b, command: 'exit 3' })).toBe('exit code: 3')
   expect(vmStarts).toHaveLength(1)
+
+  // The hobwork CLI in the VM acts as the agent that called bash, while the command runs.
+  const session = (await ok('bash', { ...b, command: 'echo "$HOBWORK_SESSION"' })).trim().split('\n').at(-1) ?? ''
+  expect(session).toMatch(/^[\w-]{43}$/)
+  expect(workspaces.sessionAgent('filament', 'spools', session)).toBeUndefined()
 
   const long = await ok('bash', { ...b, command: 'head -c 100000 /dev/zero | tr "\\0" x' })
   expect(long).toContain('characters omitted')

@@ -177,6 +177,7 @@ export type Secret = {
   id: number
   name: string
   hosts: string[]
+  headers: string[]
   pendingHostRequest: { id: number; hosts: string[]; agent: string | null } | null
   createdAt: string
   updatedAt: string
@@ -204,6 +205,7 @@ export type ProjectSecret = {
   secretId: number
   secret: string
   hosts: string[]
+  headers: string[]
   updatedAt: string
   assignedAt: string
   assignedBy: ChangedBy
@@ -212,6 +214,7 @@ export type ProjectSecret = {
 export type NewSecret = {
   name: string
   value: string
+  headers?: string[]
   assign?: { project: string; envName: string }
 }
 
@@ -473,7 +476,7 @@ export const api = {
     ),
   secrets: () => request<Secret[]>('GET', '/api/secrets'),
   createSecret: (secret: NewSecret) => request<Secret>('POST', '/api/secrets', secret),
-  updateSecret: (id: number, change: { name?: string; value?: string; hosts?: string[] }) =>
+  updateSecret: (id: number, change: { name?: string; value?: string; hosts?: string[]; headers?: string[] }) =>
     request<Secret>('PATCH', `/api/secrets/${id}`, change),
   deleteSecret: (id: number) => request<void>('DELETE', `/api/secrets/${id}`),
   hostRequest: (id: number) => request<HostRequest>('GET', `/api/secrets/host-requests/${id}`),

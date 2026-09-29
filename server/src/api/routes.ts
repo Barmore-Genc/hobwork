@@ -255,10 +255,14 @@ export function createApiRoutes(options: {
     if (body.hosts !== undefined && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) {
       throw new HttpError(400, 'hosts must be a list of host names')
     }
+    if (body.headers !== undefined && !(Array.isArray(body.headers) && body.headers.every((h) => typeof h === 'string'))) {
+      throw new HttpError(400, 'headers must be a list of header names')
+    }
     return {
       name: body.name as string | undefined,
       value: body.value as string | undefined,
       hosts: body.hosts as string[] | undefined,
+      headers: body.headers as string[] | undefined,
     }
   }
 
@@ -452,7 +456,7 @@ export function createApiRoutes(options: {
       pattern: /^\/api\/secrets$/,
       handle: async ({ req, res, user }) => {
         const body = await readObject(req)
-        const { name, value, hosts } = secretChange(body)
+        const { name, value, hosts, headers } = secretChange(body)
         const assign = body.assign as { project?: unknown; envName?: unknown } | undefined
         if (assign !== undefined && (typeof assign?.project !== 'string' || typeof assign.envName !== 'string')) {
           throw new HttpError(400, 'assign needs a project and an envName')
@@ -462,7 +466,7 @@ export function createApiRoutes(options: {
           envName: assign.envName as string,
         }
         const created = secretCall(() =>
-          secretStore().create({ name: name ?? '', value: value ?? '', hosts: hosts ?? [], assign: target }, userActor(user)),
+          secretStore().create({ name: name ?? '', value: value ?? '', hosts: hosts ?? [], headers: headers ?? [], assign: target }, userActor(user)),
         )
         json(res, 201, created)
       },

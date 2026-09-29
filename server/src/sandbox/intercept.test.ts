@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { secretFiller } from './gondolin.ts'
+import { secretFiller, secretGuard } from './gondolin.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 
 const upstream = async () => new Response('upstream')
@@ -73,4 +73,29 @@ test('upstream fills in secrets, drops connection headers and describes the deco
   expect(sent!.init.redirect).toBe('manual')
   expect(response.headers.has('content-encoding')).toBe(false)
   expect(await response.json()).toEqual({ ok: true })
+})
+
+test('secrets are only sent over https, in Authorization and the headers the secret lists', () => {
+  const guard = secretGuard(
+    { API_KEY: { value: 'real', hosts: ['api.example.com'], headers: ['X-Api-Key'] }, PLAIN: { value: 'real2', hosts: ['api.example.com'] } },
+    { API_KEY: 'GONDOLIN_SECRET_aaaa', PLAIN: 'GONDOLIN_SECRET_bbbb' },
+  )
+  const request = (headers: Record<string, string>, url = 'https://api.example.com/v1?key=GONDOLIN_SECRET_aaaa') =>
+    new Request(url, { method: 'POST', headers, body: 'GONDOLIN_SECRET_aaaa' })
+  expect(guard(request({ authorization: 'Bearer GONDOLIN_SECRET_aaaa' }))).toBeUndefined()
+  expect(guard(request({ authorization: `Basic ${Buffer.from('user:GONDOLIN_SECRET_bbbb').toString('base64')}` }))).toBeUndefined()
+  expect(guard(request({ 'x-api-key': 'GONDOLIN_SECRET_aaaa' }))).toBeUndefined()
+  expect(guard(request({ 'content-type': 'application/json' }))).toBeUndefined()
+
+  expect(guard(request({ 'x-token': 'GONDOLIN_SECRET_aaaa' }))).toBe(
+    'Hobwork only sends API_KEY in the Authorization, X-Api-Key headers. Found it in the x-token header. People can add headers to the secret in Hobwork.',
+  )
+  expect(guard(request({ 'x-api-key': 'GONDOLIN_SECRET_bbbb' }))).toContain('Found it in the x-api-key header')
+  expect(guard(request({ cookie: 'session=GONDOLIN_SECRET_bbbb' }))).toContain('Found it in the cookie header')
+  expect(guard(request({ 'proxy-authorization': 'Bearer GONDOLIN_SECRET_bbbb' }))).toContain('proxy-authorization')
+
+  const http = 'http://api.example.com/v1'
+  expect(guard(request({ authorization: 'Bearer GONDOLIN_SECRET_aaaa' }, http))).toBe('Hobwork only sends API_KEY over https. Use an https:// URL.')
+  expect(guard(request({ authorization: `Basic ${Buffer.from('u:GONDOLIN_SECRET_bbbb').toString('base64')}` }, http))).toContain('over https')
+  expect(guard(request({ 'x-custom': 'nothing secret' }, http))).toBeUndefined()
 })

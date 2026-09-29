@@ -191,7 +191,7 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     )(workspace())
     const options = sandboxes[0]!.options
     expect(options.egress).toEqual(['registry.npmjs.org', 'api.spools.example'])
-    expect(options.secrets).toEqual({ API_KEY: { value: 'real', hosts: ['api.spools.example'] } })
+    expect(options.secrets).toEqual({ API_KEY: { value: 'real', hosts: ['api.spools.example'], headers: [] } })
 
     const db = (sql: string) =>
       options.internal!(

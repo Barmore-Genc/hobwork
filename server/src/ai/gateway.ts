@@ -2,6 +2,7 @@ import type { Host } from '../host.ts'
 import { getProject } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { Interceptor } from '../sandbox/sandbox.ts'
+import { estimateUsage, openRouterPrices, type PriceSource } from './pricing.ts'
 import { effectiveAiSettings, modelAllowed, type EffectiveAiSettings } from './settings.ts'
 import {
   finishAiRequest,
@@ -23,6 +24,8 @@ export const AI_ERROR_CODES = {
   model: 'hobwork_model_not_allowed',
   rate: 'hobwork_rate_limit',
   spend: 'hobwork_spend_limit',
+  path: 'hobwork_path_not_allowed',
+  https: 'hobwork_https_required',
 } as const
 
 const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
@@ -30,7 +33,24 @@ const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
 // the guest sent, since the spend limits rely on the reported cost.
 const USAGE_PATHS = /\/(chat\/)?completions$/
 
-type Refusal = { kind: RefusalKind; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
+// Paths hobs use. Everything else on OpenRouter (API keys, credits, account
+// settings) is refused, since the API key is filled in for all of it.
+const API_PREFIX = '/api/v1'
+const METERED_PATHS = new Set(['/chat/completions', '/completions', '/messages', '/responses', '/embeddings'])
+const READ_PATHS = /^\/(models(\/[^/]+){0,3}|key|generation)$/
+
+function pathAllowed(method: string, pathname: string): boolean {
+  if (!pathname.startsWith(`${API_PREFIX}/`)) return false
+  const path = pathname.slice(API_PREFIX.length)
+  if (method === 'POST') return METERED_PATHS.has(path)
+  if (method === 'GET' || method === 'HEAD') return READ_PATHS.test(path)
+  return false
+}
+
+type Refusal = { kind: RefusalKind | 'path' | 'https'; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
+
+// Refusals that are recorded with the request, since the request was one a hob was allowed to make.
+type CountedRefusal = Refusal & { kind: RefusalKind }
 
 export type AiScope = { source: AiSource; branch?: string }
 
@@ -55,7 +75,7 @@ function allowedText(settings: EffectiveAiSettings): string {
   return list.length ? `It may use ${list.join(', ')}` : 'It may not use any model'
 }
 
-function modelRefusal(models: string[], settings: EffectiveAiSettings): Refusal | undefined {
+function modelRefusal(models: string[], settings: EffectiveAiSettings): CountedRefusal | undefined {
   if (settings.hostModels === null && settings.projectModels === null) return undefined
   const metadata = { allowed_models: settings.projectModels ?? settings.hostModels }
   if (!models.length) {
@@ -95,7 +115,7 @@ const WINDOWS: Record<LimitHit['limit'], string> = {
 
 const dollars = (value: number) => `$${value.toFixed(2)}`
 
-function limitRefusal(hit: LimitHit): Refusal {
+function limitRefusal(hit: LimitHit): CountedRefusal {
   const window = WINDOWS[hit.limit]
   const what =
     hit.kind === 'rate'
@@ -134,7 +154,10 @@ function usageOf(value: unknown): Usage | undefined {
   // The Responses API streams its usage inside the final `response`.
   const usage = isObject(value.usage) ? value.usage : isObject(value.response) && isObject(value.response.usage) ? value.response.usage : undefined
   if (!usage) return undefined
+  const inner = isObject(value.response) ? value.response : undefined
+  const model = typeof value.model === 'string' ? value.model : typeof inner?.model === 'string' ? inner.model : undefined
   return {
+    model,
     promptTokens: numberOr(usage.prompt_tokens) ?? numberOr(usage.input_tokens),
     completionTokens: numberOr(usage.completion_tokens) ?? numberOr(usage.output_tokens),
     cost: numberOr(usage.cost),
@@ -167,8 +190,9 @@ export function parseUsage(text: string, contentType: string | null): Usage | un
 // Limits and records what project VMs send to OpenRouter. It runs on the host
 // in the VM's egress path, so project code cannot get around it: the API key
 // is only filled in for these hosts, and only after the checks here.
-export function createAiGateway(host: Host, options: { now?: () => number } = {}): AiGateway {
+export function createAiGateway(host: Host, options: { now?: () => number; prices?: PriceSource } = {}): AiGateway {
   const now = options.now ?? Date.now
+  const prices = options.prices ?? openRouterPrices()
   // A handler that keeps retrying would fill the log with the same line.
   const lastLogged = new Map<string, number>()
 
@@ -200,9 +224,20 @@ export function createAiGateway(host: Host, options: { now?: () => number } = {}
       return {
         hosts: OPENROUTER_HOSTS,
         async handle(request, upstream) {
+          const url = new URL(request.url)
+          const wrong =
+            url.protocol !== 'https:'
+              ? { kind: 'https' as const, message: 'Hobwork only lets hobs reach OpenRouter over https. Use https://openrouter.ai/api/v1.' }
+              : !pathAllowed(request.method, url.pathname)
+                ? { kind: 'path' as const, message: `Hobwork does not let hobs call ${request.method} ${url.pathname} on OpenRouter. Hobs can use the chat, completions, messages, responses and embeddings endpoints and read model lists.` }
+                : undefined
+          if (wrong) {
+            const refusal = { ...wrong, status: 403, metadata: {} }
+            logRefusal(project, scope, refusal)
+            return refusalResponse(refusal)
+          }
           // Model lists, key info and the like cost nothing.
           if (request.method !== 'POST') return upstream(request)
-          const url = new URL(request.url)
           const text = await request.text()
           let body: Record<string, unknown> | undefined
           try {
@@ -244,7 +279,10 @@ export function createAiGateway(host: Host, options: { now?: () => number } = {}
             finishAiRequest(host.db, id, 502, undefined, now())
             throw err
           }
-          finishAiRequest(host.db, id, response.status, parseUsage(responseText, response.headers.get('content-type')), now())
+          const reported = parseUsage(responseText, response.headers.get('content-type'))
+          const billable = reported?.cost === undefined && response.status >= 200 && response.status < 300
+          const usage = estimateUsage(reported, { models, text }, { status: response.status, text: responseText }, billable ? await prices() : new Map())
+          finishAiRequest(host.db, id, response.status, usage, now())
           const empty = [204, 205, 304].includes(response.status)
           return new Response(empty ? null : responseText, {
             status: response.status,

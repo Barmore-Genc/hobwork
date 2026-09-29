@@ -3,6 +3,7 @@ import { queryLogs } from '../runtime/logs.ts'
 import type { Interceptor, Upstream } from '../sandbox/sandbox.ts'
 import { createTestHost } from '../test-host.ts'
 import { createAiGateway, parseUsage } from './gateway.ts'
+import { openRouterPrices, parsePriceList, FALLBACK_PRICE, type PriceList } from './pricing.ts'
 import { DEFAULT_LIMITS, saveHostAiSettings, saveProjectAiSettings } from './settings.ts'
 import { projectUsage, pruneAiRequests } from './usage.ts'
 
@@ -12,12 +13,14 @@ const START = Date.parse('2026-09-01T12:00:00Z')
 let host: ReturnType<typeof createTestHost>
 let clock: number
 let projectId: number
+let prices: PriceList
 let sent: { body: Record<string, unknown>; authorization: string | null }[]
 
 beforeEach(() => {
   host = createTestHost()
   clock = START
   sent = []
+  prices = parsePriceList({ data: [{ id: 'openai/gpt-5-mini', pricing: { prompt: '0.000001', completion: '0.000002', request: '0' } }] })
   projectId = Number(host.db.prepare("INSERT INTO projects (name) VALUES ('filament') RETURNING id").get()!.id)
 })
 afterEach(() => host.dispose())
@@ -39,7 +42,7 @@ function completion(cost: number, tokens = [10, 5]) {
 }
 
 function gateway(scope: Parameters<ReturnType<typeof createAiGateway>['interceptor']>[1] = { source: 'runtime' }): Interceptor {
-  return createAiGateway(host, { now: () => clock }).interceptor('filament', scope)!
+  return createAiGateway(host, { now: () => clock, prices: async () => prices }).interceptor('filament', scope)!
 }
 
 function call(intercept: Interceptor, body: unknown, upstream = fakeOpenRouter()) {
@@ -203,4 +206,125 @@ test('keeps 90 days of requests', async () => {
 
 test('has no interceptor for a project that does not exist', () => {
   expect(createAiGateway(host).interceptor('nope', { source: 'runtime' })).toBeUndefined()
+})
+
+test('refuses plain http to OpenRouter without sending it on', async () => {
+  let forwarded = false
+  const upstream: Upstream = async () => {
+    forwarded = true
+    return completion(0.01)
+  }
+  const res = await gateway().handle(
+    new Request('http://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { authorization: 'Bearer GONDOLIN_SECRET_x' },
+      body: JSON.stringify(chat()),
+    }),
+    upstream,
+  )
+  expect(res.status).toBe(403)
+  const { error } = (await res.json()) as { error: { code: string; message: string } }
+  expect(error.code).toBe('hobwork_https_required')
+  expect(error.message).toBe('Hobwork only lets hobs reach OpenRouter over https. Use https://openrouter.ai/api/v1.')
+  const get = await gateway().handle(new Request('http://openrouter.ai/api/v1/models'), upstream)
+  expect(get.status).toBe(403)
+  expect(forwarded).toBe(false)
+  expect(projectUsage(host.db, projectId, clock).day.requests).toBe(0)
+})
+
+test('only passes on the OpenRouter paths hobs use', async () => {
+  let forwarded: string[] = []
+  const upstream: Upstream = async (request) => {
+    forwarded.push(`${request.method} ${new globalThis.URL(request.url).pathname}`)
+    return completion(0.01)
+  }
+  const send = (method: string, path: string) =>
+    gateway().handle(
+      new Request(`https://openrouter.ai${path}`, { method, body: method === 'GET' || method === 'HEAD' ? undefined : JSON.stringify(chat()) }),
+      upstream,
+    )
+  for (const [method, path] of [
+    ['POST', '/api/v1/chat/completions'],
+    ['POST', '/api/v1/completions'],
+    ['POST', '/api/v1/messages'],
+    ['POST', '/api/v1/responses'],
+    ['POST', '/api/v1/embeddings'],
+    ['GET', '/api/v1/models'],
+    ['GET', '/api/v1/models/openai/gpt-5-mini/endpoints'],
+    ['GET', '/api/v1/key'],
+  ] as const) {
+    expect((await send(method, path)).status, `${method} ${path}`).toBe(200)
+  }
+  forwarded = []
+  for (const [method, path] of [
+    ['POST', '/api/v1/keys'],
+    ['GET', '/api/v1/keys'],
+    ['DELETE', '/api/v1/keys/abc'],
+    ['POST', '/api/v1/credits/coinbase'],
+    ['POST', '/api/v1/chat/completions/extra'],
+    ['GET', '/api/v1/chat/completions'],
+    ['POST', '/api/v1/models'],
+    ['POST', '/api/v1/auth/keys'],
+    ['GET', '/'],
+    ['POST', '/v1/chat/completions'],
+    ['POST', '/api/v1/../keys'],
+  ] as const) {
+    const res = await send(method, path)
+    expect(res.status, `${method} ${path}`).toBe(403)
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('hobwork_path_not_allowed')
+  }
+  expect(forwarded).toEqual([])
+  const refusal = await send('DELETE', '/api/v1/keys/abc')
+  expect(((await refusal.json()) as { error: { message: string } }).error.message).toBe(
+    'Hobwork does not let hobs call DELETE /api/v1/keys/abc on OpenRouter. Hobs can use the chat, completions, messages, responses and embeddings endpoints and read model lists.',
+  )
+})
+
+test('estimates the cost from tokens and the model price when OpenRouter reports none', async () => {
+  const noCost = fakeOpenRouter(() => Response.json({ model: 'openai/gpt-5-mini', usage: { prompt_tokens: 1000, completion_tokens: 500 } }))
+  expect((await call(gateway(), chat(), noCost)).status).toBe(200)
+  const row = host.db.prepare('SELECT prompt_tokens, completion_tokens, cost FROM ai_requests').get()
+  expect(row).toEqual({ prompt_tokens: 1000, completion_tokens: 500, cost: 1000 * 0.000001 + 500 * 0.000002 })
+})
+
+test('estimates with a high price for models it has no price for, and from sizes when there are no tokens', async () => {
+  const bare = fakeOpenRouter(() => Response.json({ model: 'some/new-model', choices: [{ message: { content: 'x'.repeat(400) } }] }))
+  const body = chat('some/new-model')
+  await call(gateway(), body, bare)
+  const row = host.db.prepare('SELECT prompt_tokens, completion_tokens, cost FROM ai_requests').get()!
+  const promptTokens = Math.ceil(JSON.stringify(body).length / 4)
+  expect(row.prompt_tokens).toBe(promptTokens)
+  expect(Number(row.completion_tokens)).toBeGreaterThan(100)
+  expect(row.cost).toBe(promptTokens * FALLBACK_PRICE.prompt + Number(row.completion_tokens) * FALLBACK_PRICE.completion)
+})
+
+test('counts estimated cost against the spend limit', async () => {
+  saveHostAiSettings(host.db, { models: null, limits: { ...DEFAULT_LIMITS, costPerDay: 0.001 } }, null)
+  const intercept = gateway()
+  const noCost = fakeOpenRouter(() => Response.json({ model: 'openai/gpt-5-mini', usage: { prompt_tokens: 1000, completion_tokens: 500 } }))
+  expect((await call(intercept, chat(), noCost)).status).toBe(200)
+  expect((await call(intercept, chat(), noCost)).status).toBe(429)
+})
+
+test('keeps a reported cost of zero and does not bill error answers', async () => {
+  await call(gateway(), chat(), fakeOpenRouter(() => completion(0)))
+  await call(gateway(), chat(), fakeOpenRouter(() => Response.json({ error: { message: 'no' } }, { status: 500 })))
+  expect(projectUsage(host.db, projectId, clock).day.cost).toBe(0)
+})
+
+test('reads model prices from the OpenRouter list and keeps them for an hour', async () => {
+  let calls = 0
+  let time = 0
+  const fetchImpl = (async () => {
+    calls++
+    return Response.json({ data: [{ id: 'A/B', pricing: { prompt: '0.001', completion: '0.002' } }, { id: 'openrouter/auto', pricing: { prompt: '-1', completion: '-1' } }] })
+  }) as typeof fetch
+  const source = openRouterPrices(fetchImpl, () => time)
+  expect([...(await source()).keys()]).toEqual(['a/b'])
+  time += 59 * 60_000
+  await source()
+  expect(calls).toBe(1)
+  time += 2 * 60_000
+  await source()
+  expect(calls).toBe(2)
 })

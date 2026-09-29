@@ -24,6 +24,13 @@ function parseHosts(text: string): string[] {
     .filter(Boolean)
 }
 
+function parseHeaders(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((header) => header.trim().toLowerCase())
+    .filter(Boolean)
+}
+
 // "Spoolman API key" becomes SPOOLMAN_API_KEY.
 function defaultEnvName(name: string): string {
   const env = name
@@ -144,6 +151,7 @@ function SecretForm({
   const [name, setName] = useState(existing?.name ?? '')
   const [value, setValue] = useState('')
   const [hosts, setHosts] = useState(existing?.hosts.join(', ') ?? '')
+  const [headers, setHeaders] = useState(existing?.headers.join(', ') ?? '')
   const [envName, setEnvName] = useState('')
   const [envEdited, setEnvEdited] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -156,11 +164,12 @@ function SecretForm({
     setError(null)
     try {
       if (existing) {
-        await api.updateSecret(existing.id, { name, ...(value ? { value } : {}), hosts: parseHosts(hosts) })
+        await api.updateSecret(existing.id, { name, ...(value ? { value } : {}), hosts: parseHosts(hosts), headers: parseHeaders(headers) })
       } else {
         await api.createSecret({
           name,
           value,
+          headers: parseHeaders(headers),
           ...(project ? { assign: { project, envName } } : {}),
         })
       }
@@ -220,6 +229,29 @@ function SecretForm({
             onChange={(e) => setValue(e.target.value)}
             required={!existing}
             autoComplete="new-password"
+            spellCheck={false}
+            className={`${inputClass} font-mono`}
+          />
+        )}
+      </Field>
+      <Field
+        id={`${id}-headers`}
+        label="Other headers it may be sent in"
+        hint={
+          <>
+            It is always sent in the <span className="font-mono">Authorization</span> header, over https. Add the
+            header names an API expects instead, like <span className="font-mono">X-Api-Key</span>, separated with
+            commas. It is never sent in the address or the body of a request.
+          </>
+        }
+      >
+        {(fieldId) => (
+          <input
+            id={fieldId}
+            value={headers}
+            onChange={(e) => setHeaders(e.target.value)}
+            placeholder="X-Api-Key"
+            autoComplete="off"
             spellCheck={false}
             className={`${inputClass} font-mono`}
           />
@@ -341,6 +373,21 @@ function Hosts({ label, hosts }: { label: string; hosts: string[] }) {
   )
 }
 
+function SecretHeaders({ headers }: { headers: string[] }) {
+  return (
+    <p className="text-sm text-muted">
+      Sent in the <span className="font-mono">Authorization</span> header
+      {headers.length > 0 && (
+        <>
+          {' '}
+          and <span className="font-mono">{headers.join(', ')}</span>
+        </>
+      )}
+      , over https.
+    </p>
+  )
+}
+
 function useDelete<T>(action: (item: T) => Promise<void>, done: () => void) {
   const [item, setItem] = useState<T | null>(null)
   const [busy, setBusy] = useState(false)
@@ -409,6 +456,7 @@ function SecretCard({
           {(secret.hosts.length > 0 || !secret.pendingHostRequest) && (
             <Hosts label={`Sites ${secret.name} may be sent to`} hosts={secret.hosts} />
           )}
+          {secret.hosts.length > 0 && <SecretHeaders headers={secret.headers} />}
           {secret.pendingHostRequest && (
             <p className="text-sm">
               {secret.pendingHostRequest.agent ?? 'An agent'} asked to send it to{' '}
@@ -595,6 +643,7 @@ function ProjectSecretRow({ secret, onRemove }: { secret: ProjectSecret; onRemov
           </Link>
         </p>
         <Hosts label={`Sites ${secret.envName} may be sent to`} hosts={secret.hosts} />
+        {secret.hosts.length > 0 && <SecretHeaders headers={secret.headers} />}
         <p className="text-sm text-muted">
           <When iso={secret.assignedAt}>
             Added {timeAgo(secret.assignedAt)}

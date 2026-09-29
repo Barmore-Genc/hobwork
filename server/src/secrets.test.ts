@@ -55,7 +55,7 @@ test('values are encrypted at rest and only come out for the sandbox', () => {
   expect(Buffer.from(row.value).includes('plain-text-value')).toBe(false)
   expect(JSON.parse(row.hosts)).toEqual(['api.spools.example'])
   expect(JSON.stringify([store.list(), store.assigned('filament')])).not.toContain('plain-text-value')
-  expect(store.forSandbox('filament')).toEqual({ SPOOL_API_KEY: { value: 'plain-text-value', hosts: ['api.spools.example'] } })
+  expect(store.forSandbox('filament')).toEqual({ SPOOL_API_KEY: { value: 'plain-text-value', hosts: ['api.spools.example'], headers: [] } })
   expect(store.forSandbox('alarms')).toEqual({})
   expect(() => createSecretStore(host, randomBytes(32)).forSandbox('filament')).toThrow('cannot be decrypted')
 })
@@ -75,8 +75,8 @@ test('one secret can be assigned to several projects under different env names',
   expect(store.forSandbox('filament')).toEqual({})
   store.assign('filament', 'Spoolman API key', 'SPOOLMAN_TOKEN', HOST)
   store.assign('alarms', secret.id, 'API_KEY', HOST)
-  expect(store.forSandbox('filament')).toEqual({ SPOOLMAN_TOKEN: { value: 'v', hosts: ['spoolman.example'] } })
-  expect(store.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['spoolman.example'] } })
+  expect(store.forSandbox('filament')).toEqual({ SPOOLMAN_TOKEN: { value: 'v', hosts: ['spoolman.example'], headers: [] } })
+  expect(store.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['spoolman.example'], headers: [] } })
   expect(store.get(secret.id)?.assignments.map((a) => [a.project, a.envName])).toEqual([
     ['alarms', 'API_KEY'],
     ['filament', 'SPOOLMAN_TOKEN'],
@@ -118,7 +118,7 @@ test('updates keep the value or the hosts when left out, and change the fingerpr
   const secret = store.create({ name: 'Token', value: 'v1', hosts: ['a.example'], assign: { project: 'filament', envName: 'TOKEN' } }, HOST)
   const before = store.fingerprint('filament')
   store.update(secret.id, { hosts: ['b.example'] }, HOST)
-  expect(store.forSandbox('filament').TOKEN).toEqual({ value: 'v1', hosts: ['b.example'] })
+  expect(store.forSandbox('filament').TOKEN).toEqual({ value: 'v1', hosts: ['b.example'], headers: [] })
   const afterHosts = store.fingerprint('filament')
   expect(afterHosts).not.toBe(before)
   store.update('Token', { value: 'v2' }, HOST)
@@ -219,14 +219,14 @@ test('migration 0010 turns project and global secrets into assigned library secr
       ['SPOOL_KEY', ['filament:SPOOL_KEY']],
     ])
     expect(migrated.forSandbox('filament')).toEqual({
-      ONLY_GLOBAL: { value: 'global-only', hosts: ['g.example'] },
-      SHARED: { value: 'filament-shared', hosts: ['own.example'] },
-      SPOOL_KEY: { value: 'spool', hosts: ['spools.example'] },
+      ONLY_GLOBAL: { value: 'global-only', hosts: ['g.example'], headers: [] },
+      SHARED: { value: 'filament-shared', hosts: ['own.example'], headers: [] },
+      SPOOL_KEY: { value: 'spool', hosts: ['spools.example'], headers: [] },
     })
     expect(migrated.forSandbox('alarms')).toEqual({
-      ONLY_GLOBAL: { value: 'global-only', hosts: ['g.example'] },
-      SAME: { value: 'alarms-same', hosts: ['same.example'] },
-      SHARED: { value: 'global-shared', hosts: ['shared.example'] },
+      ONLY_GLOBAL: { value: 'global-only', hosts: ['g.example'], headers: [] },
+      SAME: { value: 'alarms-same', hosts: ['same.example'], headers: [] },
+      SHARED: { value: 'global-shared', hosts: ['shared.example'], headers: [] },
     })
     expect(migrated.forSandbox('lights').SAME?.value).toBe('lights-same')
     expect(migrated.assigned('alarms')[0]?.assignedBy).toBeNull()
@@ -248,4 +248,34 @@ test('migrated values that do not decrypt with the key stay as they were', () =>
   host.db.prepare(`INSERT INTO secret_assignments (project_id, secret_id, env_name) SELECT ?, id, 'OLD' FROM secrets`).run(filament)
   expect(() => createSecretStore(host, randomBytes(32)).forSandbox('filament')).toThrow('cannot be decrypted')
   expect(createSecretStore(host, key).forSandbox('filament').OLD?.value).toBe('old-value')
+})
+
+test('a secret can list headers besides Authorization, which show up in the sandbox secrets and the log', () => {
+  const secret = store.create(
+    { name: 'Key', value: 'v', hosts: ['a.example'], headers: [' X-Api-Key ', 'x-api-key', 'Authorization'], assign: { project: 'filament', envName: 'KEY' } },
+    HOST,
+  )
+  expect(secret.headers).toEqual(['x-api-key'])
+  expect(store.forSandbox('filament')).toEqual({ KEY: { value: 'v', hosts: ['a.example'], headers: ['x-api-key'] } })
+  expect(store.assigned('filament')[0]?.headers).toEqual(['x-api-key'])
+  const before = store.fingerprint('filament')
+  store.update(secret.id, { headers: ['x-api-key', 'apikey'] }, HOST)
+  expect(store.fingerprint('filament')).not.toBe(before)
+  expect(store.get(secret.id)?.headers).toEqual(['x-api-key', 'apikey'])
+  store.update(secret.id, { name: 'Renamed' }, HOST)
+  expect(store.get(secret.id)?.headers).toEqual(['x-api-key', 'apikey'])
+  expect(events('filament').find((line) => line.includes('changed the secret'))).toBe(
+    'Someone on the Hobwork host changed the secret "Key" (KEY): now sent in the Authorization header and x-api-key, apikey',
+  )
+  store.update(secret.id, { headers: [] }, HOST)
+  expect(store.get(secret.id)?.headers).toEqual([])
+})
+
+test.each(['host', 'content-length', 'bad header', 'x-key: y', '', 'x'.repeat(101)])('refuses the header name %j', (header) => {
+  expect(() => store.create({ name: 'New', value: 'x', hosts: ['a.example'], headers: [header] }, HOST)).toThrow('is not a header a secret can be sent in')
+})
+
+test('refuses more than ten headers', () => {
+  const headers = Array.from({ length: 11 }, (_, i) => `x-key-${i}`)
+  expect(() => store.create({ name: 'New', value: 'x', hosts: ['a.example'], headers }, HOST)).toThrow('at most 10 headers')
 })

@@ -44,9 +44,10 @@ export type Context = {
   device(name: string): Device
   // Paired devices with their capabilities and whether they are connected.
   devices(): Promise<DeviceInfo[]>
-  // Secret name -> placeholder. Send the placeholder in a request header to a
-  // host the secret is bound to, and Hobwork replaces it with the real value on
-  // the way out. The real value never reaches handler code.
+  // Secret name -> placeholder. Send the placeholder over https in the
+  // Authorization header (or a header the secret lists) to a host the secret is
+  // bound to, and Hobwork replaces it with the real value on the way out. It is
+  // not replaced in URLs or bodies. The real value never reaches handler code.
   secrets: Record<string, string>
 }
 

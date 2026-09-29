@@ -6,21 +6,23 @@ import { createSecretStore, loadSecretKey, type Actor } from '../secrets.ts'
 
 const USAGE = `Usage:
   pnpm --filter @hobwork/server secret list [<hob>]
-  pnpm --filter @hobwork/server secret create "<name>" --host <host> [--host <host>...]
-  pnpm --filter @hobwork/server secret update "<name>" [--host <host>...]
+  pnpm --filter @hobwork/server secret create "<name>" --host <host> [--host <host>...] [--header <name>...]
+  pnpm --filter @hobwork/server secret update "<name>" [--host <host>...] [--header <name>...]
   pnpm --filter @hobwork/server secret delete "<name>"
   pnpm --filter @hobwork/server secret assign <hob> "<name>" <ENV_NAME>
   pnpm --filter @hobwork/server secret unassign <hob> <ENV_NAME>
 
 create and update read the value from stdin, e.g.
   printf %s "$KEY" | pnpm ... secret create "Spoolman API key" --host api.example.com
-Leave stdin empty on update to change only the hosts.`
+Leave stdin empty on update to change only the hosts and headers.
+The value is only sent over https, in the Authorization header and the headers named with --header.
+On update, --host and --header replace the current lists; pass --no-header to remove all headers.`
 
 const HOST: Actor = { kind: 'host' }
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { host: { type: 'string', multiple: true } },
+  options: { host: { type: 'string', multiple: true }, header: { type: 'string', multiple: true }, 'no-header': { type: 'boolean' } },
 })
 const [command, ...args] = positionals
 
@@ -51,19 +53,19 @@ try {
   if (command === 'list') {
     const project = args[0]
     if (project) {
-      for (const secret of store.assigned(project)) console.log(`${secret.envName}\t${secret.secret}\t${secret.hosts.join(', ')}`)
+      for (const secret of store.assigned(project)) console.log(`${secret.envName}\t${secret.secret}\t${secret.hosts.join(', ')}\t${secret.headers.join(', ')}`)
     } else {
       for (const secret of store.list()) {
         const projects = secret.assignments.map((a) => `${a.project}:${a.envName}`).join(', ')
-        console.log(`${secret.name}\t${secret.hosts.join(', ')}\t${projects}`)
+        console.log(`${secret.name}\t${secret.hosts.join(', ')}\t${secret.headers.join(', ')}\t${projects}`)
       }
     }
   } else if (command === 'create') {
-    const secret = store.create({ name: arg(0), value: await readStdin(), hosts: values.host ?? [] }, HOST)
+    const secret = store.create({ name: arg(0), value: await readStdin(), hosts: values.host ?? [], headers: values.header ?? [] }, HOST)
     console.log(`Created "${secret.name}". Assign it to a hob with: secret assign <hob> "${secret.name}" <ENV_NAME>`)
   } else if (command === 'update') {
     const value = await readStdin()
-    const secret = store.update(arg(0), { value: value || undefined, hosts: values.host }, HOST)
+    const secret = store.update(arg(0), { value: value || undefined, hosts: values.host, headers: values['no-header'] ? [] : values.header }, HOST)
     console.log(`Updated "${secret.name}". ${APPLIES}`)
   } else if (command === 'delete') {
     if (!store.remove(arg(0), HOST)) fail(`There is no secret called "${arg(0)}"`)

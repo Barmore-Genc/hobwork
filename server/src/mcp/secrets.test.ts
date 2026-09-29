@@ -29,16 +29,16 @@ test('list_secrets shows the library and per project env names, never values', a
     { name: 'Spoolman API key', value: 'the-real-value', hosts: ['api.spools.example'], assign: { project: 'filament', envName: 'SPOOLMAN_TOKEN' } },
     HOST,
   )
-  secrets.create({ name: 'Weather', value: 'weather-value', hosts: ['weather.example'] }, HOST)
+  secrets.create({ name: 'Weather', value: 'weather-value', hosts: ['weather.example'], headers: ['X-Api-Key'] }, HOST)
   const library = textOf(await mcp.call('list_secrets'))
   expect(library).not.toContain('real-value')
   expect(library).not.toContain('weather-value')
   expect(JSON.parse(library)).toEqual([
-    { name: 'Spoolman API key', hosts: ['api.spools.example'], hobs: [{ hob: 'filament', envName: 'SPOOLMAN_TOKEN' }] },
-    { name: 'Weather', hosts: ['weather.example'], hobs: [] },
+    { name: 'Spoolman API key', hosts: ['api.spools.example'], headers: [], hobs: [{ hob: 'filament', envName: 'SPOOLMAN_TOKEN' }] },
+    { name: 'Weather', hosts: ['weather.example'], headers: ['x-api-key'], hobs: [] },
   ])
   expect(JSON.parse(textOf(await mcp.call('list_secrets', { hob: 'filament' })))).toEqual([
-    { envName: 'SPOOLMAN_TOKEN', secret: 'Spoolman API key', hosts: ['api.spools.example'] },
+    { envName: 'SPOOLMAN_TOKEN', secret: 'Spoolman API key', hosts: ['api.spools.example'], headers: [] },
   ])
 })
 
@@ -49,7 +49,7 @@ test('agents assign and unassign existing secrets, and the project log names the
   expect(textOf(assigned)).toBe(
     'Assigned "Spoolman API key" to alarms as API_KEY. Handlers can send ctx.secrets.API_KEY to api.spools.example.',
   )
-  expect(secrets.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['api.spools.example'] } })
+  expect(secrets.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['api.spools.example'], headers: [] } })
   expect(secrets.hosts('alarms')).toEqual(['api.spools.example'])
   expect(secrets.fingerprint('alarms')).not.toBe(before)
   expect(secrets.assigned('alarms')[0]?.assignedBy).toEqual({ kind: 'agent', name: 'claude' })
@@ -86,7 +86,7 @@ test('no tool lets an agent create secrets, set values or set hosts without appr
 
   secrets.create({ name: 'Key', value: 'v', hosts: ['a.example'] }, HOST)
   await mcp.call('assign_secret', { hob: 'filament', secret: 'Key', env_name: 'KEY', hosts: ['evil.example'], value: 'x' })
-  expect(secrets.forSandbox('filament')).toEqual({ KEY: { value: 'v', hosts: ['a.example'] } })
+  expect(secrets.forSandbox('filament')).toEqual({ KEY: { value: 'v', hosts: ['a.example'], headers: [] } })
 })
 
 test('get_hob shows reachable hosts, secret env names and DB warnings', async () => {
@@ -120,11 +120,12 @@ test('request_secret_hosts returns a link for the user and changes nothing until
   expect(textOf(result)).toBe(
     `Asked to send "Spools" to api.spools.example. Show the user this link and ask them to approve: http://localhost/secrets/requests/${pending.id}`,
   )
-  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [] } })
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [], headers: [] } })
   expect(JSON.parse(textOf(await mcp.call('list_secrets')))).toEqual([
     {
       name: 'Spools',
       hosts: [],
+      headers: [],
       pendingHosts: ['api.spools.example'],
       hobs: [
         { hob: 'alarms', envName: 'SPOOLS' },

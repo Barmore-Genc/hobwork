@@ -509,8 +509,8 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
   const [options] = sandboxes.created
   expect(options?.egress?.sort()).toEqual(['api.spools.example', 'shared.example', 'weather.example'])
   expect(options?.secrets).toEqual({
-    SHARED_TOKEN: { value: 'shared', hosts: ['shared.example'] },
-    SPOOL_API_KEY: { value: 'real-value', hosts: ['api.spools.example'] },
+    SHARED_TOKEN: { value: 'shared', hosts: ['shared.example'], headers: [] },
+    SPOOL_API_KEY: { value: 'real-value', hosts: ['api.spools.example'], headers: [] },
   })
   const route = () => runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
   expect(bodyOf(await route())).toEqual({

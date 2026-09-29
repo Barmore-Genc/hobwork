@@ -18,6 +18,8 @@ export type Secret = {
   value: string
   // The real value is only sent to these hosts. Wildcards like `*.example.com` work.
   hosts: string[]
+  // Header names besides Authorization that the real value may be sent in.
+  headers?: string[]
 }
 
 export type InternalHandler = (request: Request) => Response | Promise<Response>

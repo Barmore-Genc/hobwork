@@ -45,3 +45,31 @@ test('createTestContext rejects device calls a test did not stub', async () => {
   await stubbed.device('kaan-iphone').notifications.send({ title: 'Hi' })
   expect(send).toHaveBeenCalledWith({ title: 'Hi' })
 })
+
+test('capability methods are calls to the host with their arguments', async () => {
+  const requests: unknown[] = []
+  const client = createDeviceClient(async (request) => {
+    requests.push(request)
+    return { ok: true, result: { id: 'a1' } }
+  })
+  const phone = client.device('kaan-iphone')
+  expect(await phone.alarms.set({ title: 'Wake up', time: '07:00', days: ['mon'] })).toEqual({ id: 'a1' })
+  await phone.screenTime.block({ set: 'social' })
+  await phone.focus.status()
+  expect(requests).toEqual([
+    { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'set', args: { title: 'Wake up', time: '07:00', days: ['mon'] } },
+    { action: 'call', device: 'kaan-iphone', capability: 'screenTime', method: 'block', args: { set: 'social' } },
+    { action: 'call', device: 'kaan-iphone', capability: 'focus', method: 'status', args: undefined },
+  ])
+})
+
+test('createTestContext takes partial device fakes and rejects the rest', async () => {
+  const block = vi.fn(async () => ({}))
+  const ctx = createTestContext({ device: () => ({ screenTime: { block } }) })
+  await ctx.device('kaan-iphone').screenTime.block({ set: 'social' })
+  expect(block).toHaveBeenCalledWith({ set: 'social' })
+  await expect(ctx.device('kaan-iphone').screenTime.unblock({ set: 'social' })).rejects.toThrow(
+    "ctx.device('kaan-iphone').screenTime.unblock is not stubbed",
+  )
+  await expect(ctx.device('kaan-iphone').alarms.list()).rejects.toThrow('Pass device: (name) => ({ alarms: { list } })')
+})

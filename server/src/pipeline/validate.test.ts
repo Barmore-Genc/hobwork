@@ -32,3 +32,8 @@ test('asks old projects to switch vite.config.ts when hobwork.json has comments'
 test('the replacement is the template vite.config.ts', () => {
   expect(readFileSync(resolve(import.meta.dirname, '../../../templates/project/vite.config.ts'), 'utf8')).toBe(VITE_CONFIG)
 })
+
+test('names the event a device trigger capability takes', () => {
+  const config = { triggers: { t: { device: { capability: 'focus', event: 'action' }, handler: 'src/t.ts' } } }
+  expect(validateHobworkJson(JSON.stringify(config))).toEqual(['/triggers/t/device/event: must be equal to constant ("changed")'])
+})

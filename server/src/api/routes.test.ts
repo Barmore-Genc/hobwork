@@ -86,8 +86,18 @@ test('projects overview shows status and the current version', async () => {
       defaultBranch: 'main',
       status: 'ready',
       currentVersion: expect.objectContaining({ number: 2, summary: 'Track spools', by: null, restoredFrom: null }),
+      iconUrl: '/api/projects/filament/icon',
     },
   ])
+})
+
+test('a project without a rendered icon gets its first letter', async () => {
+  await projectWithTwoVersions()
+  const res = await get('/api/projects/filament/icon')
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toBe('image/svg+xml')
+  expect(await res.text()).toContain('>F</text>')
+  expect((await get('/api/projects/nope/icon')).status).toBe(404)
 })
 
 test('project detail lists versions newest first', async () => {

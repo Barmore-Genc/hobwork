@@ -1,4 +1,5 @@
 {
+  "icon": "🧩",
   "routes": {
     "GET /greeting": { "handler": "src/greeting-route.ts" }
   }

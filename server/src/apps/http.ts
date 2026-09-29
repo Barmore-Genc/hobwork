@@ -6,7 +6,7 @@ import { parseCookies, setCookie } from '../http.ts'
 import { getProject, type Project } from '../projects.ts'
 import { BuildError } from '../runtime/builds.ts'
 import { sendJson, sendRuntimeError, serveRoute } from '../runtime/http.ts'
-import { sendUiText, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
+import { ICONS_PREFIX, MANIFEST_PATH, sendUiText, serveAppIcons, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
@@ -150,6 +150,13 @@ export function createAppHttp(options: {
     serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), hobworkOrigin: publicUrl })
   }
 
+  // Only a build that is already stored: these answer without a session, and
+  // must not start one.
+  async function serveIcons(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string) {
+    const build = await runtime?.storedBuild(app.target.project, app.target.branch).catch(() => undefined)
+    serveAppIcons(req, res, { project: app.target.project, build, pathname, hobworkOrigin: publicUrl })
+  }
+
   async function serveApp(req: IncomingMessage, res: ServerResponse) {
     const app = await resolveHost(req.headers.host)
     if (!app) return sendText(res, 404, 'There is no app here.', frameHeaders)
@@ -157,6 +164,7 @@ export function createAppHttp(options: {
     const { pathname, search } = url
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
+    if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
     const user = appUser(req, app)
     if (!user) {
       const page = !pathname.startsWith(API_PREFIX) && req.method === 'GET' && (req.headers.accept ?? '').includes('text/html')

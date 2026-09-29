@@ -36,6 +36,14 @@
         "dest": "/usr/share/icu"
       },
       {
+        "src": "./build/fonts/InterVariable.ttf",
+        "dest": "/opt/hobwork/fonts/InterVariable.ttf"
+      },
+      {
+        "src": "./fonts/fonts.conf",
+        "dest": "/opt/hobwork/fonts/fonts.conf"
+      },
+      {
         "src": "./platform/package.json",
         "dest": "/opt/hobwork/platform/package.json"
       },

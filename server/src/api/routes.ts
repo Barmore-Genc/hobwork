@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
+import { defaultIcon, ICONS_DIR, iconFile, LIST_ICON_SIZE, letterIconSvg } from '../../../packages/sdk/src/icons/icon.ts'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import { branchRoutes } from './branches.ts'
@@ -29,6 +30,7 @@ import {
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { rotateWebhookToken, webhookPath, webhookTokenCreatedAt } from '../runtime/webhooks.ts'
+import { fileStats, sendFile } from '../static.ts'
 import {
   SecretConflictError,
   SecretError,
@@ -68,6 +70,8 @@ export type ApiRoute = {
     query: URLSearchParams
   }) => Promise<void> | void
 }
+
+const iconUrl = (project: string) => `/api/projects/${encodeURIComponent(project)}/icon`
 
 function versionView(version: Version) {
   return {
@@ -273,6 +277,7 @@ export function createApiRoutes(options: {
               defaultBranch: project.defaultBranch,
               status,
               currentVersion: current ? versionView(current) : null,
+              iconUrl: iconUrl(project.name),
             }
           }),
         ),
@@ -288,9 +293,25 @@ export function createApiRoutes(options: {
           createdAt: project.createdAt,
           status,
           currentVersion: current?.number ?? null,
+          iconUrl: iconUrl(project.name),
           versions: listVersions(host, project.name, VERSION_PAGE).map(versionView),
           ...(await projectDetail(project)),
         })
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/icon$/,
+      handle: async ({ req, res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        // Never builds: a list of projects must not start builds for each of them.
+        const build = await runtime?.storedBuild(project.name).catch(() => undefined)
+        const path = build && join(build, ICONS_DIR, iconFile(LIST_ICON_SIZE))
+        const stats = path ? fileStats(path) : undefined
+        if (path && stats) return sendFile(req, res, path, stats, 'no-cache')
+        const svg = Buffer.from(letterIconSvg(defaultIcon(project.name)))
+        res.writeHead(200, { 'content-type': 'image/svg+xml', 'content-length': svg.length, 'cache-control': 'no-cache' })
+        res.end(svg)
       },
     },
     {

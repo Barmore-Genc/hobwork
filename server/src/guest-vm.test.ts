@@ -294,6 +294,10 @@ test('pipeline VMs only reach the registry and are stopped on shutdown', async (
   await backend.start({ dir })
   expect(sandboxes[0]?.options.egress).toEqual(['registry.npmjs.org'])
   expect(sandboxes[0]?.options.cpus).toBe(4)
+  const icons = sandboxes[0]?.options.mounts?.['/opt/hobwork/icons']
+  expect(icons).toMatchObject({ readonly: true })
+  expect(existsSync(join(icons!.hostPath, 'main.ts'))).toBe(true)
+  expect(first.iconsCommand).toBe('node /opt/hobwork/icons/main.ts')
 
   expect(await first.exec('false', { cwd: '.', timeoutMs: 1000 })).toMatchObject({ exitCode: 1 })
   await first.stop()

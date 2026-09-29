@@ -288,6 +288,44 @@ test('app origins serve only the UI, never handler bundles or other files', asyn
   expect((await send('http://a.b.apps.hobwork.test/', { headers: page })).status).toBe(404)
 })
 
+test('app origins serve the icons the build rendered, and a manifest, without a session', async () => {
+  // Stands in for the icon renderer, which the host pipeline backend does not run.
+  const icons = 'mkdir -p dist/_hobwork/icons && for s in 32 180 192 512; do printf png > dist/_hobwork/icons/icon-$s.png; done'
+  await release('sleep', { 'package.json': fakePackageJson({ build: `${BUILD} && ${icons}` }), 'hobwork.json': JSON.stringify(HOBWORK_JSON) })
+  // Nothing is built for a request without a session.
+  expect((await send(`${SLEEP}/_hobwork/icons/icon-32.png`)).status).toBe(404)
+
+  const { cookie } = signedIn(host)
+  const html = await send(`${SLEEP}/`, { headers: { ...page, cookie: appSessionCookie(host, cookie, 'sleep') } })
+  expect(html.body).toContain(
+    '<head><base href="/"><link rel="icon" type="image/png" sizes="32x32" href="/_hobwork/icons/icon-32.png">' +
+      '<link rel="apple-touch-icon" href="/_hobwork/icons/icon-180.png"><link rel="manifest" href="/_hobwork/manifest.webmanifest"><title>',
+  )
+  const icon = await send(`${SLEEP}/_hobwork/icons/icon-180.png`)
+  expect(icon.status).toBe(200)
+  expect(icon.headers['content-type']).toBe('image/png')
+  expect(icon.body).toBe('png')
+  const manifest = await send(`${SLEEP}/_hobwork/manifest.webmanifest`)
+  expect(manifest.headers['content-type']).toBe('application/manifest+json')
+  expect(JSON.parse(manifest.body)).toMatchObject({
+    name: 'sleep',
+    start_url: '/',
+    display: 'standalone',
+    icons: [
+      { src: '/_hobwork/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/_hobwork/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  })
+  for (const path of ['/_hobwork/icons/..%2f..%2findex.html', '/_hobwork/icons/..%2f..%2fhandlers/src/spools.js', '/_hobwork/icons/nope.png']) {
+    expect((await send(`${SLEEP}${path}`)).status, path).toBe(404)
+  }
+
+  // A build without icons gets no links.
+  const plain = await send(`${FILAMENT}/`, { headers: { ...page, cookie: appSessionCookie(host, cookie, 'filament') } })
+  expect(plain.body).toContain('<head><base href="/"><title>')
+  expect(JSON.parse((await send(`${FILAMENT}/_hobwork/manifest.webmanifest`)).body).icons).toEqual([])
+})
+
 test('agents call routes on Hobwork with a token; old UI links move to the app origin', async () => {
   const { token } = createAgentToken(host.db, 'claude')
   const { cookie } = signedIn(host)

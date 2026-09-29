@@ -27,6 +27,7 @@ export type ProjectSummary = {
   defaultBranch: string
   status: ProjectStatus
   currentVersion: Version | null
+  iconUrl: string
 }
 
 export type InvocationKind = 'route' | 'webhook' | 'cron' | 'trigger'
@@ -58,6 +59,7 @@ export type ProjectDetail = {
   status: ProjectStatus
   // The version that runs now. It can differ from the newest while a deploy runs or after one failed.
   currentVersion: number | null
+  iconUrl: string
   versions: Version[]
   entryPoints: EntryPoints | null
   configError?: string

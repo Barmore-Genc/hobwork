@@ -792,9 +792,9 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async build(project: string, branch?: string): Promise<string> {
       return builder.ensure(project, (await deployedFor(project, branch)).commit)
     },
-    // The deployed version's build if it is stored, without building it.
-    async storedBuild(project: string): Promise<string | undefined> {
-      const { commit } = await deployment(project)
+    // The deployed version's build (or the branch's) if it is stored, without building it.
+    async storedBuild(project: string, branch?: string): Promise<string | undefined> {
+      const { commit } = await deployedFor(project, branch)
       const dir = buildDir(host, project, await treeOf(repoPath(host, project), commit))
       return existsSync(dir) ? dir : undefined
     },

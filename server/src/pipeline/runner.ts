@@ -11,10 +11,14 @@ import type { ExecWorkspaceVm } from '../workspaces.ts'
 import { extraDependencies } from '../platform.ts'
 import { validateHobworkJson } from './validate.ts'
 
+// `iconsCommand` renders the project icon into dist/ after the build, given
+// the project name as its last argument. VMs without it leave icons out.
+export type PipelineVm = ExecWorkspaceVm & { iconsCommand?: string }
+
 // Seam for the sandbox layer: start a fresh VM with `dir` (a clean checkout of
 // the candidate) mounted read-write. Exec `cwd` is relative to `dir`. The VM is
 // stopped when the run ends and never reused.
-export type StartPipelineVm = (options: { dir: string }) => Promise<ExecWorkspaceVm>
+export type StartPipelineVm = (options: { dir: string }) => Promise<PipelineVm>
 
 export type StepOutcome = { status: 'passed' | 'failed' | 'skipped'; output: string }
 
@@ -95,7 +99,7 @@ export async function checkout(gitDir: string, commit: string, tmp: string): Pro
   return dir
 }
 
-async function exec(vm: ExecWorkspaceVm, command: string, timeoutMs: number): Promise<StepOutcome> {
+async function exec(vm: PipelineVm, command: string, timeoutMs: number): Promise<StepOutcome> {
   const timeout = AbortSignal.timeout(timeoutMs)
   let streamed = ''
   const timedOut = new Promise<'timeout'>((resolve) => {
@@ -154,7 +158,7 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
   }
 
   const tmp = mkdtempSync(join(tmpdir(), 'hobwork-pipeline-'))
-  let vm: ExecWorkspaceVm | undefined
+  let vm: PipelineVm | undefined
   let checkedOut: Promise<string> | undefined
   const dir = () => (checkedOut ??= checkout(gitDir, commit, tmp))
   async function inVm(command: string): Promise<StepOutcome> {
@@ -184,7 +188,11 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     lint: () => inVm('pnpm run lint'),
     test: () => inVm('pnpm run test'),
     async build() {
-      const outcome = await inVm('pnpm run build')
+      let outcome = await inVm('pnpm run build')
+      if (outcome.status === 'passed' && vm?.iconsCommand) {
+        const icons = await inVm(`${vm.iconsCommand} ${candidate.project}`)
+        outcome = { status: icons.status, output: `${outcome.output}\n${icons.output}` }
+      }
       // The checkout is deleted after the run, so the build is kept for deploy.
       if (outcome.status === 'passed') await saveBuild(host, { project: candidate.project, gitDir, commit, dir: await dir() })
       return outcome

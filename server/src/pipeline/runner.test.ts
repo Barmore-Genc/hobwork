@@ -4,17 +4,21 @@ import { repoPath } from '../host.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { FAKE_PROJECT, fakePackageJson, seedMain } from '../test-project.ts'
-import type { ExecResult, ExecWorkspaceVm } from '../workspaces.ts'
+import type { ExecResult } from '../workspaces.ts'
 import { extraDependencies, platformPackages } from '../platform.ts'
-import { failInterruptedRuns, getRun, latestRun, runPipeline, type PipelineOptions } from './runner.ts'
+import { failInterruptedRuns, getRun, latestRun, runPipeline, type PipelineOptions, type PipelineVm } from './runner.ts'
 
 let host: ReturnType<typeof createTestHost>
 let commands: string[]
 let stops: number
 
-function recordingVm(respond: (command: string) => Promise<ExecResult> | ExecResult): PipelineOptions['startVm'] {
+function recordingVm(
+  respond: (command: string) => Promise<ExecResult> | ExecResult,
+  iconsCommand?: string,
+): PipelineOptions['startVm'] {
   return async () => {
-    const vm: ExecWorkspaceVm = {
+    const vm: PipelineVm = {
+      iconsCommand,
       async stop() {
         stops++
       },
@@ -29,7 +33,8 @@ function recordingVm(respond: (command: string) => Promise<ExecResult> | ExecRes
   }
 }
 
-const passing = recordingVm((command) => ({ exitCode: 0, stdout: `ran ${command}\n`, stderr: '' }))
+const pass = (command: string): ExecResult => ({ exitCode: 0, stdout: `ran ${command}\n`, stderr: '' })
+const passing = recordingVm(pass)
 
 async function seed(files = FAKE_PROJECT): Promise<{ gitDir: string; commit: string }> {
   await seedMain(host, 'filament', files)
@@ -55,6 +60,24 @@ test('runs the package.json scripts in one VM and records every step', async () 
   expect(run.steps.every((s) => s.durationMs !== null)).toBe(true)
   expect(getRun(host, run.id)).toEqual(run)
   expect(latestRun(host, 'filament')?.id).toBe(run.id)
+})
+
+test('renders the project icon after the build, and a wrong icon fails the build', async () => {
+  const candidate = { project: 'filament', ...(await seed()) }
+  const run = await runPipeline(host, { startVm: recordingVm(pass, 'render-icons') }, candidate)
+  expect(commands.slice(-2)).toEqual(['pnpm run build', 'render-icons filament'])
+  expect(run.steps.find((s) => s.name === 'build')?.output).toContain('ran render-icons filament')
+
+  const wrongIcon = recordingVm(
+    (command) =>
+      command.startsWith('render-icons')
+        ? { exitCode: 1, stdout: 'hobwork.json: "icon" is "x.png", which is not a file in the project\n', stderr: '' }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    'render-icons',
+  )
+  const failed = await runPipeline(host, { startVm: wrongIcon }, candidate)
+  expect(failed.failedStep).toBe('build')
+  expect(failed.steps.find((s) => s.name === 'build')?.output).toContain('not a file in the project')
 })
 
 test('installs only when the project has dependencies outside the platform set', async () => {

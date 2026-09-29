@@ -77,10 +77,23 @@ export function createApp(
     passkeys: createPasskeys({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist, auth, now: web.now }),
     oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
   })
-  const handleApi = createApiRoutes({ host, auth, delivery, runtime: options.runtime, secrets: options.secrets })
+  const handleApi = createApiRoutes({
+    host,
+    auth,
+    delivery,
+    publicUrl: web.publicUrl,
+    runtime: options.runtime,
+    data: options.data,
+    secrets: options.secrets,
+  })
   const handleRuntime =
     options.runtime &&
-    createRuntimeHttp(host, options.runtime, (req) => authenticate(req) !== undefined || auth.sessionUser(req) !== undefined)
+    createRuntimeHttp(
+      host,
+      options.runtime,
+      (req) => authenticate(req) !== undefined || auth.sessionUser(req) !== undefined,
+      (req) => auth.sessionUser(req) !== undefined,
+    )
   const handleStatic = createStaticRoutes({ webDist: web.webDist })
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -99,7 +112,7 @@ export function createApp(
     try {
       if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
-      if (await handleApi(req, res, pathname)) return
+      if (await handleApi(req, res, pathname, new URLSearchParams(search))) return
       if (!pathname.startsWith('/api/') && handleStatic(req, res, pathname)) return
       json(res, 404, { error: 'not found' })
     } catch (err) {

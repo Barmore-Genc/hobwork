@@ -1,19 +1,23 @@
+import { api } from '@hobwork/sdk/browser'
 import { useEffect, useState } from 'react'
 
 export default function App() {
   const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    // Relative, because the dashboard is served under /p/<project>/ and routes under /p/<project>/api/.
-    fetch('api/greeting')
-      .then((res) => res.json())
-      .then((body: { message: string }) => setMessage(body.message))
-      .catch(() => setMessage('Could not load the greeting'))
+    api
+      .get<{ message: string }>('greeting')
+      .then((body) => setMessage(body.message))
+      .catch(() => setError('Could not load the greeting'))
   }, [])
 
   return (
     <main className="mx-auto max-w-2xl p-6">
-      <h1 className="text-2xl font-semibold">{message ?? 'Loading…'}</h1>
+      <div className="rounded-lg border border-border bg-surface p-6">
+        <h1 className="text-3xl font-semibold">{message ?? error ?? 'Loading…'}</h1>
+        <p className="mt-2 text-muted">This page is the project's dashboard.</p>
+      </div>
     </main>
   )
 }

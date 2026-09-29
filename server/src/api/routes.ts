@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { Auth } from '../auth/auth.ts'
 import type { User } from '../auth/users.ts'
@@ -8,7 +10,23 @@ import { HttpError, json, readJson } from '../http.ts'
 import { listConnections, revokeGrant } from '../oauth/grants.ts'
 import { latestRun } from '../pipeline/runner.ts'
 import { getProject, listProjects, ProjectError, type Project } from '../projects.ts'
+import type { ProjectData } from '../data/project-data.ts'
+import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
+import { nextRun, parseCron } from '../runtime/cron.ts'
+import {
+  getInvocation,
+  lastLogId,
+  latestInvocations,
+  listInvocations,
+  queryLogs,
+  waitForLogs,
+  type InvocationKind,
+  type InvocationRecord,
+  type InvocationStatus,
+  type LogFilter,
+} from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import { rotateWebhookToken, webhookPath, webhookTokenCreatedAt } from '../runtime/webhooks.ts'
 import { SecretError, type SecretStore } from '../secrets.ts'
 import { addSshKey, deleteSshKey, listSshKeys, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
@@ -17,11 +35,29 @@ import { getVersion, listVersions, type Version } from '../versions.ts'
 export type ProjectStatus = 'ready' | 'running' | 'updating'
 
 const VERSION_PAGE = 100
+const INVOCATION_PAGE = 50
+const MAX_INVOCATION_PAGE = 200
+// An invocation keeps at most 1,000 lines plus the one saying the rest was dropped.
+const INVOCATION_LOG_LINES = 1001
+const LOG_PAGE = 200
+const MAX_LOG_PAGE = 1000
+const LOG_WAIT_MS = 25_000
+const LIST_ERROR_CHARS = 300
+
+const INVOCATION_KINDS: InvocationKind[] = ['route', 'webhook', 'cron', 'trigger']
+const INVOCATION_STATUSES: InvocationStatus[] = ['running', 'ok', 'error']
+const LOG_VIEWS = ['all', 'events', 'problems'] as const
 
 type Route = {
   method: string
   pattern: RegExp
-  handle: (ctx: { req: IncomingMessage; res: ServerResponse; user: User; params: string[] }) => Promise<void> | void
+  handle: (ctx: {
+    req: IncomingMessage
+    res: ServerResponse
+    user: User
+    params: string[]
+    query: URLSearchParams
+  }) => Promise<void> | void
 }
 
 function versionView(version: Version) {
@@ -46,14 +82,114 @@ function positiveInt(value: string | undefined): number {
   return n
 }
 
+function queryInt(query: URLSearchParams, name: string): number | undefined {
+  const raw = query.get(name)
+  if (raw === null || raw === '') return undefined
+  const n = Number(raw)
+  if (!Number.isSafeInteger(n) || n < 0) throw new HttpError(400, `${name} must be a whole number`)
+  return n
+}
+
+function pageSize(query: URLSearchParams, fallback: number, max: number): number {
+  return Math.min(Math.max(queryInt(query, 'limit') ?? fallback, 1), max)
+}
+
+function queryEnum<T extends string>(query: URLSearchParams, name: string, values: readonly T[]): T | undefined {
+  const raw = query.get(name)
+  if (raw === null || raw === '') return undefined
+  if (!values.includes(raw as T)) throw new HttpError(400, `${name} must be one of ${values.join(', ')}`)
+  return raw as T
+}
+
+function queryTime(query: URLSearchParams, name: string): string | undefined {
+  const raw = query.get(name)
+  if (raw === null || raw === '') return undefined
+  const time = Date.parse(raw)
+  if (Number.isNaN(time)) throw new HttpError(400, `${name} must be a date and time`)
+  return new Date(time).toISOString()
+}
+
+function invocationView(invocation: InvocationRecord, full: boolean) {
+  const { stack, error, ...rest } = invocation
+  if (full) return { ...rest, error, stack }
+  return { ...rest, error: error && error.length > LIST_ERROR_CHARS ? `${error.slice(0, LIST_ERROR_CHARS)}…` : error }
+}
+
+function nextCronRun(schedule: string): string | null {
+  try {
+    return nextRun(parseCron(schedule), new Date())?.toISOString() ?? null
+  } catch {
+    return null
+  }
+}
+
 export function createApiRoutes(options: {
   host: Host
   auth: Auth
   delivery: Delivery
+  publicUrl: string
   runtime?: Runtime
+  data?: ProjectData
   secrets?: SecretStore
 }) {
   const { host, auth, delivery, runtime } = options
+
+  // What the deployed version declares. Without a runtime (tests), the newest version's.
+  async function deployedConfig(project: string): Promise<ProjectConfig | undefined> {
+    if (runtime) return (await runtime.config(project)).config
+    const [latest] = listVersions(host, project, 1)
+    return latest && readProjectConfig(host, project, latest.commit)
+  }
+
+  // True when the deployed version has a UI, or has not been built yet.
+  async function hasApp(project: string): Promise<boolean> {
+    if (!runtime) return false
+    const build = await runtime.storedBuild(project)
+    return build === undefined || existsSync(join(build, 'index.html'))
+  }
+
+  async function projectDetail(project: Project) {
+    let config: ProjectConfig | undefined
+    let configError: string | undefined
+    try {
+      config = await deployedConfig(project.name)
+    } catch (err) {
+      if (!(err instanceof ProjectError)) throw err
+      configError = err.message
+    }
+    const latest = latestInvocations(host, project.name)
+    const lastRun = (kind: InvocationKind, name: string) => {
+      const invocation = latest.get(`${kind} ${name}`)
+      return invocation ? { id: invocation.id, status: invocation.status, startedAt: invocation.startedAt } : null
+    }
+    const entryPoints = config && {
+      routes: Object.keys(config.routes).map((key) => ({ key, lastRun: lastRun('route', key) })),
+      crons: Object.entries(config.crons).map(([name, { schedule }]) => ({
+        name,
+        schedule,
+        nextRun: nextCronRun(schedule),
+        lastRun: lastRun('cron', name),
+      })),
+      webhooks: Object.keys(config.webhooks).map((name) => ({
+        name,
+        tokenCreatedAt: webhookTokenCreatedAt(host, project.name, name) ?? null,
+        lastRun: lastRun('webhook', name),
+      })),
+      triggers: Object.entries(config.triggers).map(([name, entry]) => ({
+        name,
+        homeassistant: entry.homeassistant ?? null,
+        lastRun: lastRun('trigger', name),
+      })),
+    }
+    const secretHosts = options.secrets?.hosts(project.name) ?? []
+    return {
+      entryPoints: entryPoints ?? null,
+      ...(configError ? { configError } : {}),
+      egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort(),
+      database: options.data?.status(project.name) ?? null,
+      app: config ? await hasApp(project.name) : false,
+    }
+  }
 
   function secretStore(): SecretStore {
     if (!options.secrets) throw new HttpError(503, 'This Hobwork server has no secret store')
@@ -120,7 +256,7 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects\/([^/]+)$/,
-      handle: ({ res, params }) => {
+      handle: async ({ res, params }) => {
         const project = requireProjectByName(host, params[0]!)
         const { status, current } = projectState(project)
         json(res, 200, {
@@ -129,7 +265,77 @@ export function createApiRoutes(options: {
           status,
           currentVersion: current?.number ?? null,
           versions: listVersions(host, project.name, VERSION_PAGE).map(versionView),
+          ...(await projectDetail(project)),
         })
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/invocations$/,
+      handle: ({ res, params, query }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const limit = pageSize(query, INVOCATION_PAGE, MAX_INVOCATION_PAGE)
+        const rows = listInvocations(host, {
+          project: project.name,
+          kind: queryEnum(query, 'kind', INVOCATION_KINDS),
+          status: queryEnum(query, 'status', INVOCATION_STATUSES),
+          since: queryTime(query, 'since'),
+          beforeId: queryInt(query, 'before'),
+          limit: limit + 1,
+        })
+        json(res, 200, { invocations: rows.slice(0, limit).map((i) => invocationView(i, false)), more: rows.length > limit })
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/invocations\/(\d+)$/,
+      handle: ({ res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const invocation = getInvocation(host, positiveInt(params[1]))
+        if (!invocation || invocation.project !== project.name) throw new HttpError(404, 'This run no longer exists')
+        const logs = queryLogs(host, { project: project.name, invocationId: invocation.id, limit: INVOCATION_LOG_LINES })
+        json(res, 200, { ...invocationView(invocation, true), logs })
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/logs$/,
+      handle: async ({ res, params, query }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const view = queryEnum(query, 'view', LOG_VIEWS) ?? 'all'
+        const after = queryInt(query, 'after')
+        const filter: LogFilter = {
+          project: project.name,
+          afterId: after,
+          eventsOnly: view === 'events',
+          minLevel: view === 'problems' ? 'warn' : undefined,
+          limit: pageSize(query, LOG_PAGE, MAX_LOG_PAGE),
+        }
+        // Read before querying, so a line appended in between is not skipped.
+        const last = lastLogId(host, project.name)
+        let lines = queryLogs(host, filter)
+        // Long poll: with wait=1 and nothing new, answer when a line arrives.
+        if (!lines.length && after !== undefined && after >= last && query.get('wait') === '1') {
+          const closed = new AbortController()
+          res.on('close', () => closed.abort())
+          await waitForLogs(project.name, LOG_WAIT_MS, closed.signal)
+          if (closed.signal.aborted) return
+          lines = queryLogs(host, filter)
+        }
+        const cursor = lines.length ? lines.at(-1)!.id : Math.max(after ?? 0, last)
+        json(res, 200, { lines, cursor })
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/projects\/([^/]+)\/webhooks\/([^/]+)\/token$/,
+      handle: async ({ res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const name = params[1]!
+        const config = await deployedConfig(project.name)
+        if (!config || !(name in config.webhooks)) throw new HttpError(404, `${project.name} has no webhook called "${name}"`)
+        const token = rotateWebhookToken(host, project.name, name)
+        json(res, 200, { url: `${options.publicUrl}${webhookPath(project.name, name, token)}` })
       },
     },
     {
@@ -270,7 +476,7 @@ export function createApiRoutes(options: {
   ]
 
   // Returns false for paths it does not own, so later handlers can take them.
-  return async (req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> => {
+  return async (req: IncomingMessage, res: ServerResponse, pathname: string, query: URLSearchParams): Promise<boolean> => {
     let params: string[] | undefined
     const allowed: string[] = []
     let route: Route | undefined
@@ -297,7 +503,7 @@ export function createApiRoutes(options: {
     const user = auth.requireUser(req, res)
     if (!user) return true
     try {
-      await route.handle({ req, res, user, params })
+      await route.handle({ req, res, user, params, query })
     } catch (err) {
       if (err instanceof HttpError) json(res, err.status, { error: err.message })
       else {

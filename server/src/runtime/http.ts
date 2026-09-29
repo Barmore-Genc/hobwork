@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
 import { getProject, ProjectError } from '../projects.ts'
+import { BuildError } from './builds.ts'
+import { serveProjectUi } from './project-ui.ts'
 import { matchRoute } from './routes.ts'
 import type { Runtime } from './runtime.ts'
 import { HOOKS_PREFIX, verifyWebhookToken } from './webhooks.ts'
@@ -18,6 +20,9 @@ const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'co
 // signed-in users (project UIs), whose state-changing requests must pass the
 // CSRF check (header x-hobwork-csrf: 1).
 export type RouteAuthorizer = (req: IncomingMessage, project: string) => boolean
+
+// Decides who may load a project's UI: signed-in users only.
+export type UiAuthorizer = (req: IncomingMessage) => boolean
 
 class HttpError extends Error {
   status: number
@@ -59,9 +64,40 @@ function segmentsOf(pathname: string, prefix: string): string[] {
   return pathname.slice(prefix.length).split('/')
 }
 
-// Serves project routes (/p/<project>/api/...) and webhooks
-// (/hooks/<project>/<name>/<token>). Returns false for other paths.
-export function createRuntimeHttp(host: Host, runtime: Runtime, authorizeRoute: RouteAuthorizer) {
+function wantsHtml(req: IncomingMessage): boolean {
+  return (req.headers.accept ?? '').includes('text/html')
+}
+
+// Serves project UIs (/p/<project>/...), their routes (/p/<project>/api/...)
+// and webhooks (/hooks/<project>/<name>/<token>). Returns false for other paths.
+export function createRuntimeHttp(
+  host: Host,
+  runtime: Runtime,
+  authorizeRoute: RouteAuthorizer,
+  authorizeUi: UiAuthorizer = () => false,
+) {
+  async function handleUi(req: IncomingMessage, res: ServerResponse, project: string, rest: string, search: string) {
+    const base = `${PROJECT_PREFIX}${project}/`
+    if (!authorizeUi(req)) {
+      if (wantsHtml(req) && (req.method === 'GET' || req.method === 'HEAD')) {
+        const returnTo = `${base}${rest}${search}`
+        res.writeHead(302, { location: `/login?returnTo=${encodeURIComponent(returnTo)}`, 'cache-control': 'no-store' })
+        return void res.end()
+      }
+      return sendJson(res, 401, { error: 'Sign in to continue' })
+    }
+    let build: string
+    try {
+      build = await runtime.build(project)
+    } catch (err) {
+      if (!(err instanceof BuildError)) throw err
+      console.error(`Building the UI of ${project} failed`, err)
+      res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+      return void res.end(`${project} could not be prepared. Try again in a moment.\n`)
+    }
+    serveProjectUi(req, res, { project, base, rest, build })
+  }
+
   async function invokeAndRespond(
     res: ServerResponse,
     project: string,
@@ -91,7 +127,12 @@ export function createRuntimeHttp(host: Host, runtime: Runtime, authorizeRoute: 
 
   async function handleRoute(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
     const [project = '', api, ...rest] = segmentsOf(pathname, PROJECT_PREFIX)
-    if (api !== 'api' || !getProject(host, project)) return sendJson(res, 404, { error: 'not found' })
+    if (!getProject(host, project)) return sendJson(res, 404, { error: 'not found' })
+    if (api === undefined) {
+      res.writeHead(308, { location: `${PROJECT_PREFIX}${project}/${search}` })
+      return void res.end()
+    }
+    if (api !== 'api') return handleUi(req, res, project, [api, ...rest].join('/'), search)
     if (!authorizeRoute(req, project)) {
       return sendJson(res, 401, { error: 'Sign in, or send an agent token as "Authorization: Bearer <token>"' }, {
         'www-authenticate': 'Bearer realm="Hobwork"',

@@ -3,8 +3,10 @@ import { CSRF_HEADER } from './auth/auth.ts'
 import { createSession } from './auth/sessions.ts'
 import { signInOidcUser, type User } from './auth/users.ts'
 import { createApp, type WebOptions } from './app.ts'
+import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
 import type { Host } from './host.ts'
+import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
 
 export const TEST_PUBLIC_URL = 'http://hobwork.test'
@@ -21,12 +23,21 @@ export async function freePort(): Promise<number> {
 // URLs in OAuth metadata and redirects work from the test.
 export async function startTestApp(
   host: Host,
-  options: { web?: Partial<WebOptions>; delivery?: Delivery; selfPublicUrl?: boolean; secrets?: SecretStore } = {},
+  options: {
+    web?: Partial<WebOptions>
+    delivery?: Delivery
+    selfPublicUrl?: boolean
+    secrets?: SecretStore
+    runtime?: Runtime
+    data?: ProjectData
+  } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
   const server = createApp(host, {
     delivery: options.delivery,
     secrets: options.secrets,
+    runtime: options.runtime,
+    data: options.data,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },

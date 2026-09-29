@@ -160,6 +160,7 @@ export type InvocationFilter = {
   name?: string
   status?: InvocationStatus
   version?: number
+  since?: string
   beforeId?: number
   limit: number
 }
@@ -171,6 +172,7 @@ export function listInvocations(host: Host, filter: InvocationFilter): Invocatio
   if (filter.name) add('i.name = ?', filter.name)
   if (filter.status) add('i.status = ?', filter.status)
   if (filter.version !== undefined) add('i.version = ?', filter.version)
+  if (filter.since) add('i.started_at >= ?', filter.since)
   if (filter.beforeId !== undefined) add('i.id < ?', filter.beforeId)
   return host.db
     .prepare(`${SELECT_INVOCATION} WHERE ${where.join(' AND ')} ORDER BY i.id DESC LIMIT ?`)
@@ -223,6 +225,8 @@ export type LogFilter = {
   until?: string
   source?: LogSource
   minLevel?: LogLevel
+  // Only lifecycle lines (deploys, starts, crashes, blocked requests, ...).
+  eventsOnly?: boolean
   limit: number
 }
 
@@ -250,6 +254,7 @@ export function queryLogs(host: Host, filter: LogFilter): LogEntry[] {
   if (filter.since) add('l.time >= ?', filter.since)
   if (filter.until) add('l.time <= ?', filter.until)
   if (filter.source) add('l.source = ?', filter.source)
+  if (filter.eventsOnly) where.push('l.event IS NOT NULL')
   if (filter.minLevel && filter.minLevel !== 'debug') {
     const levels = LOG_LEVELS.slice(LOG_LEVELS.indexOf(filter.minLevel))
     add(`l.level IN (${levels.map(() => '?').join(', ')})`, ...levels)
@@ -295,4 +300,18 @@ export function pruneLogs(host: Host): void {
      )`,
   )
   for (const row of host.db.prepare('SELECT id FROM projects').all()) trim.run(Number(row.id), MAX_LOG_ROWS_PER_PROJECT)
+}
+
+// The newest invocation of every entry point, keyed by `${kind} ${name}`.
+export function latestInvocations(host: Host, project: string): Map<string, InvocationRecord> {
+  const rows = host.db
+    .prepare(
+      `${SELECT_INVOCATION} WHERE i.id IN (
+         SELECT max(i2.id) FROM invocations i2 JOIN projects p2 ON p2.id = i2.project_id
+         WHERE p2.name = ? GROUP BY i2.kind, i2.name
+       )`,
+    )
+    .all(project)
+    .map(toInvocation)
+  return new Map(rows.map((i) => [`${i.kind} ${i.name}`, i]))
 }

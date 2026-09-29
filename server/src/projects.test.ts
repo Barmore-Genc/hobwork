@@ -55,7 +55,8 @@ test('creates a bare repo with the template committed on main', async () => {
       'migrations/.gitkeep',
       'src/greeting-route.ts',
       'tests/handlers.test.ts',
-      'ui/index.html',
+      'index.html',
+      'ui/App.tsx',
     ]),
   )
   const pkg = JSON.parse(await git(['--git-dir', repo, 'show', 'main:package.json']))

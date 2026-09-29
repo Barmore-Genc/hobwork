@@ -5,7 +5,11 @@ import { workspaceDir } from './host.ts'
 import { createProject } from './projects.ts'
 import { createBranch, diffBranch, listBranches, log, validateBranchName } from './repo.ts'
 import { createTestHost } from './test-host.ts'
+import { ensureAgent } from './agents.ts'
+import { startHostWorkspaceVm } from './test-workspace-vm.ts'
 import { createWorkspaceManager, type Workspace } from './workspaces.ts'
+
+const noExec = async () => ({ exitCode: 0, stdout: '', stderr: '' })
 
 let host: ReturnType<typeof createTestHost>
 
@@ -55,26 +59,28 @@ test('rejects refs that look like options', async () => {
 })
 
 test('checks out a branch, commits, and shows diff and log', async () => {
-  const workspaces = createWorkspaceManager(host)
+  const workspaces = createWorkspaceManager(host, { startVm: startHostWorkspaceVm(host) })
+  const agent = ensureAgent(host.db, 'Agent')
   await createBranch(host, 'filament', 'spools')
   const workspace = await workspaces.open('filament', 'spools')
   expect(workspace).toMatchObject({ project: 'filament', branch: 'spools', status: 'stopped' })
   expect(readFileSync(join(workspace.dir, 'hobwork.json'), 'utf8')).toContain('routes')
   expect(existsSync(join(workspace.dir, '.git'))).toBe(false)
+  expect(readFileSync(join(workspace.gitDir, 'config'), 'utf8')).not.toContain('origin')
 
-  expect(await workspaces.commit('filament', 'spools', 'Nothing')).toBeUndefined()
+  expect(await workspaces.commit('filament', 'spools', 'Nothing', agent)).toBeUndefined()
 
   writeFileSync(join(workspace.dir, 'src', 'spools.ts'), 'export const spools = 3\n')
   const diff = await workspaces.diff('filament', 'spools')
   expect(diff).toContain('+++ b/src/spools.ts')
   expect(diff).toContain('+export const spools = 3')
 
-  const sha = await workspaces.commit('filament', 'spools', 'Add spools', {
-    name: 'Agent',
-    email: 'agent@example.com',
-  })
+  expect(await workspaces.changes('filament', 'spools')).toEqual(['A  src/spools.ts'])
+  const sha = await workspaces.commit('filament', 'spools', 'Add spools', agent)
   expect(sha).toMatch(/^[0-9a-f]{40}$/)
   expect(await workspaces.diff('filament', 'spools')).toBe('')
+  expect(await workspaces.changes('filament', 'spools')).toEqual([])
+  expect(await workspaces.isCommitted('filament', 'spools')).toBe(true)
 
   const commits = await log(host, 'filament', 'spools')
   expect(commits[0]).toMatchObject({ sha, author: 'Agent', subject: 'Add spools' })
@@ -89,7 +95,7 @@ test('opening a missing branch fails', async () => {
 
 test('starts and stops a workspace VM through the seam', async () => {
   const stop = vi.fn(async () => {})
-  const startVm = vi.fn(async (workspace: Workspace) => ({ workspace, stop }))
+  const startVm = vi.fn(async (workspace: Workspace) => ({ workspace, stop, exec: noExec }))
   const workspaces = createWorkspaceManager(host, { startVm })
   await createBranch(host, 'filament', 'vm')
 
@@ -125,6 +131,7 @@ function testVm() {
   return {
     vm,
     handle: {
+      exec: noExec,
       stop: async () => {
         vm.stopped = true
       },
@@ -193,4 +200,45 @@ test('a stale VM is replaced on the next start unless it is busy', async () => {
   expect(second).not.toBe(first)
   expect(started[0]?.vm.stopped).toBe(true)
   expect(workspaces.get('filament', 'vm')?.status).toBe('running')
+})
+
+test('tracks whether the checkout has uncommitted changes', async () => {
+  const workspaces = createWorkspaceManager(host, { startVm: startHostWorkspaceVm(host) })
+  const agent = ensureAgent(host.db, 'Agent')
+  await createBranch(host, 'filament', 'dirty')
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(true)
+
+  const workspace = await workspaces.open('filament', 'dirty')
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(true)
+
+  await workspaces.files('filament', 'dirty', { op: 'write', path: 'notes.txt', content: 'hi\n' })
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(false)
+  expect(readFileSync(join(workspace.dir, 'notes.txt'), 'utf8')).toBe('hi\n')
+
+  await workspaces.commit('filament', 'dirty', 'Add notes', agent)
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(true)
+
+  const session = workspaces.openSession('filament', 'dirty', agent)
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(false)
+  await workspaces.changes('filament', 'dirty')
+  expect(await workspaces.isCommitted('filament', 'dirty')).toBe(false)
+  session.close()
+})
+
+test('commits without a workspace do nothing and do not start a VM', async () => {
+  const startVm = vi.fn(async (workspace: Workspace) => ({ workspace, stop: async () => {}, exec: noExec }))
+  const workspaces = createWorkspaceManager(host, { startVm })
+  const agent = ensureAgent(host.db, 'Agent')
+  await createBranch(host, 'filament', 'none')
+  expect(await workspaces.commit('filament', 'none', 'Nothing', agent)).toBeUndefined()
+  expect(await workspaces.diff('filament', 'none')).toBe('')
+  expect(await workspaces.changes('filament', 'none')).toEqual([])
+  expect(startVm).not.toHaveBeenCalled()
+})
+
+test('file tools need a workspace VM', async () => {
+  await createBranch(host, 'filament', 'novm')
+  await expect(
+    createWorkspaceManager(host).files('filament', 'novm', { op: 'write', path: 'a.txt', content: 'x' }),
+  ).rejects.toThrow('not available')
 })

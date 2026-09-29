@@ -13,6 +13,7 @@ import { createBranch } from './repo.ts'
 import { createTestHost } from './test-host.ts'
 import { fakePackageJson, seedMain, type Files } from './test-project.ts'
 import { listVersions } from './versions.ts'
+import { startHostWorkspaceVm } from './test-workspace-vm.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -50,7 +51,7 @@ async function changeBranch(branch: string, files: Files, message = `Change ${br
     mkdirSync(dirname(join(dir, path)), { recursive: true })
     writeFileSync(join(dir, path), content)
   }
-  await workspaces.commit(project, branch, message)
+  await workspaces.commit(project, branch, message, agent)
 }
 
 async function branchWith(branch: string, files: Files): Promise<void> {
@@ -61,7 +62,7 @@ async function branchWith(branch: string, files: Files): Promise<void> {
 beforeEach(async () => {
   host = createTestHost()
   agent = createAgentToken(host.db, 'claude').agent
-  workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
+  workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: startHostWorkspaceVm(host) })
   deployments = []
   vmStarts = 0
   await createProject(host, project)

@@ -10,15 +10,7 @@ import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
 import type { Devices } from '../devices/devices.ts'
-import {
-  checkoutDirectory,
-  deleteCheckoutFile,
-  editCheckoutFile,
-  listCheckoutFiles,
-  readCheckoutFile,
-  searchCheckout,
-  writeCheckoutFile,
-} from '../files.ts'
+import { createFileTools } from '../files.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import { getHaServices, haServicesNote } from '../homeassistant/services.ts'
 import type { Host } from '../host.ts'
@@ -26,7 +18,8 @@ import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
 import type { StorageUsage } from '../storage.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
-import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
+import { relativePath } from '../committed-files.ts'
+import { branchExists, createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { limitTools } from './access.ts'
 import { runBash } from './bash.ts'
@@ -137,8 +130,6 @@ export function createMcpServer({
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
   limitTools(server, agent.access)
 
-  // main is never written through a workspace, so its checkout is refreshed to
-  // the deployed commit on every read.
   function withAppUrls<T extends { name: string }>(projectName: string, branches: T[]) {
     return branches.map((b) => ({
       ...b,
@@ -146,21 +137,14 @@ export function createMcpServer({
     }))
   }
 
-  async function readableDir(projectName: string, branchName: string): Promise<string> {
-    const workspace =
-      branchName === DEFAULT_BRANCH
-        ? await workspaces.sync(projectName, branchName)
-        : await workspaces.open(projectName, branchName)
-    return workspace.dir
-  }
+  const fileTools = createFileTools(host, workspaces)
+  const access = { readOnly: agent.access.readOnly }
 
-  async function writableDir(projectName: string, branchName: string): Promise<string> {
-    if (branchName === DEFAULT_BRANCH) {
-      throw new ProjectError(
-        `${DEFAULT_BRANCH} is the deployed version and changes only by merging a branch. Create a branch with create_branch and make the change there`,
-      )
+  async function requireWritableBranch(projectName: string, branchName: string): Promise<void> {
+    fileTools.assertWritable(branchName)
+    if (!(await branchExists(host, projectName, branchName))) {
+      throw new ProjectError(`Branch "${branchName}" does not exist in ${projectName}`)
     }
-    return (await workspaces.open(projectName, branchName)).dir
   }
 
   server.registerTool(
@@ -286,7 +270,7 @@ export function createMcpServer({
     'read_file',
     {
       description:
-        'Read a text file on a branch, including uncommitted changes in its workspace. Returns the exact file content, suitable for edit_file.',
+        'Read a text file on a branch, including uncommitted changes in its workspace (read-only credentials see committed files only). Returns the exact file content, suitable for edit_file.',
       inputSchema: {
         hob,
         branch,
@@ -297,9 +281,9 @@ export function createMcpServer({
       annotations: { readOnlyHint: true },
     },
     async ({ hob: p, branch: b, path, offset, limit }) => {
-      const content = await readCheckoutFile(await readableDir(p, b), path)
-      if (content.subarray(0, 8000).includes(0)) return text(`"${path}" is a binary file (${content.length} bytes)`)
-      return text(formatReadResult(content.toString('utf8'), offset, limit))
+      const file = await fileTools.read(p, b, path, access)
+      if (file.binary) return text(`"${path}" is a binary file (${file.size} bytes)`)
+      return text(formatReadResult(file.content, offset, limit))
     },
   )
 
@@ -316,7 +300,7 @@ export function createMcpServer({
       },
     },
     async ({ hob: p, branch: b, path, content }) => {
-      const { created } = await writeCheckoutFile(await writableDir(p, b), path, content)
+      const { created } = await fileTools.write(p, b, path, content)
       return text(`${created ? 'Created' : 'Updated'} ${path}`)
     },
   )
@@ -336,13 +320,7 @@ export function createMcpServer({
       },
     },
     async ({ hob: p, branch: b, path, old_string, new_string, replace_all }) => {
-      const { replacements } = await editCheckoutFile(
-        await writableDir(p, b),
-        path,
-        old_string,
-        new_string,
-        replace_all,
-      )
+      const { replacements } = await fileTools.edit(p, b, path, old_string, new_string, replace_all)
       return text(`Edited ${path} (${replacements} ${replacements === 1 ? 'replacement' : 'replacements'})`)
     },
   )
@@ -355,7 +333,7 @@ export function createMcpServer({
       annotations: { destructiveHint: true },
     },
     async ({ hob: p, branch: b, path }) => {
-      await deleteCheckoutFile(await writableDir(p, b), path)
+      await fileTools.remove(p, b, path)
       return text(`Deleted ${path}`)
     },
   )
@@ -374,7 +352,7 @@ export function createMcpServer({
       annotations: { readOnlyHint: true },
     },
     async ({ hob: p, branch: b, path, recursive }) => {
-      const { entries, truncated } = await listCheckoutFiles(await readableDir(p, b), path, recursive)
+      const { entries, truncated } = await fileTools.list(p, b, path, recursive, access)
       if (!entries.length) return text('(no files)')
       return text(entries.join('\n') + (truncated ? `\n[Listing cut at ${entries.length} entries. List a subdirectory.]` : ''))
     },
@@ -397,13 +375,12 @@ export function createMcpServer({
       annotations: { readOnlyHint: true },
     },
     async ({ hob: p, branch: b, pattern, path, glob, ignore_case, max_results }) => {
-      const result = await searchCheckout(await readableDir(p, b), {
-        path,
-        pattern,
-        glob,
-        ignoreCase: ignore_case,
-        maxMatches: max_results,
-      })
+      const result = await fileTools.search(
+        p,
+        b,
+        { path, pattern, glob, ignoreCase: ignore_case, maxMatches: max_results },
+        access,
+      )
       if (!result.matches.length) return text(`No matches in ${result.filesSearched} files`)
       return text(
         result.matches.join('\n') +
@@ -433,10 +410,11 @@ export function createMcpServer({
     async ({ hob: p, branch: b, command, cwd, timeout_seconds }, extra) => {
       if (!workspaces.canStartVms) {
         throw new ProjectError(
-          'This Hobwork host cannot run commands: no workspace VM backend is configured. File tools, commit, diff and log still work',
+          'This Hobwork host cannot run commands: no workspace VM backend is configured. Reading committed files and log still work',
         )
       }
-      const dir = await checkoutDirectory(await writableDir(p, b), cwd)
+      fileTools.assertWritable(b)
+      const dir = relativePath(cwd) || '.'
       const vm = await workspaces.start(p, b)
       const session = workspaces.openSession(p, b, agent)
       const outcome = await runBash(vm, command, {
@@ -462,11 +440,8 @@ export function createMcpServer({
       },
     },
     async ({ hob: p, branch: b, message }) => {
-      await writableDir(p, b)
-      const sha = await workspaces.commit(p, b, message, {
-        name: agent.name,
-        email: `agent-${agent.id}@hobwork.local`,
-      })
+      await requireWritableBranch(p, b)
+      const sha = await workspaces.commit(p, b, message, agent)
       return text(sha ? `Committed ${sha}` : 'Nothing to commit')
     },
   )
@@ -486,7 +461,10 @@ export function createMcpServer({
       let diff: string
       if (scope === 'branch') diff = await diffBranch(host, p, b)
       else {
-        await writableDir(p, b)
+        if (access.readOnly) {
+          throw new ProjectError(`Read-only credentials cannot see uncommitted changes. Use scope "branch" for the committed ones`)
+        }
+        await requireWritableBranch(p, b)
         diff = await workspaces.diff(p, b)
       }
       return text(diff ? truncateMiddle(diff) : 'No changes')

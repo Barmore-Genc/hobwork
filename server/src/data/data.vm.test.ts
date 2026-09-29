@@ -14,6 +14,7 @@ import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
 import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
+import { createWorkspaceApi } from '../workspace-api.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { migrationVmBackend } from './migration-vm.ts'
 import { createProjectData, type ProjectData } from './project-data.ts'
@@ -90,7 +91,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
     workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
       startVm: workspaceVmBackend(
         vmOptions,
-        undefined,
+        (workspace) => api(workspace),
         (workspace, token) => workspaces.sessionAgent(workspace.project, workspace.branch, token) !== undefined,
       ),
     })
@@ -108,6 +109,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
       pipeline: { startVm: pipelineVms.start, migrationDryRun: data.migrationDryRun },
       deploy: runtime.deploy,
     })
+    const api = createWorkspaceApi({ host, workspaces, delivery })
     server = createApp(host, { workspaces, delivery, runtime, data, secrets })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const { token } = createAgentToken(host.db, 'claude')

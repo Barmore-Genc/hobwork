@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
+import { PassThrough, type Readable } from 'node:stream'
 import { allowsProject } from './access.ts'
 import { verifyAgentToken, type AuthenticatedAgent } from './agents.ts'
 import { publishChange } from './changes.ts'
@@ -9,7 +10,9 @@ import { getProject, renamedProject } from './projects.ts'
 
 export const GIT_PREFIX = '/git/'
 
-const GIT_PATH = /^\/git\/([a-z0-9-]+)\.git(\/[A-Za-z0-9._/-]*)$/
+const MAX_PUSH_BYTES = 512 * 1024 * 1024
+
+export const GIT_PATH = /^\/git\/([a-z0-9-]+)\.git(\/[A-Za-z0-9._/-]*)$/
 
 function authenticate(host: Host, req: IncomingMessage): AuthenticatedAgent | undefined {
   const header = req.headers.authorization
@@ -28,7 +31,7 @@ function plain(res: ServerResponse, status: number, message: string, headers: Re
 // git http-backend picks the service from a path suffix or the `service`
 // parameter. Anything that mentions receive-pack anywhere, in any case or
 // encoding, counts as a push, so no variation slips past a read-only token.
-function mentionsReceivePack(rest: string, query: string): boolean {
+export function mentionsReceivePack(rest: string, query: string): boolean {
   const decoded = (text: string) => {
     try {
       return decodeURIComponent(text.replace(/\+/g, ' '))
@@ -76,59 +79,112 @@ export function handleGit(
     return Array.isArray(value) ? value.join(', ') : (value ?? '')
   }
 
+  const backend = startGitBackend(host, {
+    project,
+    rest,
+    query,
+    method: req.method ?? 'GET',
+    contentType: header('content-type'),
+    contentLength: header('content-length'),
+    gitProtocol: header('git-protocol'),
+    contentEncoding: header('content-encoding'),
+    remoteUser: agent.name,
+    remoteAddress: remoteAddress ?? '',
+    push,
+  })
+  req.pipe(backend.stdin)
+  backend.stdin.on('error', () => {})
+  backend.response.then(
+    ({ status, headers, body }) => {
+      res.writeHead(status, headers)
+      body.pipe(res)
+    },
+    () => {
+      if (!res.headersSent) plain(res, 500, 'git backend failed')
+      else res.destroy()
+    },
+  )
+}
+
+export type GitBackendRequest = {
+  project: string
+  rest: string
+  query: string
+  method: string
+  contentType: string
+  contentLength: string
+  gitProtocol: string
+  contentEncoding: string
+  remoteUser: string
+  remoteAddress: string
+  push: boolean
+}
+
+// Runs `git http-backend` for one request. Write the request body to `stdin`.
+// Repos take pushes from VMs, so received objects are checked and the size of
+// a push is limited.
+export function startGitBackend(host: Host, request: GitBackendRequest) {
+  const { project, rest, query, push } = request
   // Built from scratch rather than inherited, so nothing from the host process
   // (such as HOBWORK_ALLOW_MAIN) reaches the pre-receive hook.
   const env: Record<string, string> = gitEnv({
     GIT_PROJECT_ROOT: reposDir(host),
     GIT_HTTP_EXPORT_ALL: '1',
     PATH_INFO: `/${project}.git${rest}`,
-    REQUEST_METHOD: req.method ?? 'GET',
+    REQUEST_METHOD: request.method,
     QUERY_STRING: query,
-    REMOTE_USER: agent.name,
-    REMOTE_ADDR: remoteAddress ?? '',
+    REMOTE_USER: request.remoteUser,
+    REMOTE_ADDR: request.remoteAddress,
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'receive.fsckObjects',
+    GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'receive.maxInputSize',
+    GIT_CONFIG_VALUE_1: String(MAX_PUSH_BYTES),
   })
   const optional = {
-    CONTENT_TYPE: 'content-type',
-    CONTENT_LENGTH: 'content-length',
-    GIT_PROTOCOL: 'git-protocol',
-    HTTP_CONTENT_ENCODING: 'content-encoding',
+    CONTENT_TYPE: request.contentType,
+    CONTENT_LENGTH: request.contentLength,
+    GIT_PROTOCOL: request.gitProtocol,
+    HTTP_CONTENT_ENCODING: request.contentEncoding,
   }
-  for (const [variable, name] of Object.entries(optional)) {
-    const value = header(name)
+  for (const [variable, value] of Object.entries(optional)) {
     if (value) env[variable] = value
   }
 
   const child = spawn('git', ['http-backend'], { env })
   const stderr: Buffer[] = []
   child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
-  child.on('error', (err) => {
-    console.error('git http-backend failed to start', err)
-    if (!res.headersSent) plain(res, 500, 'git backend failed')
-    else res.destroy()
-  })
   child.on('close', (code) => {
     if (code !== 0) {
       console.error(`git http-backend exited with ${code}: ${Buffer.concat(stderr).toString('utf8')}`)
     }
-    if (push && req.method === 'POST') publishChange(host.db, { kind: 'branches', project })
-    if (!res.headersSent) plain(res, 500, 'git backend failed')
+    if (push && request.method === 'POST') publishChange(host.db, { kind: 'branches', project })
   })
 
-  req.pipe(child.stdin)
-  child.stdin.on('error', () => {})
-
-  let head = Buffer.alloc(0)
-  const onData = (chunk: Buffer) => {
-    head = Buffer.concat([head, chunk])
-    const end = headerEnd(head)
-    if (!end) return
-    child.stdout.off('data', onData)
-    const { status, headers } = parseCgiHeaders(head.subarray(0, end.index).toString('latin1'))
-    res.writeHead(status, headers)
-    res.write(head.subarray(end.index + end.length))
-    child.stdout.pipe(res)
-  }
-  child.stdout.on('data', onData)
+  const response = new Promise<{ status: number; headers: Record<string, string>; body: Readable }>(
+    (resolve, reject) => {
+      child.on('error', (err) => {
+        console.error('git http-backend failed to start', err)
+        reject(err)
+      })
+      child.on('close', () => reject(new Error('git backend failed')))
+      let head = Buffer.alloc(0)
+      const onData = (chunk: Buffer) => {
+        head = Buffer.concat([head, chunk])
+        const end = headerEnd(head)
+        if (!end) return
+        child.stdout.off('data', onData)
+        const { status, headers } = parseCgiHeaders(head.subarray(0, end.index).toString('latin1'))
+        const body = new PassThrough()
+        body.write(head.subarray(end.index + end.length))
+        child.stdout.pipe(body)
+        resolve({ status, headers, body })
+      }
+      child.stdout.on('data', onData)
+    },
+  )
+  response.catch(() => {})
+  return { stdin: child.stdin, response }
 }
 
 function headerEnd(buffer: Buffer): { index: number; length: number } | undefined {

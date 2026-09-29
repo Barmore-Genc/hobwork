@@ -3,10 +3,13 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Agent } from './agents.ts'
 import { publishChange } from './changes.ts'
-import { git, GitError, HOBWORK_IDENTITY, type GitOptions } from './git.ts'
+import { git, GitError } from './git.ts'
 import { repoPath, workspaceDir, type Host } from './host.ts'
 import { ProjectError, requireProject } from './projects.ts'
-import { assertNotDefaultBranch, branchExists, deleteBranchRef, validateBranchName } from './repo.ts'
+import { assertNotDefaultBranch, branchExists, branchHead, deleteBranchRef, validateBranchName } from './repo.ts'
+import { INTERNAL_HOST } from './sandbox/sandbox.ts'
+import { runFileTool, runGitTool, type ToolOptions } from './workspace-tools.ts'
+import type { FileRequest, FileResponse } from '../../packages/sdk/src/workspace-tools/files.ts'
 
 export type WorkspaceStatus = 'stopped' | 'starting' | 'running' | 'stopping'
 
@@ -15,8 +18,11 @@ export type Workspace = {
   project: string
   branch: string
   status: WorkspaceStatus
-  // Directory with the branch's files. This is what a workspace VM mounts.
+  // Directory with the branch's files. A workspace VM mounts it read-write.
   dir: string
+  // The checkout's git directory. A workspace VM mounts it too. The host never
+  // runs git in it after creating it, since the VM can write to it.
+  gitDir: string
   createdAt: string
   lastUsedAt: string
 }
@@ -39,6 +45,8 @@ export type ExecOptions = {
   // should kill the command.
   signal?: AbortSignal
   env?: Record<string, string>
+  // Written to the command's stdin, which is then closed.
+  input?: string
   onOutput?: (stream: 'stdout' | 'stderr', chunk: string) => void
 }
 
@@ -49,6 +57,7 @@ export type ExecResult = {
 }
 
 // What agent tools need from a workspace VM. `command` is a shell command line.
+// File and git tools run through it (see workspace-tools.ts).
 export type ExecWorkspaceVm = WorkspaceVm & {
   exec(command: string, options: ExecOptions): Promise<ExecResult>
 }
@@ -80,22 +89,26 @@ export type InteractiveWorkspaceVm = ExecWorkspaceVm & {
 // read-write. The returned handle is kept while the workspace runs.
 export type StartWorkspaceVm<Vm extends WorkspaceVm> = (workspace: Workspace) => Promise<Vm>
 
-export type CommitAuthor = { name: string; email: string }
-
 // Env var with the session token of the agent a command runs for. The `hobwork`
 // CLI in the VM sends it back, so its calls act as that agent.
 export const SESSION_ENV = 'HOBWORK_SESSION'
 export const SESSION_HEADER = 'x-hobwork-session'
+
+const NO_VMS =
+  'Workspace VMs are not available on this Hobwork host, so uncommitted changes cannot be read or changed. Committed files can still be read'
+
+// Identity of tools the host runs itself in the VM, such as resetting a checkout.
+const HOBWORK_AGENT: Agent = { id: 0, name: 'Hobwork' }
 
 export type WorkspaceSession = {
   env: Record<string, string>
   close(): void
 }
 
-export type WorkspaceManager<Vm extends WorkspaceVm> = ReturnType<typeof createWorkspaceManager<Vm>>
+export type WorkspaceManager<Vm extends ExecWorkspaceVm> = ReturnType<typeof createWorkspaceManager<Vm>>
 
-// The git directory lives next to the files, not inside them. The VM only sees the
-// files, so nothing it writes (config, hooks, filters) is ever run by host git.
+// The git directory lives next to the files, not inside them, so the checkout
+// has no .git entry that could point git somewhere else.
 function paths(host: Host, project: string, branch: string) {
   const root = workspaceDir(host, project, branch)
   return { root, files: join(root, 'files'), gitDir: join(root, 'git') }
@@ -110,6 +123,7 @@ function toWorkspace(host: Host, row: Record<string, unknown>): Workspace {
     branch,
     status: String(row.status) as WorkspaceStatus,
     dir: paths(host, project, branch).files,
+    gitDir: paths(host, project, branch).gitDir,
     createdAt: String(row.created_at),
     lastUsedAt: String(row.last_used_at),
   }
@@ -120,31 +134,38 @@ const SELECT = `SELECT w.id, p.name AS project, w.branch, w.status, w.created_at
 
 const RECLAIM_MIN_IDLE_MS = 30_000
 
-export type WorkspaceManagerOptions<Vm extends WorkspaceVm> = {
+export type WorkspaceManagerOptions<Vm extends ExecWorkspaceVm> = {
   startVm?: StartWorkspaceVm<Vm>
   // VMs not used for this long are stopped. Unset means never.
   idleTimeoutMs?: number
 }
 
-export function createWorkspaceManager<Vm extends WorkspaceVm>(
+export function createWorkspaceManager<Vm extends ExecWorkspaceVm>(
   host: Host,
   options: WorkspaceManagerOptions<Vm> = {},
 ) {
   const vms = new Map<number, Vm>()
   const queues = new Map<string, Promise<unknown>>()
-  const sessions = new Map<string, { project: string; branch: string; agent: Agent }>()
+  const sessions = new Map<string, { project: string; branch: string; agent: Agent; command: boolean }>()
+  // Whether the checkout may have uncommitted changes. Missing means unknown
+  // (after a host restart), which counts as dirty until a status check says otherwise.
+  const dirty = new Map<string, boolean>()
   let idleTimer: NodeJS.Timeout | undefined
+
+  function key(project: string, branch: string): string {
+    return `${project}\0${branch}`
+  }
 
   // Checkout, git and VM operations on one workspace run one at a time, so two
   // tool calls cannot clone, commit or start the same workspace concurrently.
   function serialized<T>(project: string, branch: string, fn: () => Promise<T>): Promise<T> {
-    const key = `${project}\0${branch}`
-    const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(fn)
-    queues.set(key, run)
+    const queue = key(project, branch)
+    const run = (queues.get(queue) ?? Promise.resolve()).catch(() => {}).then(fn)
+    queues.set(queue, run)
     void run
       .catch(() => {})
       .finally(() => {
-        if (queues.get(key) === run) queues.delete(key)
+        if (queues.get(queue) === run) queues.delete(queue)
       })
     return run
   }
@@ -187,11 +208,6 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
       .run(branch, project)
   }
 
-  function workspaceGit(project: string, branch: string, args: string[], gitOptions: GitOptions = {}) {
-    const { files, gitDir } = paths(host, project, branch)
-    return git(['--git-dir', gitDir, '--work-tree', files, ...args], { ...gitOptions, cwd: files })
-  }
-
   async function openUnlocked(project: string, branch: string): Promise<Workspace> {
     const { id: projectId } = requireProject(host, project)
     if (!(await branchExists(host, project, branch))) {
@@ -201,9 +217,12 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     if (!existsSync(gitDir)) {
       rmSync(root, { recursive: true, force: true })
       mkdirSync(root, { recursive: true })
+      // No hardlinks: the VM can write to the checkout's objects, and a hardlink
+      // would let it reach the ones in the project repo.
       await git([
         'clone',
         '--quiet',
+        '--no-hardlinks',
         '--branch',
         branch,
         '--separate-git-dir',
@@ -212,6 +231,10 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
         files,
       ])
       rmSync(join(files, '.git'))
+      // The VM pushes and fetches through hobwork.internal, so the host path stays out of its sight.
+      await git(['--git-dir', gitDir, 'remote', 'remove', 'origin'])
+      await git(['--git-dir', gitDir, 'config', '--unset', 'core.worktree']).catch(() => {})
+      dirty.set(key(project, branch), false)
     }
     host.db
       .prepare(
@@ -229,29 +252,32 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     return serialized(project, branch, () => openUnlocked(project, branch))
   }
 
-  function start(project: string, branch: string): Promise<Vm> {
+  async function startUnlocked(project: string, branch: string): Promise<Vm> {
     const { startVm } = options
-    if (!startVm) return Promise.reject(new Error('Workspace VMs are not available'))
+    if (!startVm) throw new ProjectError(NO_VMS)
+    const workspace = await openUnlocked(project, branch)
+    const existing = vms.get(workspace.id)
+    if (existing) {
+      if (existing.busy?.() || !(await existing.isStale?.())) return existing
+      await stopUnlocked(project, branch)
+    }
+    setStatus(workspace.id, 'starting')
+    try {
+      const vm = await startVm({ ...workspace, status: 'starting' })
+      vms.set(workspace.id, vm)
+      setStatus(workspace.id, 'running')
+      scheduleIdleCheck()
+      return vm
+    } catch (err) {
+      setStatus(workspace.id, 'stopped')
+      throw err
+    }
+  }
+
+  function start(project: string, branch: string): Promise<Vm> {
+    if (!options.startVm) return Promise.reject(new ProjectError(NO_VMS))
     validateBranchName(branch)
-    return serialized(project, branch, async () => {
-      const workspace = await openUnlocked(project, branch)
-      const existing = vms.get(workspace.id)
-      if (existing) {
-        if (existing.busy?.() || !(await existing.isStale?.())) return existing
-        await stopUnlocked(project, branch)
-      }
-      setStatus(workspace.id, 'starting')
-      try {
-        const vm = await startVm({ ...workspace, status: 'starting' })
-        vms.set(workspace.id, vm)
-        setStatus(workspace.id, 'running')
-        scheduleIdleCheck()
-        return vm
-      } catch (err) {
-        setStatus(workspace.id, 'stopped')
-        throw err
-      }
-    })
+    return serialized(project, branch, () => startUnlocked(project, branch))
   }
 
   function isIdle(workspace: Workspace, now: number): boolean {
@@ -336,20 +362,6 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     }
   }
 
-  // Brings the checkout to the branch tip in the project repo, discarding local
-  // changes. Only for checkouts nothing else writes to, such as main's.
-  function sync(project: string, branch: string): Promise<Workspace> {
-    validateBranchName(branch)
-    return serialized(project, branch, async () => {
-      const workspace = await openUnlocked(project, branch)
-      const remote = `refs/remotes/origin/${branch}`
-      await workspaceGit(project, branch, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${remote}`])
-      await workspaceGit(project, branch, ['reset', '--quiet', '--hard', remote])
-      await workspaceGit(project, branch, ['clean', '--quiet', '-fdx'])
-      return workspace
-    })
-  }
-
   function stop(project: string, branch: string): Promise<void> {
     return serialized(project, branch, () => stopUnlocked(project, branch))
   }
@@ -359,6 +371,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     const workspace = get(project, branch)
     rmSync(paths(host, project, branch).root, { recursive: true, force: true })
     if (workspace) host.db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspace.id)
+    dirty.delete(key(project, branch))
   }
 
   function remove(project: string, branch: string): Promise<void> {
@@ -375,93 +388,170 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     })
   }
 
-  // Stages everything, commits and pushes to the branch in the project repo.
-  // Returns the new commit, or undefined when there was nothing to commit.
-  function commit(
+  const remoteUrl = (project: string) => `http://${INTERNAL_HOST}/git/${project}.git`
+
+  function hasSession(project: string, branch: string): boolean {
+    for (const session of sessions.values()) {
+      if (session.command && session.project === project && session.branch === branch) return true
+    }
+    return false
+  }
+
+  // A checkout counts as clean only while no command or shell can be changing it.
+  function noteChanges(project: string, branch: string, clean: boolean): void {
+    dirty.set(key(project, branch), !clean || hasSession(project, branch))
+  }
+
+  function markDirty(project: string, branch: string): void {
+    dirty.set(key(project, branch), true)
+  }
+
+  // Runs `fn` with the workspace VM, starting it if needed. The tools the VM
+  // runs push and fetch through hobwork.internal, so they get a session of their own.
+  function withVm<T>(
     project: string,
     branch: string,
-    message: string,
-    author: CommitAuthor = { name: 'Hobwork', email: HOBWORK_IDENTITY.GIT_AUTHOR_EMAIL },
-  ): Promise<string | undefined> {
+    agent: Agent | undefined,
+    fn: (vm: Vm, tool: ToolOptions) => Promise<T>,
+  ): Promise<T> {
+    validateBranchName(branch)
     return serialized(project, branch, async () => {
-      if (!message.trim()) throw new ProjectError('Commit message must not be empty')
-      requireWorkspace(project, branch)
+      const vm = await startUnlocked(project, branch)
       touch(project, branch)
-      await workspaceGit(project, branch, ['add', '--all'])
-      const status = await workspaceGit(project, branch, ['status', '--porcelain'])
-      if (!status.trim()) return undefined
-      await workspaceGit(project, branch, ['commit', '--quiet', '--file', '-'], {
-        input: message,
-        env: { ...HOBWORK_IDENTITY, GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email },
-      })
-      await workspaceGit(project, branch, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`])
+      const session = newSession(project, branch, agent ?? HOBWORK_AGENT)
+      try {
+        return await fn(vm, { env: session.env })
+      } finally {
+        session.close()
+      }
+    })
+  }
+
+  // Whether reads may come from the project repo instead of the checkout: there
+  // is no workspace, or it has nothing uncommitted. Asks the VM when unsure.
+  async function isCommitted(project: string, branch: string): Promise<boolean> {
+    validateBranchName(branch)
+    if (!get(project, branch)) return true
+    const known = dirty.get(key(project, branch))
+    if (known !== undefined) return !known
+    return (await changes(project, branch)).length === 0
+  }
+
+  // Runs a file tool in the workspace VM. Tools that change files mark the
+  // checkout as having uncommitted changes.
+  function files(
+    project: string,
+    branch: string,
+    request: FileRequest,
+    options: Pick<ToolOptions, 'signal' | 'timeoutMs'> = {},
+  ): Promise<FileResponse> {
+    return withVm(project, branch, undefined, async (vm, tool) => {
+      if (request.op === 'write' || request.op === 'edit' || request.op === 'delete') markDirty(project, branch)
+      return runFileTool(vm, request, { ...tool, ...options })
+    })
+  }
+
+  // Stages everything, commits and pushes to the branch in the project repo,
+  // from inside the VM. Returns the new commit, or undefined when there was
+  // nothing to commit.
+  function commit(project: string, branch: string, message: string, agent: Agent): Promise<string | undefined> {
+    if (!message.trim()) return Promise.reject(new ProjectError('Commit message must not be empty'))
+    if (!get(project, branch)) return Promise.resolve(undefined)
+    return withVm(project, branch, agent, async (vm, tool) => {
+      const result = await runGitTool(
+        vm,
+        {
+          op: 'commit',
+          message,
+          authorName: agent.name,
+          authorEmail: `agent-${agent.id}@hobwork.local`,
+          remote: remoteUrl(project),
+          branch,
+        },
+        tool,
+      )
+      if (!result.committed) return undefined
+      // The VM says what it pushed. The repo says what the branch is.
+      if ((await branchHead(host, project, branch)) !== result.sha) {
+        throw new ProjectError(`The push to ${branch} did not arrive`)
+      }
+      noteChanges(project, branch, result.clean)
       publishChange(host.db, { kind: 'branches', project })
-      return (await workspaceGit(project, branch, ['rev-parse', 'HEAD'])).trim()
+      return result.sha
     })
   }
 
   // Moves the branch from `from` to `to` and resets its workspace checkout to
-  // match, keeping ignored files such as node_modules. Returns false and changes
-  // nothing if the branch or the workspace changed since `from`.
+  // match, keeping ignored files. Returns false and changes nothing if the
+  // branch or the workspace changed since `from`, or the checkout cannot be reset.
   function moveBranch(project: string, branch: string, from: string, to: string): Promise<boolean> {
     validateBranchName(branch)
-    return serialized(project, branch, async () => {
-      assertNotDefaultBranch(branch)
-      const workspace = get(project, branch)
-      if (workspace) {
-        const head = (await workspaceGit(project, branch, ['rev-parse', 'HEAD'])).trim()
-        const status = await workspaceGit(project, branch, ['status', '--porcelain'])
-        if (head !== from || status.trim()) return false
-      }
+    assertNotDefaultBranch(branch)
+    if (!get(project, branch)) return updateBranchRef(project, branch, from, to)
+    return withVm(project, branch, undefined, async (vm, tool) => {
+      const state = await runGitTool(vm, { op: 'state' }, tool)
+      noteChanges(project, branch, state.clean)
+      if (state.head !== from || !state.clean) return false
+      if (!(await updateBranchRef(project, branch, from, to))) return false
       try {
-        await git(['--git-dir', repoPath(host, project), 'update-ref', `refs/heads/${branch}`, to, from])
+        await runGitTool(vm, { op: 'reset', remote: remoteUrl(project), branch }, tool)
       } catch (err) {
-        if (err instanceof GitError) return false
-        throw err
-      }
-      publishChange(host.db, { kind: 'branches', project })
-      if (workspace) {
-        const remote = `refs/remotes/origin/${branch}`
-        await workspaceGit(project, branch, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${remote}`])
-        await workspaceGit(project, branch, ['reset', '--quiet', '--hard', remote])
+        console.error(`Resetting workspace ${project}/${branch} after a merge failed`, err)
+        await git(['--git-dir', repoPath(host, project), 'update-ref', `refs/heads/${branch}`, from, to]).catch(() => {})
+        publishChange(host.db, { kind: 'branches', project })
+        return false
       }
       return true
+    }).catch((err: unknown) => {
+      if (err instanceof ProjectError) return false
+      throw err
     })
   }
 
-  // Points the checkout at the project repo again after the project moved
-  // (a rename), since the clone remembers the repo's path.
-  function relink(project: string, branch: string): Promise<void> {
-    return serialized(project, branch, async () => {
-      if (!existsSync(paths(host, project, branch).gitDir)) return
-      await workspaceGit(project, branch, ['remote', 'set-url', 'origin', repoPath(host, project)])
-    })
+  async function updateBranchRef(project: string, branch: string, from: string, to: string): Promise<boolean> {
+    try {
+      await git(['--git-dir', repoPath(host, project), 'update-ref', `refs/heads/${branch}`, to, from])
+    } catch (err) {
+      if (err instanceof GitError) return false
+      throw err
+    }
+    publishChange(host.db, { kind: 'branches', project })
+    return true
   }
 
   // Uncommitted changes in the workspace, including new files.
   function diff(project: string, branch: string): Promise<string> {
-    return serialized(project, branch, async () => {
-      requireWorkspace(project, branch)
-      touch(project, branch)
-      await workspaceGit(project, branch, ['add', '--all'])
-      return workspaceGit(project, branch, ['diff', '--cached', 'HEAD'])
+    if (!get(project, branch)) return Promise.resolve('')
+    return withVm(project, branch, undefined, async (vm, tool) => {
+      const result = await runGitTool(vm, { op: 'diff' }, tool)
+      noteChanges(project, branch, result.diff === '')
+      return result.diff
     })
   }
 
   // Uncommitted changes as `git status --porcelain` lines.
   function changes(project: string, branch: string): Promise<string[]> {
-    return serialized(project, branch, async () => {
-      requireWorkspace(project, branch)
-      const status = await workspaceGit(project, branch, ['status', '--porcelain', '--untracked-files=all'])
-      return status.split('\n').filter(Boolean)
+    if (!get(project, branch)) return Promise.resolve([])
+    return withVm(project, branch, undefined, async (vm, tool) => {
+      const result = await runGitTool(vm, { op: 'changes' }, tool)
+      noteChanges(project, branch, result.total === 0)
+      return result.lines
     })
   }
 
-  // Open while a command runs for `agent` in the workspace VM.
-  function openSession(project: string, branch: string, agent: Agent): WorkspaceSession {
+  // `command` sessions are the ones for commands that can change files, as
+  // opposed to the host's own tool calls.
+  function newSession(project: string, branch: string, agent: Agent, command = false): WorkspaceSession {
     const token = randomBytes(32).toString('base64url')
-    sessions.set(token, { project, branch, agent })
+    sessions.set(token, { project, branch, agent, command })
     return { env: { [SESSION_ENV]: token }, close: () => void sessions.delete(token) }
+  }
+
+  // Open while a command runs for `agent` in the workspace VM. The command can
+  // change any file.
+  function openSession(project: string, branch: string, agent: Agent): WorkspaceSession {
+    markDirty(project, branch)
+    return newSession(project, branch, agent, true)
   }
 
   function sessionAgent(project: string, branch: string, token: string): Agent | undefined {
@@ -479,7 +569,6 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     get,
     list,
     open,
-    sync,
     start,
     stop,
     stopIdle,
@@ -491,8 +580,9 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     commit,
     diff,
     changes,
+    files,
+    isCommitted,
     moveBranch,
-    relink,
     openSession,
     sessionAgent,
     resetStatuses,

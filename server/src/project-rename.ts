@@ -10,11 +10,11 @@ import { projectBuildsDir } from './runtime/builds.ts'
 import { appendLog } from './runtime/logs.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { StorageUsage } from './storage.ts'
-import type { WorkspaceManager, WorkspaceVm } from './workspaces.ts'
+import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
 
 export type ProjectRenameDeps = {
   host: Host
-  workspaces: Pick<WorkspaceManager<WorkspaceVm>, 'list' | 'stop' | 'relink'>
+  workspaces: Pick<WorkspaceManager<ExecWorkspaceVm>, 'list' | 'stop'>
   delivery?: Pick<Delivery, 'exclusive'>
   runtime?: Pick<Runtime, 'remove' | 'forget' | 'load'>
   data?: Pick<ProjectData, 'closeProject' | 'closeBranch'>
@@ -118,9 +118,6 @@ async function renameNow(deps: ProjectRenameDeps, from: string, to: string, by: 
     // A command may have started a workspace VM on the old paths while the
     // project was stopping.
     await workspaces.stop(to, branch)
-    await workspaces
-      .relink(to, branch)
-      .catch((err: unknown) => console.error(`Pointing workspace ${to}/${branch} at the renamed repo failed`, err))
   }
   // A measurement that was running on the old paths finds them gone.
   void deps.storage?.measure({ id: project.id, name: to })

@@ -12,7 +12,7 @@ import { projectBuildsDir } from './runtime/builds.ts'
 import { appendLog } from './runtime/logs.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { StorageUsage } from './storage.ts'
-import type { WorkspaceManager, WorkspaceVm } from './workspaces.ts'
+import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
 
 // Backups may run less often than projects are deleted by mistake, so the code
 // and data stay in the trash for a while.
@@ -66,7 +66,7 @@ export type TrashEntry = {
 
 export type ProjectDeletionDeps = {
   host: Host
-  workspaces: Pick<WorkspaceManager<WorkspaceVm>, 'list' | 'remove'>
+  workspaces: Pick<WorkspaceManager<ExecWorkspaceVm>, 'list' | 'remove'>
   delivery?: Pick<Delivery, 'exclusive'>
   runtime?: Pick<Runtime, 'remove' | 'forget' | 'load'>
   data?: Pick<ProjectData, 'closeProject' | 'closeBranch'>

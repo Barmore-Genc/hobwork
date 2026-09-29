@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
@@ -15,6 +16,7 @@ import { createBranch } from './repo.ts'
 import { appendLog } from './runtime/logs.ts'
 import { createTestHost } from './test-host.ts'
 import { seedMain } from './test-project.ts'
+import { startHostWorkspaceVm } from './test-workspace-vm.ts'
 import { createWorkspaceApi } from './workspace-api.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceSession } from './workspaces.ts'
 
@@ -35,7 +37,7 @@ beforeEach(async () => {
   await createProject(host, 'filament')
   await seedMain(host, 'filament')
   await createBranch(host, 'filament', 'spools')
-  workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
+  workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: startHostWorkspaceVm(host) })
   await workspaces.open('filament', 'spools')
   const delivery = createDelivery(host, { workspaces, pipeline: { startVm: startHostPipelineVm } })
   const handler = createWorkspaceApi({
@@ -153,4 +155,52 @@ test('usage errors exit with status 2', async () => {
   expect(await hobwork(['nope'])).toMatchObject({ code: 2, stderr: expect.stringContaining('Unknown command "nope"') })
   expect(await hobwork(['commit'])).toMatchObject({ code: 2, stderr: expect.stringContaining('Give a commit message') })
   expect((await hobwork([])).stdout).toContain('Usage: hobwork <command>')
+})
+
+// A real git client pushing and fetching through the workspace's internal
+// handler, the way the VM's commit tool does.
+async function clientRepo(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'hobwork-git-client-'))
+  await git(['clone', '--quiet', '--branch', 'spools', repoPath(host, 'filament'), dir])
+  writeFileSync(join(dir, 'pushed.txt'), 'pushed\n')
+  await git(['add', '.'], { cwd: dir })
+  await git(['commit', '--quiet', '-m', 'Pushed'], {
+    cwd: dir,
+    env: { GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b' },
+  })
+  return dir
+}
+
+function gitRemote(dir: string, args: string[], token = session.env.HOBWORK_SESSION, project = 'filament'): Promise<string> {
+  return git(
+    [
+      '-c',
+      `http.extraHeader=x-hobwork-session: ${token}`,
+      ...args.map((arg) => arg.replace('REMOTE', `${internalUrl}/git/${project}.git`)),
+    ],
+    { cwd: dir },
+  )
+}
+
+test('the git route takes pushes to the workspace branch only', async () => {
+  const dir = await clientRepo()
+  await gitRemote(dir, ['push', '--quiet', 'REMOTE', 'HEAD:refs/heads/spools'])
+  const head = (await git(['rev-parse', 'HEAD'], { cwd: dir })).trim()
+  expect((await git(['--git-dir', repoPath(host, 'filament'), 'rev-parse', 'spools'])).trim()).toBe(head)
+
+  await expect(gitRemote(dir, ['push', 'REMOTE', 'HEAD:refs/heads/other'])).rejects.toThrow(/403/)
+  await expect(gitRemote(dir, ['push', 'REMOTE', 'HEAD:refs/heads/main'])).rejects.toThrow(/403/)
+  await expect(gitRemote(dir, ['push', 'REMOTE', ':refs/heads/spools'])).rejects.toThrow(/403/)
+  await expect(gitRemote(dir, ['push', 'REMOTE', 'HEAD:refs/heads/spools', 'HEAD:refs/heads/other'])).rejects.toThrow(/403/)
+  expect(await git(['--git-dir', repoPath(host, 'filament'), 'branch', '--list', 'other'])).toBe('')
+})
+
+test('the git route needs the session and the workspace hob, and serves fetches', async () => {
+  const dir = await clientRepo()
+  await expect(gitRemote(dir, ['push', 'REMOTE', 'HEAD:refs/heads/spools'], 'forged')).rejects.toThrow(/could not read Username/)
+  await expect(
+    gitRemote(dir, ['push', 'REMOTE', 'HEAD:refs/heads/spools'], session.env.HOBWORK_SESSION, 'sleep'),
+  ).rejects.toThrow(/not found/)
+  await gitRemote(dir, ['fetch', '--quiet', 'REMOTE', '+refs/heads/main:refs/remotes/origin/main'])
+  expect((await git(['rev-parse', 'refs/remotes/origin/main'], { cwd: dir })).trim()).toMatch(/^[0-9a-f]{40}$/)
 })

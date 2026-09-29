@@ -139,7 +139,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
       if (!(await branchExists(host, project, branch))) {
         throw new ProjectError(`Branch "${branch}" does not exist in ${project}`)
       }
-      if (options.workspaces.get(project, branch) && (await options.workspaces.diff(project, branch))) {
+      if (options.workspaces.get(project, branch) && (await options.workspaces.changes(project, branch)).length > 0) {
         throw new ProjectError(
           `${branch} has uncommitted changes. Merge only takes committed changes: commit them or undo them first`,
         )

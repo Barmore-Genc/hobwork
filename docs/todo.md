@@ -21,10 +21,9 @@ Sections are in the order to work on them.
 
 ### Nothing on the host touches guest-writable files
 
-- **Workspace git in the VM**: `commit`, `diff` and `changes` run git inside the workspace VM, and a commit reaches the bare repo by pushing over git smart HTTP through `hobwork.internal` with the session token. The pre-receive hook already refuses `main`. Today a nested repo's config (`core.fsmonitor`, filter drivers) runs on the host during `git add` and `git status`; in the VM, submodule recursion keeps working and runs where workspace code already runs.
+- **VM start config from git**: the workspace VM start reads `hobwork.json` and `package.json` from the checkout (egress, extras). Read them from the branch in git, or from inside the VM.
+- **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.
 - **Migration disk quota**: a migration can fill the host disk through its `/migrate` mount; only the DB it returns is size-checked. Put a quota on the mount or check the dir's size while the VM runs.
-- **File tools in the VM**: `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files` and `search` run inside the workspace VM. The host's check-then-open on the checkout races with symlinks the guest swaps in. Needs the workspace VM running for reads, so it depends on the VM budget below.
-- **Build copy after the VM stops**: stop the pipeline VM before `saveBuild`, and copy with `O_NOFOLLOW`.
 
 ### Home Assistant, AI and secrets
 
@@ -98,7 +97,6 @@ Open questions:
 
 - Migration VMs reserve from the VM budget as pipeline VMs of no hob; pass the hob so fair shares count them.
 - A VM that exits on its own keeps its budget reservation until `stop()` runs; release it from an exit event in the Gondolin wrapper.
-- Read-only tools read from git instead of opening a workspace.
 
 ## Warm VM pool
 

@@ -1,82 +1,26 @@
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises'
+import { open } from 'node:fs/promises'
 import { Worker } from 'node:worker_threads'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { ProjectError } from './projects.ts'
-import { SKIPPED_DIRS, type SearchRequest, type SearchResult } from './search-worker.ts'
+import type { SearchResult } from '../../packages/sdk/src/workspace-tools/search.ts'
+import { listCommittedFiles, readCommittedFile, type ReadResult, type CommittedSearch } from './committed-files.ts'
+import { repoPath, type Host } from './host.ts'
+import { DEFAULT_BRANCH, ProjectError } from './projects.ts'
+import { branchHead, validateBranchName } from './repo.ts'
+import type { CommittedSearchJob } from './search-worker.ts'
+import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
 
-// File operations on a workspace checkout. Workspace VMs write to the same
-// directory, so every path is checked against symlinks that lead out of it.
-
-const MAX_LIST_ENTRIES = 2000
 const SEARCH_TIMEOUT_MS = 10_000
-
-type CheckoutPath = { abs: string; rel: string }
 
 function isErrno(err: unknown, code: string): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === code
 }
 
-export function checkoutPath(root: string, path: string): CheckoutPath {
-  if (path.includes('\0')) throw new ProjectError('Path must not contain NUL characters')
-  if (isAbsolute(path)) {
-    throw new ProjectError(`Path "${path}" must be relative to the hob root, e.g. "src/index.ts"`)
-  }
-  const abs = resolve(root, path)
-  const rel = relative(root, abs)
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new ProjectError(`Path "${path}" is outside the hob`)
-  }
-  if (rel.split(sep).some((part) => part === '.git')) {
-    throw new ProjectError(`Path "${path}" is inside a .git directory`)
-  }
-  return { abs, rel: rel.split(sep).join('/') }
-}
-
-async function assertInside(root: string, abs: string, path: string): Promise<string> {
-  const [realRoot, real] = await Promise.all([realpath(root), realpath(abs)])
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) {
-    throw new ProjectError(`Path "${path}" resolves outside the hob through a symlink`)
-  }
-  return real
-}
-
-async function existingAncestor(abs: string): Promise<string> {
-  for (let dir = abs; ; dir = dirname(dir)) {
-    try {
-      await lstat(dir)
-      return dir
-    } catch (err) {
-      if (!isErrno(err, 'ENOENT')) throw err
-    }
-  }
-}
-
-async function resolveExisting(root: string, path: string): Promise<CheckoutPath & { real: string }> {
-  const target = checkoutPath(root, path)
-  try {
-    return { ...target, real: await assertInside(root, target.abs, path) }
-  } catch (err) {
-    if (isErrno(err, 'ENOENT')) throw new ProjectError(`"${path}" does not exist`)
-    throw err
-  }
-}
-
-// O_NOFOLLOW keeps a symlink swapped in after the check from being followed.
-async function readNoFollow(path: string): Promise<Buffer> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  try {
-    return await handle.readFile()
-  } finally {
-    await handle.close()
-  }
-}
-
 export const MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
-// For files the host parses out of a checkout (hobwork.json, package.json).
-// O_NONBLOCK keeps a FIFO from blocking the open, and the size cap keeps the
-// guest from making the host read an unbounded file.
+// For the few files the host reads out of a checkout itself (hobwork.json and
+// package.json, when a workspace VM starts). O_NONBLOCK keeps a FIFO from
+// blocking the open, and the size cap keeps the guest from making the host
+// read an unbounded file.
 export async function readRegularFile(path: string, label: string, maxBytes = MAX_CONFIG_FILE_BYTES): Promise<string> {
   let handle
   try {
@@ -103,158 +47,133 @@ export async function readRegularFile(path: string, label: string, maxBytes = MA
   }
 }
 
-// Returns the directory relative to the checkout root, '.' for the root.
-export async function checkoutDirectory(root: string, path: string): Promise<string> {
-  const { rel, real } = await resolveExisting(root, path)
-  if (!(await lstat(real)).isDirectory()) throw new ProjectError(`"${path}" is not a directory`)
-  return rel || '.'
-}
-
-export async function readCheckoutFile(root: string, path: string): Promise<Buffer> {
-  const { real } = await resolveExisting(root, path)
-  if ((await lstat(real)).isDirectory()) {
-    throw new ProjectError(`"${path}" is a directory. Use list_files to see its contents`)
-  }
-  return readNoFollow(real)
-}
-
-export async function writeCheckoutFile(
-  root: string,
-  path: string,
-  content: string,
-): Promise<{ created: boolean }> {
-  const { abs, rel } = checkoutPath(root, path)
-  if (!rel) throw new ProjectError('Path must name a file')
-  const ancestor = await existingAncestor(abs)
-  let target = abs
-  if (ancestor === abs) {
-    target = await assertInside(root, abs, path)
-    if ((await lstat(target)).isDirectory()) throw new ProjectError(`"${path}" is a directory`)
-  } else {
-    await assertInside(root, ancestor, path)
-    await mkdir(dirname(abs), { recursive: true })
-  }
-  const handle = await open(
-    target,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
-    0o644,
-  )
-  try {
-    await handle.writeFile(content)
-  } finally {
-    await handle.close()
-  }
-  return { created: ancestor !== abs }
-}
-
-export async function editCheckoutFile(
-  root: string,
-  path: string,
-  oldString: string,
-  newString: string,
-  replaceAll: boolean,
-): Promise<{ replacements: number }> {
-  if (!oldString) throw new ProjectError('old_string must not be empty. Use write_file to create a file')
-  if (oldString === newString) throw new ProjectError('old_string and new_string are identical')
-  const content = (await readCheckoutFile(root, path)).toString('utf8')
-  const count = content.split(oldString).length - 1
-  if (count === 0) {
-    throw new ProjectError(
-      `old_string was not found in "${path}". It must match the file exactly, including whitespace and indentation`,
-    )
-  }
-  if (count > 1 && !replaceAll) {
-    throw new ProjectError(
-      `old_string occurs ${count} times in "${path}". Include more surrounding lines to make it unique, or set replace_all`,
-    )
-  }
-  const updated = replaceAll
-    ? content.split(oldString).join(newString)
-    : content.replace(oldString, () => newString)
-  await writeCheckoutFile(root, path, updated)
-  return { replacements: replaceAll ? count : 1 }
-}
-
-export async function deleteCheckoutFile(root: string, path: string): Promise<void> {
-  const { abs, rel } = checkoutPath(root, path)
-  if (!rel) throw new ProjectError('Path must name a file')
-  let stat
-  try {
-    stat = await lstat(abs)
-  } catch (err) {
-    if (isErrno(err, 'ENOENT')) throw new ProjectError(`"${path}" does not exist`)
-    throw err
-  }
-  if (stat.isDirectory()) {
-    throw new ProjectError(`"${path}" is a directory. Delete the files in it instead`)
-  }
-  // The link itself is removed, never its target, so only the parent must be inside.
-  await assertInside(root, dirname(abs), path)
-  await unlink(abs)
-}
-
 export type FileList = { entries: string[]; truncated: boolean }
 
-// Recursive listings return files only. Non-recursive listings also return
-// directories, with a trailing slash.
-export async function listCheckoutFiles(root: string, path: string, recursive: boolean): Promise<FileList> {
-  const { rel, real } = await resolveExisting(root, path)
-  if (!(await lstat(real)).isDirectory()) throw new ProjectError(`"${path}" is not a directory`)
-  const entries: string[] = []
-  let truncated = false
+// Who is reading. Read-only credentials only ever see committed files.
+export type FileAccess = { readOnly: boolean }
 
-  async function walk(dir: string, prefix: string): Promise<void> {
-    const children = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )
-    for (const child of children) {
-      if (entries.length >= MAX_LIST_ENTRIES) {
-        truncated = true
-        return
-      }
-      const name = prefix ? `${prefix}/${child.name}` : child.name
-      if (child.isDirectory()) {
-        if (!recursive) entries.push(`${name}/`)
-        else if (!SKIPPED_DIRS.has(child.name)) await walk(join(dir, child.name), name)
-      } else {
-        entries.push(name)
-      }
+type Committed = { repo: string; commit: string }
+
+// The file tools of the MCP server. Reads come from the project repo's git
+// objects, without a workspace VM, when the branch is main, the credential is
+// read-only, or the branch's workspace has no uncommitted changes. Otherwise
+// they, and all changes, run in the workspace VM, so the host never opens files
+// the VM can write.
+export function createFileTools(
+  host: Host,
+  workspaces: Pick<WorkspaceManager<ExecWorkspaceVm>, 'files' | 'isCommitted'>,
+  { searchTimeoutMs = SEARCH_TIMEOUT_MS }: { searchTimeoutMs?: number } = {},
+) {
+  async function committed(project: string, branch: string, access: FileAccess): Promise<Committed | undefined> {
+    validateBranchName(branch)
+    if (branch !== DEFAULT_BRANCH && !access.readOnly && !(await workspaces.isCommitted(project, branch))) {
+      return undefined
+    }
+    const commit = await branchHead(host, project, branch)
+    if (!commit) throw new ProjectError(`Branch "${branch}" does not exist in ${project}`)
+    return { repo: repoPath(host, project), commit }
+  }
+
+  function assertWritable(branch: string): void {
+    if (branch === DEFAULT_BRANCH) {
+      throw new ProjectError(
+        `${DEFAULT_BRANCH} is the deployed version and changes only by merging a branch. Create a branch with create_branch and make the change there`,
+      )
     }
   }
 
-  await walk(real, rel)
-  return { entries, truncated }
+  async function read(project: string, branch: string, path: string, access: FileAccess): Promise<ReadResult> {
+    const source = await committed(project, branch, access)
+    if (source) return readCommittedFile(source.repo, source.commit, path)
+    const result = await workspaces.files(project, branch, { op: 'read', path })
+    if (result.op !== 'read') throw new Error('Unexpected file tool answer')
+    return result.binary
+      ? { binary: true, size: result.size }
+      : { binary: false, content: result.content, size: result.size }
+  }
+
+  async function write(project: string, branch: string, path: string, content: string): Promise<{ created: boolean }> {
+    assertWritable(branch)
+    const result = await workspaces.files(project, branch, { op: 'write', path, content })
+    if (result.op !== 'write') throw new Error('Unexpected file tool answer')
+    return { created: result.created }
+  }
+
+  async function edit(
+    project: string,
+    branch: string,
+    path: string,
+    oldString: string,
+    newString: string,
+    replaceAll: boolean,
+  ): Promise<{ replacements: number }> {
+    assertWritable(branch)
+    const result = await workspaces.files(project, branch, { op: 'edit', path, oldString, newString, replaceAll })
+    if (result.op !== 'edit') throw new Error('Unexpected file tool answer')
+    return { replacements: result.replacements }
+  }
+
+  async function remove(project: string, branch: string, path: string): Promise<void> {
+    assertWritable(branch)
+    await workspaces.files(project, branch, { op: 'delete', path })
+  }
+
+  async function list(
+    project: string,
+    branch: string,
+    path: string,
+    recursive: boolean,
+    access: FileAccess,
+  ): Promise<FileList> {
+    const source = await committed(project, branch, access)
+    if (source) return listCommittedFiles(source.repo, source.commit, path, recursive)
+    const result = await workspaces.files(project, branch, { op: 'list', path, recursive })
+    if (result.op !== 'list') throw new Error('Unexpected file tool answer')
+    return { entries: result.entries, truncated: result.truncated }
+  }
+
+  async function search(
+    project: string,
+    branch: string,
+    request: Omit<CommittedSearch, 'ignoreCase'> & { ignoreCase: boolean },
+    access: FileAccess,
+  ): Promise<SearchResult> {
+    try {
+      new RegExp(request.pattern, request.ignoreCase ? 'i' : '')
+    } catch (err) {
+      throw new ProjectError(`Invalid regular expression: ${(err as Error).message}`)
+    }
+    const timedOut = () =>
+      new ProjectError(`Search timed out after ${searchTimeoutMs / 1000}s. Narrow the path or glob, or simplify the pattern`)
+    const source = await committed(project, branch, access)
+    if (source) return searchInWorker({ repo: source.repo, commit: source.commit, request }, searchTimeoutMs, timedOut)
+    try {
+      const result = await workspaces.files(project, branch, { op: 'search', ...request }, { timeoutMs: searchTimeoutMs })
+      if (result.op !== 'search') throw new Error('Unexpected file tool answer')
+      return result
+    } catch (err) {
+      if (err instanceof ProjectError && err.message.startsWith('The workspace did not answer')) throw timedOut()
+      throw err
+    }
+  }
+
+  return { read, write, edit, remove, list, search, assertWritable }
 }
 
-export async function searchCheckout(
-  root: string,
-  request: Omit<SearchRequest, 'dir' | 'prefix'> & { path: string },
-  timeoutMs = SEARCH_TIMEOUT_MS,
-): Promise<SearchResult> {
-  const { path, ...options } = request
-  try {
-    new RegExp(options.pattern, options.ignoreCase ? 'i' : '')
-  } catch (err) {
-    throw new ProjectError(`Invalid regular expression: ${(err as Error).message}`)
-  }
-  const { rel, real } = await resolveExisting(root, path)
-  const workerData: SearchRequest = { ...options, dir: real, prefix: rel }
-
-  // Patterns come from agents. Matching in a worker with a deadline keeps a
-  // catastrophically backtracking pattern from blocking the host.
-  const worker = new Worker(new URL('./search-worker.ts', import.meta.url), { workerData })
-  return new Promise((resolvePromise, reject) => {
+// Patterns come from agents. Matching in a worker with a deadline keeps a
+// catastrophically backtracking pattern from blocking the host.
+function searchInWorker(job: CommittedSearchJob, timeoutMs: number, timedOut: () => Error): Promise<SearchResult> {
+  const worker = new Worker(new URL('./search-worker.ts', import.meta.url), { workerData: job })
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       void worker.terminate()
-      reject(
-        new ProjectError(
-          `Search timed out after ${timeoutMs / 1000}s. Narrow the path or glob, or simplify the pattern`,
-        ),
-      )
+      reject(timedOut())
     }, timeoutMs)
-    worker.once('message', (result: SearchResult) => {
+    worker.once('message', (message: { ok: true; result: SearchResult } | { ok: false; error: string }) => {
       clearTimeout(timer)
-      resolvePromise(result)
+      void worker.terminate()
+      if (message.ok) resolve(message.result)
+      else reject(new ProjectError(message.error))
     })
     worker.once('error', (err) => {
       clearTimeout(timer)

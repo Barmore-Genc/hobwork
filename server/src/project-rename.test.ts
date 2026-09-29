@@ -22,6 +22,8 @@ import { createTestHost } from './test-host.ts'
 import { fakePackageJson, seedMain } from './test-project.ts'
 import { sendTo, signedIn, startTestApp, TEST_APPS_DOMAIN, writeHeaders } from './test-web.ts'
 import { recordVersion } from './versions.ts'
+import { ensureAgent } from './agents.ts'
+import { hostWorkspaceVm } from './test-workspace-vm.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -82,8 +84,8 @@ beforeEach(async () => {
   })
   workspaces = createWorkspaceManager(host, {
     startVm: async (workspace) => ({
+      ...hostWorkspaceVm(host, workspace),
       stop: async () => void stoppedWorkspaces.push(`${workspace.project}/${workspace.branch}`),
-      exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     }),
   })
   delivery = createDelivery(host, { workspaces, deploy: runtime.deploy })
@@ -150,7 +152,7 @@ test('renaming moves the project and its data, and it runs under the new name', 
   // The workspace kept its uncommitted file and commits to the moved repo.
   const moved = workspaces.get('spools', 'more-spools')!
   expect(readFileSync(join(moved.dir, 'notes.md'), 'utf8')).toBe('not committed yet\n')
-  const commit = await workspaces.commit('spools', 'more-spools', 'Add notes')
+  const commit = await workspaces.commit('spools', 'more-spools', 'Add notes', ensureAgent(host.db, 'claude'))
   expect(await branchHead(host, 'spools', 'more-spools')).toBe(commit)
 
   const events = queryLogs(host, { project: 'spools', eventsOnly: true, limit: 100 })

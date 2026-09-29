@@ -8,11 +8,12 @@ import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createDelivery, type Delivery } from '../delivery.ts'
 import { createDevices } from '../devices/devices.ts'
-import { pipelineVmBackend, type GuestVmOptions } from '../guest-vm.ts'
+import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
 import { createTestHost } from '../test-host.ts'
 import { sendTo, signedIn, TEST_APPS_DOMAIN, TEST_PUBLIC_URL } from '../test-web.ts'
+import { createWorkspaceApi } from '../workspace-api.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { createRuntime, type Runtime } from './runtime.ts'
 
@@ -30,7 +31,9 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
   beforeAll(async () => {
     if (!imageExists(vmOptions.image)) throw new Error(`no guest image at ${vmOptions.image}, run images/build.sh`)
     host = createTestHost()
-    const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
+    const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
+      startVm: workspaceVmBackend(vmOptions, (workspace) => api(workspace)),
+    })
     let delivery: Delivery | undefined
     const devices = createDevices({ host })
     runtime = createRuntime(host, {
@@ -41,6 +44,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
       revert: (request) => delivery!.restore(request),
     })
     delivery = createDelivery(host, { workspaces, pipeline: { startVm: pipelineVms.start }, deploy: runtime.deploy })
+    const api = createWorkspaceApi({ host, workspaces, delivery })
     server = createApp(host, {
       workspaces,
       delivery,

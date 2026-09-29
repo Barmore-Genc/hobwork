@@ -40,22 +40,43 @@ function unstubbedHa(): HomeAssistant {
   return { callService: reject('callService'), getState: reject('getState'), getStates: reject('getStates'), fireEvent: reject('fireEvent') }
 }
 
-function unstubbedDevice(name: string): Device {
-  return {
-    notifications: {
-      send: () =>
-        Promise.reject(
-          new Error(
-            `ctx.device('${name}').notifications.send is not stubbed in this test. Pass device: (name) => ({ notifications: { send } }) to createTestContext`,
-          ),
-        ),
-    },
-  }
+const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
+  notifications: ['send'],
+  alarms: ['set', 'timer', 'cancel', 'list'],
+  screenTime: ['sets', 'block', 'unblock', 'schedule', 'removeSchedule', 'limit', 'removeLimit', 'status'],
+  focus: ['status'],
+  nfc: ['write', 'read'],
+  health: ['query'],
 }
 
-export type TestContextOverrides = Omit<Partial<Context>, 'ha'> & {
+// What a test fake of ctx.device may return: any capabilities and methods.
+export type DeviceStub = { [C in keyof Device]?: Partial<Device[C]> }
+
+// Methods the stub leaves out reject, like fetch.
+function stubbedDevice(name: string, stub: DeviceStub = {}): Device {
+  const device: Record<string, Record<string, unknown>> = {}
+  for (const [capability, methods] of Object.entries(DEVICE_METHODS) as [keyof Device, string[]][]) {
+    const given = (stub[capability] ?? {}) as Record<string, unknown>
+    device[capability] = Object.fromEntries(
+      methods.map((method) => [
+        method,
+        given[method] ??
+          (() =>
+            Promise.reject(
+              new Error(
+                `ctx.device('${name}').${capability}.${method} is not stubbed in this test. Pass device: (name) => ({ ${capability}: { ${method} } }) to createTestContext`,
+              ),
+            )),
+      ]),
+    )
+  }
+  return device as unknown as Device
+}
+
+export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
+  device?: (name: string) => DeviceStub
 }
 
 // A handler context for tests. `db` defaults to a fresh test DB; `fetch`, `ha`
@@ -68,10 +89,10 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
     fetch: () => Promise.reject(new Error('ctx.fetch is not stubbed in this test. Pass fetch to createTestContext')),
     log: silent,
     secrets: {},
-    device: unstubbedDevice,
     devices: () => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')),
     ...overrides,
     ha: { ...unstubbedHa(), ...overrides.ha },
+    device: (name) => stubbedDevice(name, overrides.device?.(name)),
     db: overrides.db ?? createTestDb(),
   }
 }

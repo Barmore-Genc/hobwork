@@ -28,7 +28,7 @@ export type Context = {
   request?: Request
   // Values of `:name` segments in the route path.
   params: Record<string, string>
-  // The event for triggers (Home Assistant trigger variables, a device event
+  // The event for triggers (Home Assistant trigger variables, a DeviceEvent
   // such as NotificationActionEvent), or what a manual invocation passed.
   payload?: unknown
   // Outgoing HTTP. Only hosts listed in `egress` in hobwork.json are reachable.

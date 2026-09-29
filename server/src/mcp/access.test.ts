@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { Access } from '../access.ts'
 import { createAgentToken } from '../agents.ts'
+import { createHomeAssistant } from '../homeassistant/client.ts'
 import { createProject } from '../projects.ts'
 import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { findSshKey, generateEd25519KeyPair } from '../ssh/keys.ts'
@@ -15,7 +16,8 @@ let secrets: SecretStore
 const clients: Client[] = []
 
 beforeEach(async () => {
-  mcp = await startTestMcp({ secrets: (host) => (secrets = createSecretStore(host, randomBytes(32))), sshPort: 2222 })
+  const homeAssistant = createHomeAssistant({ connection: () => undefined, logger: { info() {}, warn() {}, error() {} } })
+  mcp = await startTestMcp({ homeAssistant, secrets: (host) => (secrets = createSecretStore(host, randomBytes(32))), sshPort: 2222 })
   await createProject(mcp.host, 'filament')
   await createProject(mcp.host, 'alarms')
 })
@@ -85,4 +87,28 @@ test('access follows a renamed project and ends with a deleted one', async () =>
   mcp.host.db.prepare("DELETE FROM projects WHERE name = 'spools'").run()
   expect(JSON.parse(textOf(await agent.call('list_hobs')))).toEqual([])
   expect((await agent.call('list_versions', { hob: 'alarms' })).isError).toBe(true)
+})
+
+test('credentials limited to some hobs do not see the Home Assistant tools', async () => {
+  const everything = await connect({ readOnly: false, projects: null })
+  const all = await everything.tools()
+  expect(all).toEqual(expect.arrayContaining(['ha_list_entities', 'ha_get_state', 'ha_list_services', 'ha_history']))
+
+  const limited = await connect({ readOnly: false, projects: ['filament'] })
+  const tools = await limited.tools()
+  expect(tools.filter((name) => name.startsWith('ha_'))).toEqual([])
+  expect(tools).toEqual(expect.arrayContaining(['get_hob', 'update_ha_services', 'set_branch_home_assistant']))
+  expect(await limited.call('ha_list_entities')).toMatchObject({ isError: true })
+
+  const readOnly = await connect({ readOnly: true, projects: ['filament'] })
+  expect((await readOnly.tools()).filter((name) => name.startsWith('ha_'))).toEqual([])
+  expect((await connect({ readOnly: true, projects: null })).tools()).resolves.toContain('ha_list_entities')
+})
+
+test('update_ha_services follows hob access', async () => {
+  const limited = await connect({ readOnly: false, projects: ['filament'] })
+  expect((await limited.call('update_ha_services', { hob: 'alarms', add: ['light'] })).isError).toBe(true)
+  expect((await limited.call('update_ha_services', { hob: 'filament', add: ['light'] })).isError).toBeFalsy()
+  const readOnly = await connect({ readOnly: true, projects: null })
+  expect(await readOnly.tools()).not.toContain('update_ha_services')
 })

@@ -515,6 +515,10 @@ export const api = {
   projectAi: (project: string) => request<ProjectAi>('GET', `/api/projects/${encodeURIComponent(project)}/ai`),
   saveProjectAi: (project: string, settings: { models: string[] | null; limits: AiLimits | null }) =>
     request<ProjectAi>('PUT', `/api/projects/${encodeURIComponent(project)}/ai`, settings),
+  haServices: (project: string) =>
+    request<{ services: string[] }>('GET', `/api/projects/${encodeURIComponent(project)}/home-assistant-services`),
+  saveHaServices: (project: string, services: string[]) =>
+    request<{ services: string[] }>('PUT', `/api/projects/${encodeURIComponent(project)}/home-assistant-services`, { services }),
   homeAssistant: () => request<HomeAssistantSettings>('GET', '/api/settings/homeassistant'),
   saveHomeAssistant: (settings: { url: string; token?: string }) =>
     request<HomeAssistantSettings>('PUT', '/api/settings/homeassistant', settings),

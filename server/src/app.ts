@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from 'node:stream'
 import { allowsProject } from './access.ts'
 import { aiSettingsRoutes } from './api/ai-settings.ts'
+import { haServicesRoutes } from './api/ha-services.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
@@ -143,6 +144,7 @@ export function createApp(
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
     ...aiSettingsRoutes({ host }),
+    ...haServicesRoutes({ host }),
     ...deviceUserRoutes({ db: host.db, devices }),
     ...projectDeletionRoutes({
       host,

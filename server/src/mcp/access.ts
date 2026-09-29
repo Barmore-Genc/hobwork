@@ -5,6 +5,9 @@ import { ProjectError } from '../projects.ts'
 // Tools that act across hobs rather than on one, so they need access to all of them.
 const EVERY_PROJECT_TOOLS = new Set(['create_hob'])
 
+// Home Assistant tools read the whole house, not the hobs a credential may use.
+const HOUSE_TOOL_PREFIX = 'ha_'
+
 type ToolConfig = { inputSchema?: object; annotations?: { readOnlyHint?: boolean } }
 type Register = (name: string, config: ToolConfig, cb: (...args: unknown[]) => unknown) => RegisteredTool
 
@@ -27,7 +30,13 @@ export function limitTools(server: McpServer, access: Access) {
       : cb
     const tool = register(name, config, handler)
     const readOnly = config.annotations?.readOnlyHint === true
-    if ((access.readOnly && !readOnly) || (access.projects !== null && EVERY_PROJECT_TOOLS.has(name))) tool.disable()
+    const limitedToHobs = access.projects !== null
+    if (
+      (access.readOnly && !readOnly) ||
+      (limitedToHobs && (EVERY_PROJECT_TOOLS.has(name) || name.startsWith(HOUSE_TOOL_PREFIX)))
+    ) {
+      tool.disable()
+    }
     return tool
   }
   server.registerTool = limited as unknown as McpServer['registerTool']

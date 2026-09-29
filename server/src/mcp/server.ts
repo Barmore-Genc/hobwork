@@ -20,6 +20,7 @@ import {
   writeCheckoutFile,
 } from '../files.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
+import { getHaServices, haServicesNote } from '../homeassistant/services.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
@@ -68,6 +69,8 @@ Rules:
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.
 - Debug from logs and invocation records. Do not guess.
 - When a hob uses Home Assistant, read data Home Assistant already has (states, history, device details) from it instead of copying it into the hob DB. Store a copy only when the user asks for one or the feature cannot work without it.
+- A hob calls no Home Assistant service until its list names it. Before a handler calls one, add its domain or service with update_ha_services and tell the user. get_hob shows the list.
+- A hob calls no Home Assistant service until its list names it. Before a handler calls one, add its domain or service with update_ha_services and tell the user. get_hob shows the list.
 - Only people can delete, rename or restore a hob, in the Hobwork web UI. There are no tools for it.
 - Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
@@ -209,7 +212,7 @@ export function createMcpServer({
   server.registerTool(
     'get_hob',
     {
-      description: `Show a hob: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), hob DB size and slow query warnings, the disk space it uses in bytes (hob DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
+      description: `Show a hob: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), hob DB size and slow query warnings, the disk space it uses in bytes (hob DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, the Home Assistant services its handlers may call (update_ha_services changes them), and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
       inputSchema: { hob },
       annotations: { readOnlyHint: true },
     },
@@ -227,6 +230,7 @@ export function createMcpServer({
         }
       }
       const { crons = {}, webhooks = {}, routes = {}, triggers = {}, ...settings } = config
+      const haServices = getHaServices(host.db, record.id)
       const configEgress = Array.isArray(settings.egress) ? settings.egress.map(String) : []
       return json({
         name: record.name,
@@ -245,6 +249,7 @@ export function createMcpServer({
           .list(name)
           .map(({ branch: b, status, lastUsedAt }) => ({ branch: b, status, lastUsedAt })),
         ai: aiView(record.id),
+        homeAssistant: { services: haServices, note: haServicesNote(haServices) },
       })
     },
   )

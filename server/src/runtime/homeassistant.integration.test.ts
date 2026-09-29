@@ -8,6 +8,7 @@ import { createHomeAssistant, type HomeAssistant } from '../homeassistant/client
 import { signedIn } from '../test-web.ts'
 import { createTriggerRegistry } from '../homeassistant/triggers.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
+import { setHaServices } from '../homeassistant/services.ts'
 import { createProject, requireProject } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedBranch, seedMain } from '../test-project.ts'
@@ -37,6 +38,7 @@ const NUMBER = 'input_number.test_number'
 
 async function release(project: string, files: Record<string, string>) {
   await createProject(host, project)
+  setHaServices(host, project, ['input_boolean', 'input_number', 'input_button'], { kind: 'user', name: 'Test' })
   const commit = await seedMain(host, project, {
     'package.json': fakePackageJson({ build: 'mkdir -p dist/handlers/src && cp *.js dist/handlers/src/' }),
     ...files,

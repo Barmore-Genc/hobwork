@@ -159,6 +159,14 @@ export async function diffBranch(
   return git(['--git-dir', repo, 'diff', `${baseSha}...${branchSha}`])
 }
 
+// Empty when the ref does not exist.
+export async function listFilesAtRef(host: Host, project: string, ref: string): Promise<string[]> {
+  const repo = repoFor(host, project)
+  const sha = await resolveRef(repo, ref)
+  if (!sha) return []
+  return (await git(['--git-dir', repo, 'ls-tree', '-r', '--name-only', sha])).split('\n').filter(Boolean)
+}
+
 // Returns undefined when the file does not exist at that ref.
 export async function readFileAtRef(
   host: Host,

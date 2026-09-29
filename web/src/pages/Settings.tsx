@@ -4,6 +4,7 @@ import { exactTime, shortDate, timeAgo } from '../format.ts'
 import { deviceName, passkeyError, passkeysSupported } from '../passkeys.ts'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { BackupSettings } from './BackupSettings.tsx'
 
 export function SettingsPage() {
   const { data: passkeys, error, reload } = useLoad(api.passkeys)
@@ -136,6 +137,8 @@ export function SettingsPage() {
           </ul>
         )}
       </section>
+
+      <BackupSettings />
 
       <ConfirmDialog
         open={removing !== null}

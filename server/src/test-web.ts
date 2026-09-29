@@ -1,4 +1,5 @@
 import { createServer, type AddressInfo } from 'node:net'
+import type { Backups } from './backup/backups.ts'
 import { CSRF_HEADER } from './auth/auth.ts'
 import { createSession } from './auth/sessions.ts'
 import { signInOidcUser, type User } from './auth/users.ts'
@@ -30,6 +31,7 @@ export async function startTestApp(
     secrets?: SecretStore
     runtime?: Runtime
     data?: ProjectData
+    backups?: Backups
   } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
@@ -38,6 +40,7 @@ export async function startTestApp(
     secrets: options.secrets,
     runtime: options.runtime,
     data: options.data,
+    backups: options.backups,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },

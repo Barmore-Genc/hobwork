@@ -8,7 +8,7 @@ import { validateBranchName } from '../repo.ts'
 import type { InteractiveWorkspaceVm, WorkspaceManager, WorkspaceProcess } from '../workspaces.ts'
 import { findSshKey, generateEd25519KeyPair, markSshKeyUsed } from './keys.ts'
 
-const HOST_KEY_FILE = 'ssh_host_ed25519_key'
+export const HOST_KEY_FILE = 'ssh_host_ed25519_key'
 const SHELL = 'exec bash --login'
 const DEFAULT_TERM = 'xterm-256color'
 

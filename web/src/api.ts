@@ -168,6 +168,32 @@ export type Agent = {
   sshKeys: SshKey[]
 }
 
+export type BackupRun = {
+  id: number
+  trigger: 'schedule' | 'manual'
+  status: 'running' | 'succeeded' | 'failed'
+  startedAt: string
+  finishedAt: string | null
+  durationMs: number | null
+  totalBytes: number | null
+  // New data sent to the bucket; unchanged data is not sent again.
+  uploadedBytes: number | null
+  error: string | null
+}
+
+export type BackupStatus =
+  | { configured: false }
+  | {
+      configured: true
+      destination: string
+      schedule: string | null
+      nextRun: string | null
+      retention: { daily: number; weekly: number; monthly: number }
+      running: boolean
+      lastSuccess: BackupRun | null
+      runs: BackupRun[]
+    }
+
 export type Passkey = { id: number; name: string; createdAt: string; lastUsedAt: string | null }
 
 export type ConnectRequest = {
@@ -278,6 +304,8 @@ export const api = {
   denyConnect: (id: string) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/deny`),
   passkeys: () => request<Passkey[]>('GET', '/api/passkeys'),
+  backups: () => request<BackupStatus>('GET', '/api/backups'),
+  startBackup: () => request<BackupRun>('POST', '/api/backups'),
   deletePasskey: (id: number) => request<void>('DELETE', `/api/passkeys/${id}`),
 
   // Both throw the browser's error when the person cancels the passkey prompt.

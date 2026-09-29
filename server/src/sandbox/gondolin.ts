@@ -26,6 +26,7 @@ import {
 import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 import { hostMatches } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
+import { qemuPath } from './qemu.ts'
 import { systemEnv } from './system-env.ts'
 
 const KILL_GRACE_MS = 2000
@@ -97,7 +98,7 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   }
 
   const vm = await VM.create({
-    sandbox: { imagePath: options.image, append: KERNEL_APPEND },
+    sandbox: { imagePath: options.image, append: KERNEL_APPEND, qemuPath: qemuPath() },
     memory: options.memory ?? '1G',
     cpus: options.cpus ?? 2,
     rootfs: { mode: 'cow', size: options.diskSize },

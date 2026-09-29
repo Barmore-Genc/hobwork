@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, join, sep } from 'node:path'
 import { FAVICON_SIZE, ICONS_DIR, iconFile } from '../../../packages/sdk/src/icons/icon.ts'
+import { contentSecurityPolicy, type CspSources } from './csp.ts'
 import { fileStats, sendFile, within } from '../static.ts'
 
-// Only the Hobwork web UI may frame a project UI.
-export function uiHeaders(hobworkOrigin: string): Record<string, string> {
+export function uiHeaders(hobworkOrigin: string, csp?: CspSources): Record<string, string> {
   return {
-    'content-security-policy': `frame-ancestors ${hobworkOrigin}`,
+    'content-security-policy': contentSecurityPolicy(hobworkOrigin, csp),
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'same-origin',
   }
@@ -16,8 +16,8 @@ export function uiHeaders(hobworkOrigin: string): Record<string, string> {
 // dist/ also holds the handler bundles, which are not part of the UI.
 const PRIVATE_DIRS = ['handlers']
 
-export function sendUiText(res: ServerResponse, hobworkOrigin: string, status: number, text: string) {
-  res.writeHead(status, { ...uiHeaders(hobworkOrigin), 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+export function sendUiText(res: ServerResponse, hobworkOrigin: string, status: number, text: string, csp?: CspSources) {
+  res.writeHead(status, { ...uiHeaders(hobworkOrigin, csp), 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
   res.end(`${text}\n`)
 }
 
@@ -45,12 +45,12 @@ function withHead(html: string, options: { base: string; icons: boolean }): stri
 }
 
 function sendIndex(req: IncomingMessage, res: ServerResponse, options: UiOptions) {
-  const { build, project, hobworkOrigin } = options
+  const { build, project, hobworkOrigin, csp } = options
   const path = join(build, 'index.html')
-  if (!fileStats(path)) return sendUiText(res, hobworkOrigin, 404, `${project} has no app to show.`)
+  if (!fileStats(path)) return sendUiText(res, hobworkOrigin, 404, `${project} has no app to show.`, csp)
   const html = Buffer.from(withHead(readFileSync(path, 'utf8'), { base: '/', icons: hasIcons(build) }))
   res.writeHead(200, {
-    ...uiHeaders(hobworkOrigin),
+    ...uiHeaders(hobworkOrigin, csp),
     'content-type': 'text/html; charset=utf-8',
     'content-length': html.length,
     'cache-control': 'no-cache',
@@ -98,12 +98,12 @@ export function serveAppIcons(
   sendFile(req, res, path, stats, 'no-cache', uiHeaders(hobworkOrigin))
 }
 
-type UiOptions = { project: string; build: string; hobworkOrigin: string }
+type UiOptions = { project: string; build: string; hobworkOrigin: string; csp?: CspSources }
 
 // Serves a build's UI at the root of its app origin. `rest` is the still
 // encoded path without the leading slash.
 export function serveProjectUi(req: IncomingMessage, res: ServerResponse, options: UiOptions & { rest: string }) {
-  const { rest, build, hobworkOrigin } = options
+  const { rest, build, hobworkOrigin, csp } = options
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { allow: 'GET, HEAD' }).end()
     return
@@ -115,9 +115,9 @@ export function serveProjectUi(req: IncomingMessage, res: ServerResponse, option
   if (path && stats) {
     // Vite puts a content hash in every file name under assets/.
     const immutable = rest.startsWith('assets/')
-    sendFile(req, res, path, stats, immutable ? 'private, max-age=31536000, immutable' : 'no-cache', uiHeaders(hobworkOrigin))
+    sendFile(req, res, path, stats, immutable ? 'private, max-age=31536000, immutable' : 'no-cache', uiHeaders(hobworkOrigin, csp))
     return
   }
-  if (!path || extname(rest) !== '') return sendUiText(res, hobworkOrigin, 404, 'Not found')
+  if (!path || extname(rest) !== '') return sendUiText(res, hobworkOrigin, 404, 'Not found', csp)
   sendIndex(req, res, options)
 }

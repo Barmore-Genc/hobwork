@@ -179,7 +179,7 @@ export default (async (ctx) => {
 
     const index = await send(`${origin}/spools/3`, { ...page, cookie: appCookie })
     expect(index.status).toBe(200)
-    expect(index.headers['content-security-policy']).toBe(`frame-ancestors ${TEST_PUBLIC_URL}`)
+    expect(index.headers['content-security-policy']).toContain(`frame-ancestors ${TEST_PUBLIC_URL}`)
     const html = index.body
     expect(html).toContain('<base href="/">')
     expect(html).toContain('href="/theme/theme.css"')

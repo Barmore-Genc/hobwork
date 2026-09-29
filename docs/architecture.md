@@ -42,7 +42,7 @@ Named after hobs, the house spirits that quietly do chores around the home.
 
 - **Host**: Node (>= 24.12 for `node:sqlite`'s authorizer and defensive mode, runs TypeScript directly), pnpm. One process. Runs as a systemd service on `hobwork-host` (Arch Linux, x86_64, KVM). Docker is possible with `--device /dev/kvm` but not the primary target.
 - **Web UI**: React, TypeScript, Tailwind, Vite. Served by the host.
-- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node, pnpm, git, e2fsprogs and the platform dependency set including `@hobwork/sdk` and `@hobwork/theme` (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
+- **Guest image**: a Hobwork-specific Gondolin image built from Alpine with Node (full ICU data), pnpm, git, e2fsprogs, tzdata and the platform dependency set including `@hobwork/sdk` and `@hobwork/theme` (`images/`, built inside Docker by `images/build.sh`). VMs grow the root disk at boot (`diskSize`); root disk writes are discarded when a VM stops.
 - **SDK** (`@hobwork/sdk`): the library project code imports to talk to the host (storage, logs, secrets-aware fetch, devices, calling other projects).
 - **Apple apps**: iOS and macOS (maybe tvOS later). Bundle ID prefix `dev.bgenc.hobwork`. A WebView for dashboards plus native capabilities exposed to scripts.
 
@@ -63,6 +63,7 @@ All Gondolin use goes through a small `Sandbox` interface in the host (`server/s
 
 - **Exec** runs `/bin/sh -lc <command>`. Several commands can run at once in one VM, including next to a long-running server.
 - **Kill and timeout**: Gondolin cannot signal a guest process (aborting an exec only stops waiting). Every exec gets a unique `HOBWORK_EXEC_ID` env var, which child processes inherit. A kill runs a second exec that finds the processes with that variable in `/proc/*/environ` and sends SIGTERM, then SIGKILL after 2s. This also catches children that started their own session.
+- **Environment**: every VM gets the host's time zone (`TZ`, or the zone Node resolves when it is unset) and locale (`LANG`, `LANGUAGE`, `LC_*`) from `server/src/sandbox/system-env.ts`, so dates and formats match the host, which also schedules crons in its time zone. Nothing else from the host's environment reaches a VM. The image has `tzdata` and the full ICU data, so every zone and locale works in Node and shell tools.
 - **Blocked egress** is reported to the host through a callback (for logging). Gondolin checks its allowlist only after resolving the name, so a host that does not resolve would get a 502 and never reach the callback. The sandbox therefore checks the hostname against the allowlist first (`isRequestAllowed`, same pattern matching as Gondolin), which answers 403 and reports it.
 
 Measured with `pnpm -C server bench:sandbox` (Hobwork image, Gondolin 0.12.0, 512MB / 2 vCPU VMs) on an Apple Silicon Mac (M-series, 14 cores, HVF):

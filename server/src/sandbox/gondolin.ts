@@ -23,6 +23,7 @@ import {
   type SpawnOptions,
 } from './sandbox.ts'
 import { hostMatches } from './egress.ts'
+import { systemEnv } from './system-env.ts'
 
 const KILL_GRACE_MS = 2000
 const EXEC_ID_VAR = 'HOBWORK_EXEC_ID'
@@ -76,7 +77,7 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     memory: options.memory ?? '1G',
     cpus: options.cpus ?? 2,
     rootfs: { mode: 'cow', size: options.diskSize },
-    env: { ...options.env, ...hooks.env },
+    env: { ...systemEnv(), ...options.env, ...hooks.env },
     httpHooks: hooks.httpHooks,
     vfs: { mounts: toProviders(options.mounts ?? {}) },
     sessionLabel: options.label,

@@ -20,7 +20,8 @@
       "e2fsprogs-extra",
       "git",
       "nodejs",
-      "npm"
+      "npm",
+      "tzdata"
     ],
     "initramfsPackages": [],
     "krunfwVersion": "v5.2.1"
@@ -30,6 +31,10 @@
   },
   "postBuild": {
     "copy": [
+      {
+        "src": "./build/icu-data",
+        "dest": "/usr/share/icu"
+      },
       {
         "src": "./platform/package.json",
         "dest": "/opt/hobwork/platform/package.json"

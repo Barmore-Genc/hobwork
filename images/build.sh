@@ -20,7 +20,7 @@ if [ -z "$gondolin_version" ]; then
 fi
 
 out="build/$arch"
-rm -rf "${here:?}/$out"
+rm -rf "${here:?}/$out" "$here/build/icu-data"
 
 # --privileged: postBuild commands chroot into the rootfs and mount /proc there.
 # The repo root is mounted because the image includes packages/sdk.
@@ -28,9 +28,16 @@ docker run --rm --privileged --platform "$platform" \
   -v "$here/..:/repo" -w /repo/images \
   node:24-alpine3.23 sh -euc "
     apk add --no-cache lz4 cpio e2fsprogs bash >/dev/null
+    # The Gondolin builder extracts packages without apk, so icu-data-en (a nodejs
+    # dependency) would overwrite icu-data-full. Copying it in after packages keeps
+    # every locale available to Intl.
+    apk fetch --quiet --output /tmp icu-data-full
+    mkdir -p /tmp/icu-full build/icu-data
+    tar -xzf /tmp/icu-data-full-*.apk -C /tmp/icu-full usr/share/icu 2>/dev/null
+    cp -R /tmp/icu-full/usr/share/icu/. build/icu-data/
     npm install --global --silent --prefix /opt/gondolin @earendil-works/gondolin@$gondolin_version
     /opt/gondolin/bin/gondolin build --arch $arch --config hobwork.json --output $out
-    chown -R $(id -u):$(id -g) $out
+    chown -R $(id -u):$(id -g) $out build/icu-data
   "
 
 echo "Image written to $here/$out"

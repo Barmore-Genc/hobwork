@@ -83,7 +83,7 @@ beforeEach(async () => {
   workspaces = createWorkspaceManager<InteractiveWorkspaceVm>(host, { startVm: async () => fakeVm() })
   agent = ensureAgent(host.db, 'laptop')
   key = generateEd25519KeyPair()
-  addSshKey(host.db, agent.id, key.public)
+  addSshKey(host.db, agent.id, 'laptop', key.public, { via: 'host' })
   gateway = createSshGateway({ host, workspaces, hostKey: generateEd25519KeyPair().private })
   await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
   port = (gateway.address() as AddressInfo).port

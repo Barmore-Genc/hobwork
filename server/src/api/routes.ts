@@ -37,7 +37,7 @@ import {
   type SecretChange,
   type SecretStore,
 } from '../secrets.ts'
-import { addSshKey, deleteSshKey, listSshKeys, SshKeyError } from '../ssh/keys.ts'
+import { addSshKey, listSshKeys, revokeSshKey, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
 
 // ready: deployed, and the runtime starts when something calls it.
@@ -499,12 +499,13 @@ export function createApiRoutes(options: {
     {
       method: 'POST',
       pattern: /^\/api\/agents\/(\d+)\/ssh-keys$/,
-      handle: async ({ req, res, params }) => {
+      handle: async ({ req, res, user, params }) => {
         const agent = getAgent(host.db, positiveInt(params[0]))
         if (!agent) throw new HttpError(404, 'This agent no longer exists')
-        const body = (await readJson(req)) as { publicKey?: unknown }
+        const body = (await readJson(req)) as { name?: unknown; publicKey?: unknown }
+        const text = (value: unknown) => (typeof value === 'string' ? value : '')
         try {
-          json(res, 201, addSshKey(host.db, agent.id, typeof body?.publicKey === 'string' ? body.publicKey : ''))
+          json(res, 201, addSshKey(host.db, agent.id, text(body?.name), text(body?.publicKey), { via: 'web', userId: user.id }))
         } catch (err) {
           if (err instanceof SshKeyError) throw new HttpError(400, err.message)
           throw err
@@ -512,10 +513,12 @@ export function createApiRoutes(options: {
       },
     },
     {
-      method: 'DELETE',
-      pattern: /^\/api\/ssh-keys\/(\d+)$/,
+      method: 'POST',
+      pattern: /^\/api\/ssh-keys\/(\d+)\/revoke$/,
       handle: ({ res, params }) => {
-        if (!deleteSshKey(host.db, positiveInt(params[0]))) throw new HttpError(404, 'This SSH key was already removed')
+        if (!revokeSshKey(host.db, positiveInt(params[0]))) {
+          throw new HttpError(404, 'This SSH key does not exist or is already revoked')
+        }
         res.writeHead(204).end()
       },
     },

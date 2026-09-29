@@ -3,6 +3,11 @@ import { createHash, randomBytes } from 'node:crypto'
 
 export type Agent = { id: number; name: string }
 
+// What an agent authenticated with: a static agent token or an OAuth grant.
+export type Credential = { kind: 'token'; id: number } | { kind: 'grant'; id: number }
+
+export type AuthenticatedAgent = Agent & { credential?: Credential }
+
 const TOKEN_PREFIX = 'hw_'
 
 // Tokens are 256 random bits, so a fast unsalted hash is enough to make a leaked
@@ -101,7 +106,8 @@ export function listAgents(db: DatabaseSync): AgentWithTokens[] {
     }))
 }
 
-// Returns false when the token does not exist or was already revoked.
+// Returns false when the token does not exist or was already revoked. Also
+// revokes the SSH keys the agent added with this token.
 export function revokeAgentToken(db: DatabaseSync, tokenId: number): boolean {
   const result = db
     .prepare(
@@ -109,17 +115,22 @@ export function revokeAgentToken(db: DatabaseSync, tokenId: number): boolean {
        WHERE id = ? AND revoked_at IS NULL`,
     )
     .run(tokenId)
+  db.prepare(
+    `UPDATE agent_ssh_keys SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE added_by_token_id = ? AND revoked_at IS NULL`,
+  ).run(tokenId)
   return Number(result.changes) > 0
 }
 
-export function verifyAgentToken(db: DatabaseSync, token: string): Agent | undefined {
+export function verifyAgentToken(db: DatabaseSync, token: string): AuthenticatedAgent | undefined {
   if (!token.startsWith(TOKEN_PREFIX)) return undefined
   const row = db
     .prepare(
       `UPDATE agent_tokens SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE token_hash = ? AND revoked_at IS NULL
-       RETURNING agent_id`,
+       RETURNING id, agent_id`,
     )
     .get(hashToken(token))
-  return row ? getAgent(db, Number(row.agent_id)) : undefined
+  const agent = row && getAgent(db, Number(row.agent_id))
+  return agent ? { ...agent, credential: { kind: 'token', id: Number(row.id) } } : undefined
 }

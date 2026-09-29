@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createAgentToken } from '../agents.ts'
+import { addSshKey, generateEd25519KeyPair, listSshKeys } from '../ssh/keys.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 import { isMetadataDocumentUrl, redirectUriAllowed, type OAuthClient } from './clients.ts'
@@ -465,12 +466,16 @@ test('clients revoke their tokens', async () => {
   expect((await form('/oauth/revoke', { client_id, token: 'unknown' })).status).toBe(200)
 })
 
-test('revoking a connection in the web UI ends its tokens, static keys keep working', async () => {
+test('revoking a connection in the web UI ends its tokens and SSH keys, static keys keep working', async () => {
   const { client_id } = await registeredClient()
   const tokens = await tokensFor(client_id)
   const { token: staticToken } = createAgentToken(host.db, 'claude-code')
   const agents = await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))
-  const connection = agents.find((a: any) => a.name === 'Manual').connections[0]
+  const manual = agents.find((a: any) => a.name === 'Manual')
+  const connection = manual.connections[0]
+  const credential = { kind: 'grant', id: connection.id } as const
+  const sshKey = addSshKey(host.db, manual.id, 'laptop', generateEd25519KeyPair().public, { via: 'agent', credential })
+  expect(sshKey.addedFrom).toEqual({ via: 'agent', token: null, signIn: { id: connection.id, clientName: connection.clientName } })
 
   const res = await fetch(`${app.base}/api/connections/${connection.id}/revoke`, {
     method: 'POST',
@@ -482,6 +487,7 @@ test('revoking a connection in the web UI ends its tokens, static keys keep work
     await jsonOf(await form('/oauth/token', { grant_type: 'refresh_token', client_id, refresh_token: tokens.refresh_token })),
   ).toMatchObject({ error: 'invalid_grant' })
   expect((await mcpRequest(staticToken)).status).toBe(200)
+  expect(listSshKeys(host.db, manual.id)[0]?.revokedAt).not.toBeNull()
 })
 
 test('confidential clients must authenticate', async () => {

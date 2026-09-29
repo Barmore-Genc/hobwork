@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes } from 'node:crypto'
-import { createAgent, getAgent, type Agent } from '../agents.ts'
+import { createAgent, getAgent, type Agent, type AuthenticatedAgent } from '../agents.ts'
 import type { OAuthClient } from './clients.ts'
 import { hashSecret, newSecret, s256 } from './secrets.ts'
 
@@ -130,12 +130,13 @@ export function approveRequest(
   })
 }
 
-// Ends a grant and every token issued under it.
+// Ends a grant, every token issued under it and the SSH keys the agent added with it.
 export function revokeGrant(db: DatabaseSync, grantId: number, now = Date.now()): boolean {
   const result = db
     .prepare('UPDATE oauth_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
     .run(iso(now), grantId)
   db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL').run(iso(now), grantId)
+  db.prepare('UPDATE agent_ssh_keys SET revoked_at = ? WHERE added_by_grant_id = ? AND revoked_at IS NULL').run(iso(now), grantId)
   return Number(result.changes) > 0
 }
 
@@ -254,7 +255,7 @@ export function revokeToken(db: DatabaseSync, client: OAuthClient, token: string
   else db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(iso(now), Number(row.id))
 }
 
-export function verifyAccessToken(db: DatabaseSync, token: string, resource: string, now = Date.now()): Agent | undefined {
+export function verifyAccessToken(db: DatabaseSync, token: string, resource: string, now = Date.now()): AuthenticatedAgent | undefined {
   if (!token.startsWith(ACCESS_TOKEN_PREFIX)) return undefined
   const row = db
     .prepare(
@@ -265,7 +266,8 @@ export function verifyAccessToken(db: DatabaseSync, token: string, resource: str
   // RFC 8707: a token issued for another resource is not accepted here.
   if (!row || String(row.resource) !== resource) return undefined
   db.prepare('UPDATE oauth_grants SET last_used_at = ? WHERE id = ?').run(iso(now), Number(row.grant_id))
-  return getAgent(db, Number(row.agent_id))
+  const agent = getAgent(db, Number(row.agent_id))
+  return agent && { ...agent, credential: { kind: 'grant', id: Number(row.grant_id) } }
 }
 
 export type Connection = {

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
-import type { Agent } from '../agents.ts'
+import type { AuthenticatedAgent } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
@@ -29,12 +29,14 @@ import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 import { registerRuntimeTools } from './runtime.ts'
 import { registerSecretTools } from './secrets.ts'
+import { registerSshKeyTools, type SshAddress } from './ssh-keys.ts'
 
 export type McpContext = {
   host: Host
   workspaces: WorkspaceManager<ExecWorkspaceVm>
   delivery: Delivery
-  agent: Agent
+  agent: AuthenticatedAgent
+  ssh?: SshAddress
   homeAssistant?: HomeAssistant
   runtime?: Runtime
   data?: ProjectData
@@ -108,6 +110,7 @@ export function createMcpServer({
   workspaces,
   delivery,
   agent,
+  ssh,
   homeAssistant,
   runtime,
   data,
@@ -463,6 +466,7 @@ export function createMcpServer({
   if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
   registerRuntimeTools(server, { host, runtime })
   registerSecretTools(server, { host, secrets, agent })
+  registerSshKeyTools(server, { host, agent, ssh })
   if (devices) registerDeviceTools(server, devices)
 
   return server

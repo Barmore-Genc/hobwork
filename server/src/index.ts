@@ -127,6 +127,7 @@ const server = createApp(host, {
   secrets,
   backups,
   devices,
+  sshPort: config.sshPort,
   web: {
     publicUrl: config.publicUrl,
     appsUrl: config.appsUrl,

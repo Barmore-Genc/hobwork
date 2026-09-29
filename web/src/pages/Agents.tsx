@@ -110,32 +110,53 @@ function ConnectionRow({ connection, onRevoke }: { connection: Connection; onRev
   )
 }
 
-function SshKeyRow({ sshKey, onRemove }: { sshKey: SshKey; onRemove: (key: SshKey) => void }) {
+function addedFrom(key: SshKey): string | null {
+  const source = key.addedFrom
+  if (!source) return null
+  switch (source.via) {
+    case 'web':
+      return source.userName ? `by ${source.userName} on the web` : 'on the web'
+    case 'host':
+      return 'on the Hobwork host'
+    case 'agent':
+      if (source.signIn) return `by the agent, signed in through ${source.signIn.clientName}`
+      if (source.token) return `by the agent, with the key created ${shortDate(source.token.createdAt)}`
+      return 'by the agent'
+  }
+}
+
+function SshKeyRow({ sshKey, onRevoke }: { sshKey: SshKey; onRevoke: (key: SshKey) => void }) {
+  const revoked = sshKey.revokedAt !== null
+  const from = addedFrom(sshKey)
   return (
     <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
-      <div className="min-w-0">
-        <p>
-          SSH key{sshKey.comment && <> “{sshKey.comment}”</>}
-        </p>
+      <div className={`min-w-0 ${revoked ? 'text-muted' : ''}`}>
+        <p className={`break-words ${revoked ? 'line-through' : ''}`}>SSH key “{sshKey.name}”</p>
         <p className="font-mono text-[0.8rem] break-all text-muted">{sshKey.fingerprint}</p>
         <p className="text-sm text-muted">
           <span title={exactTime(sshKey.createdAt)}>Added {shortDate(sshKey.createdAt)}</span>
+          {from && <> {from}</>}
           {' · '}
-          {sshKey.lastUsedAt ? (
+          {revoked ? (
+            <>revoked {timeAgo(sshKey.revokedAt!)}</>
+          ) : sshKey.lastUsedAt ? (
             <span title={exactTime(sshKey.lastUsedAt)}>last used {timeAgo(sshKey.lastUsedAt)}</span>
           ) : (
             'not used yet'
           )}
         </p>
       </div>
-      <Button variant="quiet-danger" onClick={() => onRemove(sshKey)}>
-        Remove
-      </Button>
+      {!revoked && (
+        <Button variant="quiet-danger" onClick={() => onRevoke(sshKey)}>
+          Revoke
+        </Button>
+      )}
     </li>
   )
 }
 
 function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => void; onCancel: () => void }) {
+  const [name, setName] = useState('')
   const [publicKey, setPublicKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -146,7 +167,7 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
     setBusy(true)
     setError(null)
     try {
-      await api.addSshKey(agent.id, publicKey.trim())
+      await api.addSshKey(agent.id, name.trim(), publicKey.trim())
       onAdded()
     } catch (err) {
       setError(message(err))
@@ -156,10 +177,24 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
 
   return (
     <form onSubmit={add} className="mt-4 rounded-lg border border-border bg-surface p-4 sm:p-5">
-      <label htmlFor={id} className="font-semibold">
-        Public SSH key for {agent.name}
+      <p className="font-semibold">SSH key for {agent.name}</p>
+      <label htmlFor={`${id}-name`} className="mt-3 block text-sm font-semibold">
+        Name
       </label>
-      <p className="mt-1 text-sm text-muted">
+      <p className="text-sm text-muted">Where the key lives, so you recognize it later.</p>
+      <input
+        id={`${id}-name`}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={64}
+        required
+        placeholder="Claude Code on the laptop"
+        className="mt-2 min-h-10 w-full rounded-md border border-border bg-surface-raised px-3 text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
+      />
+      <label htmlFor={id} className="mt-4 block text-sm font-semibold">
+        Public key
+      </label>
+      <p className="text-sm text-muted">
         Paste the contents of the <span className="font-mono">.pub</span> file, such as{' '}
         <span className="font-mono">~/.ssh/id_ed25519.pub</span>.
       </p>
@@ -171,7 +206,7 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
         required
         spellCheck={false}
         placeholder="ssh-ed25519 AAAA… agent@laptop"
-        className="mt-3 w-full rounded-md border border-border bg-surface-raised px-3 py-2 font-mono text-sm text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
+        className="mt-2 w-full rounded-md border border-border bg-surface-raised px-3 py-2 font-mono text-sm text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
       />
       {error && (
         <div className="mt-3">
@@ -182,7 +217,7 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
         <Button variant="quiet" onClick={onCancel} disabled={busy}>
           Cancel
         </Button>
-        <Button type="submit" variant="primary" disabled={busy || !publicKey.trim()}>
+        <Button type="submit" variant="primary" disabled={busy || !name.trim() || !publicKey.trim()}>
           {busy ? 'Adding…' : 'Add SSH key'}
         </Button>
       </div>
@@ -193,7 +228,7 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
 function accessSummary(agent: Agent): string {
   const keys = agent.tokens.filter((t) => t.revokedAt === null).length
   const apps = agent.connections.filter((c) => c.revokedAt === null).length
-  const ssh = agent.sshKeys.length
+  const ssh = agent.sshKeys.filter((k) => k.revokedAt === null).length
   const parts = [
     ...(keys ? [keys === 1 ? '1 working key' : `${keys} working keys`] : []),
     ...(apps ? [apps === 1 ? '1 working sign-in' : `${apps} working sign-ins`] : []),
@@ -274,7 +309,7 @@ export function AgentsPage() {
     confirm({
       title: 'Revoke this key?',
       confirmLabel: 'Revoke key',
-      body: `${agent.name} loses access through this key right away. This cannot be undone, but you can create a new key later.`,
+      body: `${agent.name} loses access through this key right away, along with the SSH keys it added with it. This cannot be undone, but you can create a new key later.`,
       run: () => api.revokeToken(token.id),
     })
 
@@ -282,16 +317,16 @@ export function AgentsPage() {
     confirm({
       title: 'Revoke this sign-in?',
       confirmLabel: 'Revoke sign-in',
-      body: `${agent.name} loses access right away. You can connect it again from ${connection.clientName} later.`,
+      body: `${agent.name} loses access right away, along with the SSH keys it added through this sign-in. You can connect it again from ${connection.clientName} later.`,
       run: () => api.revokeConnection(connection.id),
     })
 
-  const removeSshKey = (agent: Agent, key: SshKey) =>
+  const revokeSshKey = (agent: Agent, key: SshKey) =>
     confirm({
-      title: 'Remove this SSH key?',
-      confirmLabel: 'Remove SSH key',
-      body: `${agent.name} can no longer open a shell in workspaces with this key. You can add it again later.`,
-      run: () => api.removeSshKey(key.id),
+      title: 'Revoke this SSH key?',
+      confirmLabel: 'Revoke SSH key',
+      body: `${agent.name} can no longer open a shell in workspaces with “${key.name}”. You can add the key again later.`,
+      run: () => api.revokeSshKey(key.id),
     })
 
   return (
@@ -345,7 +380,9 @@ export function AgentsPage() {
               const revokedConnections = agent.connections.filter((c) => c.revokedAt !== null)
               const activeTokens = agent.tokens.filter((t) => t.revokedAt === null)
               const revokedTokens = agent.tokens.filter((t) => t.revokedAt !== null)
-              const revokedCount = revokedConnections.length + revokedTokens.length
+              const activeSshKeys = agent.sshKeys.filter((k) => k.revokedAt === null)
+              const revokedSshKeys = agent.sshKeys.filter((k) => k.revokedAt !== null)
+              const revokedCount = revokedConnections.length + revokedTokens.length + revokedSshKeys.length
               const showRevoked = revokedShown.has(agent.id)
               return (
                 <li key={agent.id} className="border-t border-border pt-6">
@@ -371,7 +408,7 @@ export function AgentsPage() {
                       }}
                     />
                   )}
-                  {(activeConnections.length > 0 || activeTokens.length > 0 || agent.sshKeys.length > 0) && (
+                  {(activeConnections.length > 0 || activeTokens.length > 0 || activeSshKeys.length > 0) && (
                     <ul className="mt-3 divide-y divide-border">
                       {activeConnections.map((connection) => (
                         <ConnectionRow
@@ -383,8 +420,8 @@ export function AgentsPage() {
                       {activeTokens.map((token) => (
                         <KeyRow key={`t${token.id}`} token={token} onRevoke={(t) => revokeToken(agent, t)} />
                       ))}
-                      {agent.sshKeys.map((key) => (
-                        <SshKeyRow key={`s${key.id}`} sshKey={key} onRemove={(k) => removeSshKey(agent, k)} />
+                      {activeSshKeys.map((key) => (
+                        <SshKeyRow key={`s${key.id}`} sshKey={key} onRevoke={(k) => revokeSshKey(agent, k)} />
                       ))}
                     </ul>
                   )}
@@ -409,6 +446,9 @@ export function AgentsPage() {
                           ))}
                           {revokedTokens.map((token) => (
                             <KeyRow key={`t${token.id}`} token={token} onRevoke={(t) => revokeToken(agent, t)} />
+                          ))}
+                          {revokedSshKeys.map((key) => (
+                            <SshKeyRow key={`s${key.id}`} sshKey={key} onRevoke={(k) => revokeSshKey(agent, k)} />
                           ))}
                         </ul>
                       )}

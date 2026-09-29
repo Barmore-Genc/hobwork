@@ -16,11 +16,11 @@ const ERRORS: Record<string, string> = {
 
 function abilities(access: Access): string[] {
   if (access.readOnly) {
-    return ['See project files, logs and versions', 'See the names of secrets and devices', 'Read states and history from Home Assistant']
+    return ['See hob files, logs and versions', 'See the names of secrets and devices', 'Read states and history from Home Assistant']
   }
   return [
-    access.projects === null ? 'See, create and change your projects' : 'See and change these projects',
-    'Run code and commands in project workspaces',
+    access.projects === null ? 'See, create and change your hobs' : 'See and change these hobs',
+    'Run code and commands in hob workspaces',
     'Merge changes, which puts them live',
     'Read logs and go back to earlier versions',
   ]
@@ -81,7 +81,7 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
 
       <section aria-labelledby="abilities" className="mt-6 rounded-lg border border-border bg-surface p-5 sm:p-6">
         <h2 id="abilities" className="text-lg font-semibold">
-          It will be able to, on {access.projects === null ? 'all your projects' : projectsText(access)}:
+          It will be able to, on {access.projects === null ? 'all your hobs' : projectsText(access)}:
         </h2>
         <ul className="mt-3 space-y-2">
           {abilities(access).map((ability) => (
@@ -146,7 +146,7 @@ export function ConnectPage({ requestId, error }: { requestId: string | null; er
           </div>
           <p className="mt-6">
             <Link to="/" className="rounded-sm text-muted underline decoration-border underline-offset-4 hover:text-fg">
-              Go to your projects
+              Go to your hobs
             </Link>
           </p>
         </>

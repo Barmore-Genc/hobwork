@@ -1,6 +1,6 @@
-// Client for project UIs calling their own routes with the signed-in user's
-// session. Hobwork serves each project UI at the root of its own origin, and
-// the project's routes under /api/ on that origin.
+// Client for hob UIs calling their own routes with the signed-in user's
+// session. Hobwork serves each hob UI at the root of its own origin, and
+// the hob's routes under /api/ on that origin.
 
 // Hobwork refuses state-changing requests with a session unless this header is set.
 const CSRF_HEADER = 'x-hobwork-csrf'

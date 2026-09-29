@@ -7,7 +7,7 @@ import Foundation
 struct SendTagIntent: AppIntent {
     static let title: LocalizedStringResource = "Send Tag to Hobwork"
     static let description = IntentDescription(
-        "Sends a link to your Hobwork projects as if you scanned a tag with it. Use it in a Shortcuts automation for an NFC tag."
+        "Sends a link to your Hobwork hobs as if you scanned a tag with it. Use it in a Shortcuts automation for an NFC tag."
     )
     static let supportedModes: IntentModes = .background
 
@@ -33,7 +33,7 @@ struct SendTagIntent: AppIntent {
 /// Opens Hobwork and scans a tag, for the Action Button, Control Center or a shortcut.
 struct ScanTagIntent: AppIntent {
     static let title: LocalizedStringResource = "Scan NFC Tag"
-    static let description = IntentDescription("Opens Hobwork and scans an NFC tag. Its link goes to your Hobwork projects.")
+    static let description = IntentDescription("Opens Hobwork and scans an NFC tag. Its link goes to your Hobwork hobs.")
     static let supportedModes: IntentModes = .foreground(.immediate)
 
     @MainActor

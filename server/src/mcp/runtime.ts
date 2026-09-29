@@ -24,7 +24,7 @@ const RESPONSE_BODY_CHARS = 10_000
 const INVOCATION_LOG_LINES = 200
 const MAX_TAIL_SECONDS = 60
 
-const project = z.string().describe('Project name, e.g. "filament-tracker"')
+const hob = z.string().describe('Hob name, e.g. "filament-tracker"')
 const kind = z.enum(['route', 'cron', 'webhook', 'trigger'])
 const branch = z.string().optional().describe(`Branch to run as a preview (its latest commit). Omit, or "${DEFAULT_BRANCH}", for the deployed version`)
 
@@ -35,7 +35,7 @@ function previewBranch(value: string | undefined): string | undefined {
 // The label of a branch preview, which its webhook URLs and app origin use.
 function previewLabel(project: string, branch: string): string {
   const label = appLabel({ project, branch })
-  if (!label) throw new ProjectError(`The project name ${project} is too long for branch previews`)
+  if (!label) throw new ProjectError(`The hob name ${project} is too long for branch previews`)
   return label
 }
 
@@ -106,9 +106,9 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
   server.registerTool(
     'invoke',
     {
-      description: `Run a handler now and return its result, error with stack trace, and log lines: of the deployed version (${DEFAULT_BRANCH}), or with branch, of a preview of that branch's latest commit (committed changes only), built on first use. A preview uses the branch DB, reads Home Assistant states, and calls HA services or fires events only when that is allowed for the branch (set_branch_home_assistant, or the user on the project page); otherwise those calls fail with code not_approved. The invocation is recorded like any other (marked manual, with the branch). Routes: name is the method and path to request, e.g. "GET /spools/42?full=1", matched against the routes in hobwork.json. Webhooks: name is the webhook name; the request is sent without needing its token. Crons and triggers: name from hobwork.json; payload is passed as ctx.payload (for Home Assistant triggers, HA's trigger variables). Branch crons and triggers never run on their own, only through invoke.`,
+      description: `Run a handler now and return its result, error with stack trace, and log lines: of the deployed version (${DEFAULT_BRANCH}), or with branch, of a preview of that branch's latest commit (committed changes only), built on first use. A preview uses the branch DB, reads Home Assistant states, and calls HA services or fires events only when that is allowed for the branch (set_branch_home_assistant, or the user on the hob page); otherwise those calls fail with code not_approved. The invocation is recorded like any other (marked manual, with the branch). Routes: name is the method and path to request, e.g. "GET /spools/42?full=1", matched against the routes in hobwork.json. Webhooks: name is the webhook name; the request is sent without needing its token. Crons and triggers: name from hobwork.json; payload is passed as ctx.payload (for Home Assistant triggers, HA's trigger variables). Branch crons and triggers never run on their own, only through invoke.`,
       inputSchema: {
-        project,
+        hob,
         kind,
         branch,
         name: z.string().describe('Route "METHOD /path", or the cron, webhook or trigger name'),
@@ -118,7 +118,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
         payload: z.unknown().optional().describe('ctx.payload for crons and triggers'),
       },
     },
-    async ({ project: p, kind: k, branch: rawBranch, name, body, headers, method, payload }) => {
+    async ({ hob: p, kind: k, branch: rawBranch, name, body, headers, method, payload }) => {
       requireProject(host, p)
       if (!runtime?.canRun) {
         throw new ProjectError('This Hobwork host cannot run handlers: no runtime VM backend is configured')
@@ -171,9 +171,9 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     'list_invocations',
     {
       description:
-        'List recorded invocations of a project, newest first: ID, start time, kind and name, version (or branch, for previews), status, duration, HTTP status and the first line of the error. Use get_logs with an invocation_id for its log lines and full stack trace.',
+        'List recorded invocations of a hob, newest first: ID, start time, kind and name, version (or branch, for previews), status, duration, HTTP status and the first line of the error. Use get_logs with an invocation_id for its log lines and full stack trace.',
       inputSchema: {
-        project,
+        hob,
         branch: z.string().optional().describe(`Only this branch's previews; "${DEFAULT_BRANCH}" for the deployed version only. Omit for all`),
         kind: kind.optional(),
         name: z.string().optional().describe('Route key ("GET /spools") or cron, webhook or trigger name'),
@@ -184,7 +184,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, branch: b, kind: k, name, status, version, before_id, limit }) => {
+    async ({ hob: p, branch: b, kind: k, name, status, version, before_id, limit }) => {
       requireProject(host, p)
       const found = listInvocations(host, {
         project: p,
@@ -206,9 +206,9 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     'get_logs',
     {
       description:
-        'Read the log store of a project, oldest first: handler output (console and ctx.log, per invocation), runtime events (start, stop, crash, deploy, auto-revert, blocked egress) and pipeline step results. With invocation_id, also shows that invocation\'s record with its error and full stack trace. Without a starting point (after_id, since, invocation_id), shows the latest lines. Each line starts with its ID; pass the last one as after_id to continue.',
+        'Read the log store of a hob, oldest first: handler output (console and ctx.log, per invocation), runtime events (start, stop, crash, deploy, auto-revert, blocked egress) and pipeline step results. With invocation_id, also shows that invocation\'s record with its error and full stack trace. Without a starting point (after_id, since, invocation_id), shows the latest lines. Each line starts with its ID; pass the last one as after_id to continue.',
       inputSchema: {
-        project,
+        hob,
         invocation_id: z.number().int().optional(),
         after_id: z.number().int().optional().describe('Only lines after this log line ID'),
         since: z.string().optional().describe('ISO time, e.g. "2026-01-31T08:00:00Z"'),
@@ -219,7 +219,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, invocation_id, after_id, since, until, source, min_level, limit }) => {
+    async ({ hob: p, invocation_id, after_id, since, until, source, min_level, limit }) => {
       requireProject(host, p)
       const toIso = (value: string | undefined, field: string) => {
         if (value === undefined) return undefined
@@ -258,9 +258,9 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     'tail_logs',
     {
       description:
-        'Wait for new log lines of a project and return them as soon as there are any. Returns a cursor; pass it to the next call to continue where this one ended. Without a cursor, only lines logged after the call starts are returned. Use it while triggering a handler, e.g. after asking the user to press a button.',
+        'Wait for new log lines of a hob and return them as soon as there are any. Returns a cursor; pass it to the next call to continue where this one ended. Without a cursor, only lines logged after the call starts are returned. Use it while triggering a handler, e.g. after asking the user to press a button.',
       inputSchema: {
-        project,
+        hob,
         cursor: z.number().int().optional().describe('Log line ID from a previous get_logs or tail_logs call'),
         invocation_id: z.number().int().optional(),
         wait_seconds: z.number().int().min(0).max(MAX_TAIL_SECONDS).default(30),
@@ -268,7 +268,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, cursor, invocation_id, wait_seconds, limit }, extra) => {
+    async ({ hob: p, cursor, invocation_id, wait_seconds, limit }, extra) => {
       requireProject(host, p)
       let after = cursor ?? lastLogId(host, p)
       const deadline = Date.now() + wait_seconds * 1000
@@ -290,15 +290,15 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     'rotate_webhook_token',
     {
       description:
-        'Create or replace the secret token of a webhook and return its URL path (/hooks/<project>/<name>/<token>), to be called on the Hobwork host. With branch, the URL calls that branch\'s preview instead (/hooks/<branch label>--<project>/<name>/<token>) and has its own token. The token is shown only now; rotating again invalidates the old URL right away. A webhook without a token cannot be called from outside.',
+        'Create or replace the secret token of a webhook and return its URL path (/hooks/<hob>/<name>/<token>), to be called on the Hobwork host. With branch, the URL calls that branch\'s preview instead (/hooks/<branch label>--<hob>/<name>/<token>) and has its own token. The token is shown only now; rotating again invalidates the old URL right away. A webhook without a token cannot be called from outside.',
       inputSchema: {
-        project,
+        hob,
         webhook: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Webhook name from hobwork.json'),
         branch,
       },
       annotations: { destructiveHint: true },
     },
-    async ({ project: p, webhook, branch: rawBranch }) => {
+    async ({ hob: p, webhook, branch: rawBranch }) => {
       const b = previewBranch(rawBranch)
       if (b === undefined) {
         const token = rotateWebhookToken(host, p, webhook)

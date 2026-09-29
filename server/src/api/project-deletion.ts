@@ -12,9 +12,9 @@ export function projectDeletionRoutes(deps: ProjectDeletionDeps): ApiRoute[] {
       pattern: /^\/api\/projects\/([^/]+)$/,
       handle: async ({ req, res, user, params }) => {
         const name = params[0]!
-        if (!getProject(deps.host, name)) throw new HttpError(404, `There is no project called "${name}"`)
+        if (!getProject(deps.host, name)) throw new HttpError(404, `There is no hob called "${name}"`)
         const body = (await readJson(req)) as { confirm?: unknown } | null
-        if (body?.confirm !== name) throw new HttpError(400, `Type the project name, ${name}, to delete it`)
+        if (body?.confirm !== name) throw new HttpError(400, `Type the hob name, ${name}, to delete it`)
         const { purgeAfter } = await deleteProject(deps, name, { user })
         json(res, 200, { deleted: name, recoverableUntil: purgeAfter, trashDays: TRASH_DAYS })
       },

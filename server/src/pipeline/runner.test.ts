@@ -71,13 +71,13 @@ test('renders the project icon after the build, and a wrong icon fails the build
   const wrongIcon = recordingVm(
     (command) =>
       command.startsWith('render-icons')
-        ? { exitCode: 1, stdout: 'hobwork.json: "icon" is "x.png", which is not a file in the project\n', stderr: '' }
+        ? { exitCode: 1, stdout: 'hobwork.json: "icon" is "x.png", which is not a file in the hob\n', stderr: '' }
         : { exitCode: 0, stdout: '', stderr: '' },
     'render-icons',
   )
   const failed = await runPipeline(host, { startVm: wrongIcon }, candidate)
   expect(failed.failedStep).toBe('build')
-  expect(failed.steps.find((s) => s.name === 'build')?.output).toContain('not a file in the project')
+  expect(failed.steps.find((s) => s.name === 'build')?.output).toContain('not a file in the hob')
 })
 
 test('installs only when the project has dependencies outside the platform set', async () => {

@@ -1,4 +1,4 @@
-// Runs handler queries against a project DB. The host runs it for project VMs,
+// Runs handler queries against a hob DB. The host runs it for hob VMs,
 // and `@hobwork/sdk/testing` runs it against in-memory DBs, so tests hit the
 // same rules as deployed code.
 import { constants, type DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
@@ -111,7 +111,7 @@ export function createExecutor(db: DatabaseSync) {
     if (SCHEMA_CHANGES.has(action)) return deny(SCHEMA_MESSAGE)
     if (action === constants.SQLITE_TRANSACTION || action === constants.SQLITE_SAVEPOINT) return deny(TRANSACTION_MESSAGE)
     if (action === constants.SQLITE_ATTACH || action === constants.SQLITE_DETACH) {
-      return deny('Statements can only use the project DB (ATTACH and DETACH are not allowed)')
+      return deny('Statements can only use the hob DB (ATTACH and DETACH are not allowed)')
     }
     if (action === constants.SQLITE_PRAGMA && !ALLOWED_PRAGMAS.has(String(arg1).toLowerCase())) {
       return deny(`PRAGMA ${arg1} is not allowed. Only schema introspection PRAGMAs such as table_info work`)
@@ -138,7 +138,7 @@ export function createExecutor(db: DatabaseSync) {
   function prepare(sql: string): { stmt: StatementSync; writes: boolean } {
     if (typeof sql !== 'string') throw new QueryError('SQL must be a string')
     const keyword = firstKeyword(sql)
-    if (keyword === 'VACUUM') throw new QueryError('VACUUM is not allowed. Hobwork maintains the project DB')
+    if (keyword === 'VACUUM') throw new QueryError('VACUUM is not allowed. Hobwork maintains the hob DB')
     if (['CREATE', 'DROP', 'ALTER'].includes(keyword)) throw new QueryError(SCHEMA_MESSAGE)
     if (['BEGIN', 'COMMIT', 'END', 'ROLLBACK', 'SAVEPOINT', 'RELEASE'].includes(keyword)) {
       throw new QueryError(TRANSACTION_MESSAGE)

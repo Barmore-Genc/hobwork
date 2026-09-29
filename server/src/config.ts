@@ -102,7 +102,7 @@ function loadAppsUrl(env: NodeJS.ProcessEnv, publicUrl: string): string {
     throw new Error(`HOBWORK_APPS_URL must be an origin without a path, like https://apps.hobwork.example.com, got "${value}"`)
   }
   if (!url.hostname.includes('.') || /^[\d.]+$|^\[/.test(url.hostname)) {
-    throw new Error(`HOBWORK_APPS_URL needs a domain name that project names can go in front of, got "${value}"`)
+    throw new Error(`HOBWORK_APPS_URL needs a domain name that hob names can go in front of, got "${value}"`)
   }
   if (url.origin === publicUrl) throw new Error('HOBWORK_APPS_URL must differ from HOBWORK_PUBLIC_URL')
   return url.origin

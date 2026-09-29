@@ -52,7 +52,7 @@ function AiForm({ current, onSaved }: { current: AiSettings; onSaved: () => void
         )}
       </div>
       {error && <Notice tone="error">{error}</Notice>}
-      {saved && !error && <Notice tone="success">Saved. Projects use the new settings on their next request.</Notice>}
+      {saved && !error && <Notice tone="success">Saved. Hobs use the new settings on their next request.</Notice>}
     </form>
   )
 }
@@ -66,7 +66,7 @@ export function AiSection() {
         AI
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Projects use AI models through OpenRouter. Choose which models they may use and how much. A project can narrow
+        Hobs use AI models through OpenRouter. Choose which models they may use and how much. A hob can narrow
         the models and get its own limits on its AI page.
       </p>
 
@@ -81,7 +81,7 @@ export function AiSection() {
           <AiForm current={current} onSaved={reload} />
           <h3 className="mt-8 text-lg font-semibold">Use in the last 30 days</h3>
           {current.usage.length === 0 ? (
-            <p className="mt-2 text-muted">No project has used AI in the last 30 days.</p>
+            <p className="mt-2 text-muted">No hob has used AI in the last 30 days.</p>
           ) : (
             <UsageTable
               rows={current.usage.map((row) => ({

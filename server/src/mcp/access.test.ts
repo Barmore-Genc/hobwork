@@ -44,30 +44,30 @@ test('read-only access lists only the tools that read and refuses the others', a
   const agent = await connect({ readOnly: true, projects: null })
   const tools = await agent.tools()
   expect(tools).toEqual(everything.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name))
-  expect(tools).toEqual(expect.arrayContaining(['list_projects', 'get_project', 'read_file', 'get_logs', 'list_secrets']))
-  for (const name of ['create_project', 'create_branch', 'write_file', 'bash', 'commit', 'merge', 'invoke', 'assign_secret', 'add_ssh_key']) {
+  expect(tools).toEqual(expect.arrayContaining(['list_hobs', 'get_hob', 'read_file', 'get_logs', 'list_secrets']))
+  for (const name of ['create_hob', 'create_branch', 'write_file', 'bash', 'commit', 'merge', 'invoke', 'assign_secret', 'add_ssh_key']) {
     expect(tools).not.toContain(name)
   }
-  const refused = await agent.call('create_branch', { project: 'filament', branch: 'x' })
+  const refused = await agent.call('create_branch', { hob: 'filament', branch: 'x' })
   expect(refused.isError).toBe(true)
-  expect(textOf(await agent.call('read_file', { project: 'alarms', branch: 'main', path: 'hobwork.json' }))).toContain('{')
+  expect(textOf(await agent.call('read_file', { hob: 'alarms', branch: 'main', path: 'hobwork.json' }))).toContain('{')
 })
 
 test('project access hides other projects and refuses tools on them', async () => {
   const agent = await connect({ readOnly: false, projects: ['filament'] })
-  expect(await agent.tools()).not.toContain('create_project')
-  expect(JSON.parse(textOf(await agent.call('list_projects'))).map((p: { name: string }) => p.name)).toEqual(['filament'])
+  expect(await agent.tools()).not.toContain('create_hob')
+  expect(JSON.parse(textOf(await agent.call('list_hobs'))).map((p: { name: string }) => p.name)).toEqual(['filament'])
 
-  const refused = await agent.call('create_branch', { project: 'alarms', branch: 'x' })
+  const refused = await agent.call('create_branch', { hob: 'alarms', branch: 'x' })
   expect(refused.isError).toBe(true)
-  expect(textOf(refused)).toBe('This connection has no access to the project "alarms"')
-  expect((await agent.call('create_branch', { project: 'filament', branch: 'x' })).isError).toBeFalsy()
+  expect(textOf(refused)).toBe('This connection has no access to the hob "alarms"')
+  expect((await agent.call('create_branch', { hob: 'filament', branch: 'x' })).isError).toBeFalsy()
 
   secrets.create({ name: 'Weather', value: 'v', hosts: ['weather.example'], assign: { project: 'alarms', envName: 'WEATHER' } }, { kind: 'host' })
-  expect(JSON.parse(textOf(await agent.call('list_secrets')))).toEqual([{ name: 'Weather', hosts: ['weather.example'], projects: [] }])
-  expect((await agent.call('list_secrets', { project: 'alarms' })).isError).toBe(true)
-  expect((await agent.call('assign_secret', { project: 'alarms', secret: 'Weather', env_name: 'W' })).isError).toBe(true)
-  expect((await agent.call('assign_secret', { project: 'filament', secret: 'Weather', env_name: 'W' })).isError).toBeFalsy()
+  expect(JSON.parse(textOf(await agent.call('list_secrets')))).toEqual([{ name: 'Weather', hosts: ['weather.example'], hobs: [] }])
+  expect((await agent.call('list_secrets', { hob: 'alarms' })).isError).toBe(true)
+  expect((await agent.call('assign_secret', { hob: 'alarms', secret: 'Weather', env_name: 'W' })).isError).toBe(true)
+  expect((await agent.call('assign_secret', { hob: 'filament', secret: 'Weather', env_name: 'W' })).isError).toBeFalsy()
 })
 
 test('an SSH key an agent adds has the access of the credential it used', async () => {
@@ -81,8 +81,8 @@ test('an SSH key an agent adds has the access of the credential it used', async 
 test('access follows a renamed project and ends with a deleted one', async () => {
   const agent = await connect({ readOnly: true, projects: ['filament'] })
   mcp.host.db.prepare("UPDATE projects SET name = 'spools' WHERE name = 'filament'").run()
-  expect(JSON.parse(textOf(await agent.call('list_projects'))).map((p: { name: string }) => p.name)).toEqual(['spools'])
+  expect(JSON.parse(textOf(await agent.call('list_hobs'))).map((p: { name: string }) => p.name)).toEqual(['spools'])
   mcp.host.db.prepare("DELETE FROM projects WHERE name = 'spools'").run()
-  expect(JSON.parse(textOf(await agent.call('list_projects')))).toEqual([])
-  expect((await agent.call('list_versions', { project: 'alarms' })).isError).toBe(true)
+  expect(JSON.parse(textOf(await agent.call('list_hobs')))).toEqual([])
+  expect((await agent.call('list_versions', { hob: 'alarms' })).isError).toBe(true)
 })

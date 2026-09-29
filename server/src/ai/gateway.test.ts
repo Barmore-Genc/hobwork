@@ -115,7 +115,7 @@ test('throttles requests per minute and lets them through when the window moves'
     metadata: { limit: 'requestsPerMinute', max: 2, used: 2, retry_after_seconds: 40 },
   })
   expect(error.message).toBe(
-    "This project sent 2 requests to OpenRouter in the last minute, and Hobwork allows 2. Try again in 40 seconds. People change this on the project's AI page in Hobwork.",
+    "This hob sent 2 requests to OpenRouter in the last minute, and Hobwork allows 2. Try again in 40 seconds. People change this on the hob's AI page in Hobwork.",
   )
   // Refused requests do not keep the project throttled.
   clock += 40_001
@@ -136,7 +136,7 @@ test('stops a project at its spend limit until old spend leaves the window', asy
   expect(refused.status).toBe(429)
   const { error } = (await refused.json()) as { error: { code: string; message: string; metadata: unknown } }
   expect(error.code).toBe('hobwork_spend_limit')
-  expect(error.message).toContain('This project spent $0.06 on OpenRouter in the last 24 hours, and Hobwork stops it at $0.05. Try again in 22 hours.')
+  expect(error.message).toContain('This hob spent $0.06 on OpenRouter in the last 24 hours, and Hobwork stops it at $0.05. Try again in 22 hours.')
   clock += 22 * 60 * 60_000 + 1
   expect((await call(intercept, chat(), upstream)).status).toBe(200)
 })

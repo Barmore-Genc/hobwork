@@ -100,11 +100,11 @@ function triggerSummary(trigger: EntryPoints['triggers'][number]): string {
   if (trigger.device) {
     const on = trigger.device.device ? ` on ${trigger.device.device}` : ''
     const summaries: Record<string, string> = {
-      notifications: `When someone taps a button on a notification from this project${on}`,
+      notifications: `When someone taps a button on a notification from this hob${on}`,
       focus: `When a Focus mode turns on or off${on}`,
       nfc: trigger.device.url
         ? `When someone scans an NFC tag with a link starting with ${trigger.device.url}${on}`
-        : `When someone scans an NFC tag of this project${on}`,
+        : `When someone scans an NFC tag of this hob${on}`,
       health: `When new Health data arrives${on}`,
     }
     return summaries[trigger.device.capability] ?? 'On a device event'
@@ -187,7 +187,7 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
           <Notice tone="error">{project.configError}</Notice>
         </div>
       )}
-      {empty && <p className="mt-2 text-muted">Nothing runs in this project yet.</p>}
+      {empty && <p className="mt-2 text-muted">Nothing runs in this hob yet.</p>}
       {entries && !empty && (
         <div className="mt-6 space-y-8">
           {entries.crons.length > 0 && (
@@ -262,7 +262,7 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
             </EntryGroup>
           )}
           {entries.routes.length > 0 && (
-            <EntryGroup title="App requests" description="Answer the project's app and agents.">
+            <EntryGroup title="App requests" description="Answer the hob's app and agents.">
               {entries.routes.map((route) => (
                 <EntryRow key={route.key} aside={<LastRunLink project={project.name} run={route.lastRun} />}>
                   <p className="font-mono text-sm break-all">{route.key}</p>
@@ -397,7 +397,7 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
           {project.name} goes back to how it was in version {target?.number}. This is saved as a new version, so version{' '}
           {current?.number} stays in the list and you can switch back to it at any time.
         </p>
-        <p>Data the project has saved stays as it is.</p>
+        <p>Data the hob has saved stays as it is.</p>
       </ConfirmDialog>
     </section>
   )

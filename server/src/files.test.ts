@@ -32,8 +32,8 @@ afterEach(() => {
 test.each(['../outside/secret.txt', 'src/../../outside/secret.txt', '/etc/passwd', '.git/config', 'a/.git/HEAD'])(
   'rejects path %j',
   async (path) => {
-    await expect(readCheckoutFile(root, path)).rejects.toThrow(/outside the project|relative|\.git/)
-    await expect(writeCheckoutFile(root, path, 'x')).rejects.toThrow(/outside the project|relative|\.git/)
+    await expect(readCheckoutFile(root, path)).rejects.toThrow(/outside the hob|relative|\.git/)
+    await expect(writeCheckoutFile(root, path, 'x')).rejects.toThrow(/outside the hob|relative|\.git/)
   },
 )
 

@@ -97,8 +97,8 @@ test('renders the default icon without an icon in hobwork.json', async () => {
 
 test.each([
   ['nope', 'not a single emoji'],
-  ['ui/missing.png', 'not a file in the project'],
-  ['../outside.png', 'must be a path inside the project'],
+  ['ui/missing.png', 'not a file in the hob'],
+  ['../outside.png', 'must be a path inside the hob'],
   ['ui/broken.png', 'is not an SVG, PNG, JPEG or WebP image'],
 ])('refuses %s', async (icon, message) => {
   mkdirSync(join(dir, 'ui'))

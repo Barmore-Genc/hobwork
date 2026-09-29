@@ -6,13 +6,13 @@ import type { Host } from '../host.ts'
 import { ProjectError, requireProject } from '../projects.ts'
 import { MAX_ENV_NAME_LENGTH, MAX_HOST_REQUEST_REASON, type SecretStore } from '../secrets.ts'
 
-const project = z.string().describe('Project name, e.g. "filament-tracker"')
+const hob = z.string().describe('Hob name, e.g. "filament-tracker"')
 const envName = z
   .string()
   .max(MAX_ENV_NAME_LENGTH)
-  .describe('Env var name the project sees, e.g. "SPOOLMAN_TOKEN". Handlers read it as ctx.secrets.SPOOLMAN_TOKEN')
+  .describe('Env var name the hob sees, e.g. "SPOOLMAN_TOKEN". Handlers read it as ctx.secrets.SPOOLMAN_TOKEN')
 
-// Agents can see the library and assign secrets to projects. They never see
+// Agents can see the library and assign secrets to hobs. They never see
 // values and cannot create secrets or change their values. They can only ask
 // for hosts, which a person approves: with hosts under an agent's control,
 // assigning a secret would be enough to send its value anywhere.
@@ -29,11 +29,11 @@ export function registerSecretTools(
     'list_secrets',
     {
       description:
-        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, and the projects it is assigned to with the env name each project uses. With a project, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
-      inputSchema: { project: project.optional().describe('Only the secrets assigned to this project') },
+        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, and the hobs it is assigned to with the env name each hob uses. With a hob, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
+      inputSchema: { hob: hob.optional().describe('Only the secrets assigned to this hob') },
       annotations: { readOnlyHint: true },
     },
-    ({ project: name }) => {
+    ({ hob: name }) => {
       if (name !== undefined) {
         requireProject(host, name)
         const assigned = store()
@@ -41,7 +41,7 @@ export function registerSecretTools(
           .map(({ envName: env, secret, hosts }) => ({ envName: env, secret, hosts }))
         const text = assigned.length
           ? JSON.stringify(assigned, null, 2)
-          : `${name} has no secrets assigned. Call list_secrets without a project to see every secret, and assign one with assign_secret.`
+          : `${name} has no secrets assigned. Call list_secrets without a hob to see every secret, and assign one with assign_secret.`
         return { content: [{ type: 'text', text }] }
       }
       const library = store()
@@ -50,9 +50,9 @@ export function registerSecretTools(
           name: secret,
           hosts,
           ...(pendingHostRequest ? { pendingHosts: pendingHostRequest.hosts } : {}),
-          projects: assignments
+          hobs: assignments
             .filter(({ project: p }) => allowsProject(agent.access, p))
-            .map(({ project: p, envName: env }) => ({ project: p, envName: env })),
+            .map(({ project: p, envName: env }) => ({ hob: p, envName: env })),
         }))
       const text = library.length
         ? JSON.stringify(library, null, 2)
@@ -65,14 +65,14 @@ export function registerSecretTools(
     'assign_secret',
     {
       description:
-        "Give a project an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value in request headers to the secret's hosts), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the project log. If the secret does not exist, ask the user to create it in Hobwork. If it has no hosts or lacks one, ask for them with request_secret_hosts.",
+        "Give a hob an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value in request headers to the secret's hosts), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the hob log. If the secret does not exist, ask the user to create it in Hobwork. If it has no hosts or lacks one, ask for them with request_secret_hosts.",
       inputSchema: {
-        project,
+        hob,
         secret: z.string().describe('Secret name as list_secrets shows it, e.g. "Spoolman API key"'),
         env_name: envName,
       },
     },
-    ({ project: name, secret, env_name }) => {
+    ({ hob: name, secret, env_name }) => {
       const assigned = store().assign(name, secret, env_name, { kind: 'agent', id: agent.id, name: agent.name })
       return {
         content: [
@@ -91,13 +91,13 @@ export function registerSecretTools(
     'unassign_secret',
     {
       description:
-        "Take a secret away from a project. Its handlers and workspaces lose the env var and the secret's hosts from their next invocation or bash command. The secret stays in Hobwork.",
-      inputSchema: { project, env_name: envName.describe('Env var name the project uses for the secret') },
+        "Take a secret away from a hob. Its handlers and workspaces lose the env var and the secret's hosts from their next invocation or bash command. The secret stays in Hobwork.",
+      inputSchema: { hob, env_name: envName.describe('Env var name the hob uses for the secret') },
       annotations: { destructiveHint: true },
     },
-    ({ project: name, env_name }) => {
+    ({ hob: name, env_name }) => {
       if (!store().unassign(name, env_name, { kind: 'agent', id: agent.id, name: agent.name })) {
-        throw new ProjectError(`${name} has no secret as ${env_name}. list_secrets with the project shows its secrets`)
+        throw new ProjectError(`${name} has no secret as ${env_name}. list_secrets with the hob shows its secrets`)
       }
       return { content: [{ type: 'text', text: `Unassigned ${env_name} from ${name}.` }] }
     },

@@ -80,12 +80,12 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
     return text
   }
 
-  const p = { project: 'filament', branch: 'runtime' }
+  const p = { hob: 'filament', branch: 'runtime' }
   const api = (path: string, init: RequestInit = {}) =>
     fetch(`${base}/p/filament/api${path}`, { ...init, headers: { authorization: `Bearer ${token}` } })
 
   test('a merged route answers HTTP requests', async () => {
-    await ok('create_project', { name: 'filament' })
+    await ok('create_hob', { name: 'filament' })
     await ok('create_branch', p)
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     config.routes['GET /boom/:id'] = { handler: 'src/boom.ts' }
@@ -208,17 +208,17 @@ export default (async (ctx) => {
   })
 
   test('crons run by hand and on schedule', async () => {
-    const invoked = await ok('invoke', { project: 'filament', kind: 'cron', name: 'tick' })
+    const invoked = await ok('invoke', { hob: 'filament', kind: 'cron', name: 'tick' })
     expect(invoked).toMatch(/tick at \d\d:\d\d by hand/)
 
     await vi.waitFor(
       async () => {
-        const list = await ok('list_invocations', { project: 'filament', kind: 'cron', name: 'tick', status: 'ok' })
+        const list = await ok('list_invocations', { hob: 'filament', kind: 'cron', name: 'tick', status: 'ok' })
         expect(list).toMatch(/cron "tick" v2 ok/)
       },
       { timeout: 75_000, interval: 2000 },
     )
-    const logs = await ok('get_logs', { project: 'filament', source: 'handler' })
+    const logs = await ok('get_logs', { hob: 'filament', source: 'handler' })
     expect(logs).toMatch(/tick at \d\d:\d\d on schedule/)
   })
 
@@ -226,17 +226,17 @@ export default (async (ctx) => {
     const res = await api('/boom/7')
     expect(res.status).toBe(500)
 
-    const list = await ok('list_invocations', { project: 'filament', status: 'error' })
+    const list = await ok('list_invocations', { hob: 'filament', status: 'error' })
     expect(list).toContain('route "GET /boom/:id" v2 error')
     expect(list).toContain('Error: spool 7 exploded')
     const id = Number(/^#(\d+) /.exec(list)?.[1])
-    const logs = await ok('get_logs', { project: 'filament', invocation_id: id })
+    const logs = await ok('get_logs', { hob: 'filament', invocation_id: id })
     expect(logs).toContain('at explode (')
     expect(logs).toContain('about to explode 7')
   })
 
   test('restoring a version without a stored build builds it and deploys it', async () => {
-    const restored = await ok('restore_version', { project: 'filament', version: 1 })
+    const restored = await ok('restore_version', { hob: 'filament', version: 1 })
     expect(restored).toMatch(/^Restored version 1 as version 3/)
     expect(restored).not.toContain('failed')
     expect((await api('/greeting')).status).toBe(200)
@@ -244,7 +244,7 @@ export default (async (ctx) => {
     // The old VM stops after the switch, in the background.
     await vi.waitFor(
       async () => {
-        const events = await ok('get_logs', { project: 'filament', source: 'runtime' })
+        const events = await ok('get_logs', { hob: 'filament', source: 'runtime' })
         expect(events).toContain('Runtime of version 3 started')
         expect(events).toContain('Runtime of version 2 stopped: replaced by version 3')
       },
@@ -253,10 +253,10 @@ export default (async (ctx) => {
   })
 
   test('a branch preview serves its own UI and routes at its origin, and its own webhook', async () => {
-    const b = { project: 'filament', branch: 'preview-ui' }
+    const b = { hob: 'filament', branch: 'preview-ui' }
     await ok('create_branch', b)
     const app = await ok('read_file', { ...b, path: 'ui/App.tsx' })
-    await ok('write_file', { ...b, path: 'ui/App.tsx', content: app.replace("This page is the project's dashboard.", 'This is the branch preview.') })
+    await ok('write_file', { ...b, path: 'ui/App.tsx', content: app.replace("This page is the hob's dashboard.", 'This is the branch preview.') })
     await ok('write_file', {
       ...b,
       path: 'src/greeting-route.ts',
@@ -298,12 +298,12 @@ export default (async (ctx) => ({ pinged: await ctx.request.text() })) satisfies
     expect(JSON.parse(greeting.body)).toEqual({ message: 'Hello from the branch' })
     expect(await (await api('/greeting')).json()).toEqual({ message: expect.stringMatching(/^Good /) })
 
-    const rotated = await ok('rotate_webhook_token', { project: 'filament', webhook: 'ping', branch: 'preview-ui' })
+    const rotated = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'ping', branch: 'preview-ui' })
     const path = /(\/hooks\/\S+)/.exec(rotated)![1]!
     expect(path).toMatch(/^\/hooks\/preview-ui--filament\/ping\//)
     const hook = await fetch(`${base}${path}`, { method: 'POST', body: 'hello' })
     expect(await hook.json()).toEqual({ pinged: 'hello' })
-    const list = await ok('list_invocations', { project: 'filament', branch: 'preview-ui' })
+    const list = await ok('list_invocations', { hob: 'filament', branch: 'preview-ui' })
     expect(list).toContain('webhook "ping" branch preview-ui ok')
     expect(list).toContain('route "GET /greeting" branch preview-ui ok')
   })

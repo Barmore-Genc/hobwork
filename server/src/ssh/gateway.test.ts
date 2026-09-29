@@ -139,10 +139,10 @@ describe('parseTarget', () => {
   })
 
   test('rejects anything else', () => {
-    expect(() => parseTarget('filament')).toThrow('<project>/<branch>')
-    expect(() => parseTarget('Filament/spools')).toThrow('Invalid project name')
+    expect(() => parseTarget('filament')).toThrow('<hob>/<branch>')
+    expect(() => parseTarget('Filament/spools')).toThrow('Invalid hob name')
     expect(() => parseTarget('filament/../x')).toThrow('Invalid branch name')
-    expect(() => parseTarget('/spools')).toThrow('<project>/<branch>')
+    expect(() => parseTarget('/spools')).toThrow('<hob>/<branch>')
   })
 })
 
@@ -176,7 +176,7 @@ test('main, bad user names and missing branches are refused with a message', asy
   expect(main.stderr).toContain('main is the deployed version')
   const bad = await run('filament', 'echo hi')
   expect(bad.code).toBe(1)
-  expect(bad.stderr).toContain('Connect as <project>/<branch>')
+  expect(bad.stderr).toContain('Connect as <hob>/<branch>')
   const missing = await run('filament/nope', 'echo hi')
   expect(missing.code).toBe(1)
   expect(missing.stderr).toContain('Branch "nope" does not exist in filament')

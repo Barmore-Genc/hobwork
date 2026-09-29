@@ -53,7 +53,7 @@ async function fails(name: string, args: Record<string, unknown>): Promise<strin
   return text
 }
 
-const p = { project: 'filament' }
+const p = { hob: 'filament' }
 
 async function commitOnBranch(branch: string, path: string, content: string): Promise<void> {
   await ok('write_file', { ...p, branch, path, content })
@@ -98,7 +98,7 @@ test('merges, reports pipeline status, lists versions and restores', async () =>
   const versions = JSON.parse(await ok('list_versions', p))
   expect(versions.map((v: { number: number; summary: string }) => [v.number, v.summary])).toEqual([
     [2, 'Add spools'],
-    [1, 'Create project from template'],
+    [1, 'Create hob from template'],
   ])
   expect(versions[0]).toMatchObject({ agent: 'claude', pipelineRunId: 1 })
 

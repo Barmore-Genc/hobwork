@@ -74,7 +74,7 @@ test('a backup stages the data dir, snapshots it and records the run', async () 
   expect(calls[4]!.args[2]).toBe(stagingDir(dataDir))
   expect(calls[4]!.staged).toEqual(expect.arrayContaining(['hobwork.db', 'repos/filament.git/HEAD']))
   expect(existsSync(stagingDir(dataDir))).toBe(false)
-  expect(messages).toEqual(['info: Backup snap2 done: 1 projects, 1234 bytes, 1500000 bytes uploaded'])
+  expect(messages).toEqual(['info: Backup snap2 done: 1 hobs, 1234 bytes, 1500000 bytes uploaded'])
 
   await backups.run('manual')
   expect(fake.calls().slice(6).map((c) => c.args.slice(0, 2).join(' '))).toEqual(['blob stats', 'snapshot create', 'blob stats'])

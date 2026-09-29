@@ -45,7 +45,7 @@ export function createTriggerRegistry(options: {
   const queues = new Map<string, Promise<unknown>>()
 
   function fire(project: string, name: string, variables: TriggerVariables) {
-    const report = (err: unknown) => logger.error(`Invoking trigger "${name}" of project "${project}" failed`, err)
+    const report = (err: unknown) => logger.error(`Invoking trigger "${name}" of hob "${project}" failed`, err)
     try {
       const result = invoke(project, name, variables)
       if (result instanceof Promise) result.catch(report)
@@ -77,7 +77,7 @@ export function createTriggerRegistry(options: {
       try {
         const unsubscribe = await ha.subscribeTrigger(trigger, (variables) => fire(project, name, variables), {
           onError: (err) =>
-            logger.error(`Home Assistant refused trigger "${name}" of project "${project}": ${err.message}`),
+            logger.error(`Home Assistant refused trigger "${name}" of hob "${project}": ${err.message}`),
         })
         current.set(name, { key, unsubscribe })
         results.push({ name, status: ha.status === 'connected' ? 'subscribed' : 'pending' })

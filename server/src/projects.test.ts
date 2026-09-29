@@ -30,7 +30,7 @@ test.each(['filament', 'sleep-alarms', 'ha2', '3d-printer'])('accepts name %s', 
 test.each(['', 'Filament', 'sleep_alarms', '-a', 'a-', 'a--b', 'a.b', 'a/b', 'x'.repeat(41)])(
   'rejects name %j',
   (name) => {
-    expect(() => validateProjectName(name)).toThrow('Invalid project name')
+    expect(() => validateProjectName(name)).toThrow('Invalid hob name')
   },
 )
 
@@ -41,7 +41,7 @@ test('creates a bare repo with the template committed on main', async () => {
   const repo = repoPath(host, 'filament')
   expect(existsSync(join(repo, 'hooks', 'pre-receive'))).toBe(true)
   expect(await git(['--git-dir', repo, 'log', '--format=%an|%cn|%s', 'main'])).toBe(
-    'Hobwork|Hobwork|Create project from template\n',
+    'Hobwork|Hobwork|Create hob from template\n',
   )
   const files = (await git(['--git-dir', repo, 'ls-tree', '-r', '--name-only', 'main'])).split('\n')
   expect(files).toEqual(
@@ -79,7 +79,7 @@ test('rejects duplicates without touching the existing repo', async () => {
 })
 
 test('rejects invalid names before creating anything', async () => {
-  await expect(createProject(host, 'Bad Name')).rejects.toThrow('Invalid project name')
+  await expect(createProject(host, 'Bad Name')).rejects.toThrow('Invalid hob name')
   expect(listProjects(host)).toEqual([])
 })
 

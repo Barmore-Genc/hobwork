@@ -68,8 +68,8 @@ export type JsonRequest<T> = ChatRequest & {
 }
 
 // `code` is OpenRouter's error code, or one of these:
-// - `hobwork_model_not_allowed` (403): the project may not use the model.
-// - `hobwork_rate_limit` and `hobwork_spend_limit` (429): the project reached a
+// - `hobwork_model_not_allowed` (403): the hob may not use the model.
+// - `hobwork_rate_limit` and `hobwork_spend_limit` (429): the hob reached a
 //   limit people set in Hobwork. `metadata.retry_after_seconds` says when it may try again.
 // - `timeout`, `aborted`: the call's timeout ran out or its signal aborted it.
 // - `missing_secret`, `invalid_json`, `invalid_output`.
@@ -170,7 +170,7 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
     const apiKey = options.apiKey ?? ctx.secrets[OPENROUTER_SECRET]
     if (!apiKey) {
       throw new OpenRouterError(
-        `The project has no ${OPENROUTER_SECRET} secret. Assign an OpenRouter key to it as ${OPENROUTER_SECRET} with assign_secret, or ask the user to create one in Hobwork that may be sent to openrouter.ai`,
+        `The hob has no ${OPENROUTER_SECRET} secret. Assign an OpenRouter key to it as ${OPENROUTER_SECRET} with assign_secret, or ask the user to create one in Hobwork that may be sent to openrouter.ai`,
         undefined,
         'missing_secret',
       )

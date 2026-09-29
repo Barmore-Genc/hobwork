@@ -29,7 +29,7 @@ export function registerSshKeyTools(
   { host, agent, ssh }: { host: Host; agent: AuthenticatedAgent; ssh?: SshAddress },
 ) {
   const connect = ssh
-    ? `ssh -p ${ssh.port} <project>/<branch>@${ssh.host}`
+    ? `ssh -p ${ssh.port} <hob>/<branch>@${ssh.host}`
     : 'the SSH gateway, which is turned off on this Hobwork host'
 
   server.registerTool(

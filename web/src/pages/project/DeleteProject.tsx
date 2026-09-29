@@ -25,7 +25,7 @@ export function DeleteProjectSection({ name }: { name: string }) {
   return (
     <section className="mt-16 border-t border-border pt-8" aria-labelledby="delete-project">
       <h2 id="delete-project" className="text-xl font-semibold">
-        Delete project
+        Delete hob
       </h2>
       <p className="mt-2 max-w-prose text-muted">
         Removes {name} with its versions, saved data and run history.
@@ -45,7 +45,7 @@ export function DeleteProjectSection({ name }: { name: string }) {
       <ConfirmDialog
         open={open}
         title={`Delete ${name}?`}
-        confirmLabel="Delete project"
+        confirmLabel="Delete hob"
         variant="danger"
         busy={busy}
         confirmDisabled={typed !== name}
@@ -56,12 +56,12 @@ export function DeleteProjectSection({ name }: { name: string }) {
         <ul className="list-disc space-y-1 pl-5">
           <li>Its schedules, webhooks and Home Assistant triggers stop right away, and its app goes offline.</li>
           <li>Its code, versions, saved data, run history and log are removed from Hobwork.</li>
-          <li>Secrets it uses stay on the Secrets page for your other projects.</li>
+          <li>Secrets it uses stay on the Secrets page for your other hobs.</li>
         </ul>
         <p>
           For 7 days you can restore it from{' '}
           <Link to="/deleted" className="font-semibold text-accent-fg underline underline-offset-4">
-            Deleted projects
+            Deleted hobs
           </Link>
           , with its code, versions and saved data.
         </p>

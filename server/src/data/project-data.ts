@@ -145,7 +145,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
     const step = Math.floor(fileSize(dbPath(project)) / sizeWarningBytes)
     if (step > s.sizeWarnedStep) {
       s.sizeWarnedStep = step
-      log(project, 'warn', `The project DB is ${formatBytes(fileSize(dbPath(project)))}, over ${formatBytes(step * sizeWarningBytes)}. Delete old rows or store less`)
+      log(project, 'warn', `The hob DB is ${formatBytes(fileSize(dbPath(project)))}, over ${formatBytes(step * sizeWarningBytes)}. Delete old rows or store less`)
     }
   }
 
@@ -351,7 +351,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       return {
         sizeBytes,
         ...(sizeBytes >= sizeWarningBytes
-          ? { sizeWarning: `The project DB is ${formatBytes(sizeBytes)}, over the ${formatBytes(sizeWarningBytes)} warning size` }
+          ? { sizeWarning: `The hob DB is ${formatBytes(sizeBytes)}, over the ${formatBytes(sizeWarningBytes)} warning size` }
           : {}),
         slowQueries: {
           count: s.slowCount,

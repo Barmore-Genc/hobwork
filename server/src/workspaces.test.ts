@@ -78,7 +78,7 @@ test('checks out a branch, commits, and shows diff and log', async () => {
 
   const commits = await log(host, 'filament', 'spools')
   expect(commits[0]).toMatchObject({ sha, author: 'Agent', subject: 'Add spools' })
-  expect(commits[1]?.subject).toBe('Create project from template')
+  expect(commits[1]?.subject).toBe('Create hob from template')
   expect(await diffBranch(host, 'filament', 'spools')).toContain('+export const spools = 3')
   expect(await log(host, 'filament')).toHaveLength(1)
 })

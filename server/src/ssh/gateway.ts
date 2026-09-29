@@ -20,7 +20,7 @@ export type SshTarget = { project: string; branch: string }
 export function parseTarget(username: string): SshTarget {
   const match = /^([^/+]+)[/+](.+)$/.exec(username)
   if (!match) {
-    throw new ProjectError(`Connect as <project>/<branch>, e.g. ssh filament/add-spools@<host>. Got "${username}"`)
+    throw new ProjectError(`Connect as <hob>/<branch>, e.g. ssh filament/add-spools@<host>. Got "${username}"`)
   }
   const [, project = '', branch = ''] = match
   validateProjectName(project)

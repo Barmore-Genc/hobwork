@@ -20,12 +20,12 @@ function isErrno(err: unknown, code: string): boolean {
 export function checkoutPath(root: string, path: string): CheckoutPath {
   if (path.includes('\0')) throw new ProjectError('Path must not contain NUL characters')
   if (isAbsolute(path)) {
-    throw new ProjectError(`Path "${path}" must be relative to the project root, e.g. "src/index.ts"`)
+    throw new ProjectError(`Path "${path}" must be relative to the hob root, e.g. "src/index.ts"`)
   }
   const abs = resolve(root, path)
   const rel = relative(root, abs)
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new ProjectError(`Path "${path}" is outside the project`)
+    throw new ProjectError(`Path "${path}" is outside the hob`)
   }
   if (rel.split(sep).some((part) => part === '.git')) {
     throw new ProjectError(`Path "${path}" is inside a .git directory`)
@@ -36,7 +36,7 @@ export function checkoutPath(root: string, path: string): CheckoutPath {
 async function assertInside(root: string, abs: string, path: string): Promise<string> {
   const [realRoot, real] = await Promise.all([realpath(root), realpath(abs)])
   if (real !== realRoot && !real.startsWith(realRoot + sep)) {
-    throw new ProjectError(`Path "${path}" resolves outside the project through a symlink`)
+    throw new ProjectError(`Path "${path}" resolves outside the hob through a symlink`)
   }
   return real
 }

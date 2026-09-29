@@ -48,8 +48,8 @@ export function handleGit(
       res,
       404,
       renamed && allowsProject(agent.access, renamed.name)
-        ? `Project "${project}" was renamed to "${renamed.name}". Change the remote URL to ${GIT_PREFIX}${renamed.name}.git`
-        : `Project "${project}" does not exist`,
+        ? `Hob "${project}" was renamed to "${renamed.name}". Change the remote URL to ${GIT_PREFIX}${renamed.name}.git`
+        : `Hob "${project}" does not exist`,
     )
   }
   if (!allowsProject(agent.access, project)) return plain(res, 403, `This key has no access to ${project}`)

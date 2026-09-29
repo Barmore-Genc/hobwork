@@ -91,11 +91,11 @@ function SettingsForm({ name, current, onSaved }: { name: string; current: Proje
         What {name} may use
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Applies to the running project, its previews and agents trying it out.{' '}
+        Applies to the running hob, its previews and agents trying it out.{' '}
         <Link to="/settings" className="underline hover:text-fg">
           Settings
         </Link>{' '}
-        has the limits for every project.
+        has the limits for every hob.
       </p>
       <form onSubmit={save} className="mt-6 space-y-6 rounded-lg border border-border bg-surface p-5 sm:p-6">
         <div>
@@ -123,7 +123,7 @@ function SettingsForm({ name, current, onSaved }: { name: string; current: Proje
             </label>
             <label className="flex items-start gap-3">
               <input type="radio" name="project-ai-limits" checked={own} onChange={() => setOwn(true)} className="mt-1.5 accent-accent" />
-              <span>Limits for this project</span>
+              <span>Limits for this hob</span>
             </label>
           </div>
           {own && (
@@ -144,7 +144,7 @@ function SettingsForm({ name, current, onSaved }: { name: string; current: Proje
           )}
         </div>
         {error && <Notice tone="error">{error}</Notice>}
-        {saved && !error && <Notice tone="success">Saved. The project uses the new settings on its next request.</Notice>}
+        {saved && !error && <Notice tone="success">Saved. The hob uses the new settings on its next request.</Notice>}
       </form>
     </section>
   )

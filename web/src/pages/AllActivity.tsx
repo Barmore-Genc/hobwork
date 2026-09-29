@@ -230,7 +230,7 @@ export function AllActivityPage() {
     <div>
       <PageHeading>Activity</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
-        What your projects did, newest first. Problems are failed runs, blocked requests, rollbacks and data warnings.
+        What your hobs did, newest first. Problems are failed runs, blocked requests, rollbacks and data warnings.
       </p>
 
       <nav aria-label="Activity views" className="mt-8 overflow-x-auto border-b border-border">
@@ -266,7 +266,7 @@ export function AllActivityPage() {
 
       <div className="mt-6 flex flex-wrap gap-3">
         <label className="sr-only" htmlFor="activity-project">
-          Project
+          Hob
         </label>
         <select
           id="activity-project"
@@ -274,7 +274,7 @@ export function AllActivityPage() {
           value={filter.project}
           onChange={(e) => change({ project: e.target.value })}
         >
-          <option value="">All projects</option>
+          <option value="">All hobs</option>
           {projects?.map((project) => (
             <option key={project.name} value={project.name}>
               {project.name}

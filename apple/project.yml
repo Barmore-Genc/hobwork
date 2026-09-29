@@ -84,9 +84,9 @@ targets:
           - CFBundleURLName: dev.bgenc.hobwork
             CFBundleURLSchemes: [hobwork]
         NSSupportsLiveActivities: true
-        NSAlarmKitUsageDescription: Projects on your Hobwork host can set alarms and timers on this iPhone.
-        NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your projects.
-        NSHealthShareUsageDescription: Projects on your Hobwork host can read the Health data you choose to share.
+        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this iPhone.
+        NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your hobs.
+        NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
     dependencies:
       - target: HobworkNotificationService
       - target: HobworkDeviceActivityMonitor

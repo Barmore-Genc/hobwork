@@ -5,12 +5,12 @@ import { openHostDb } from '../db.ts'
 import { createSecretStore, loadSecretKey, type Actor } from '../secrets.ts'
 
 const USAGE = `Usage:
-  pnpm --filter @hobwork/server secret list [<project>]
+  pnpm --filter @hobwork/server secret list [<hob>]
   pnpm --filter @hobwork/server secret create "<name>" --host <host> [--host <host>...]
   pnpm --filter @hobwork/server secret update "<name>" [--host <host>...]
   pnpm --filter @hobwork/server secret delete "<name>"
-  pnpm --filter @hobwork/server secret assign <project> "<name>" <ENV_NAME>
-  pnpm --filter @hobwork/server secret unassign <project> <ENV_NAME>
+  pnpm --filter @hobwork/server secret assign <hob> "<name>" <ENV_NAME>
+  pnpm --filter @hobwork/server secret unassign <hob> <ENV_NAME>
 
 create and update read the value from stdin, e.g.
   printf %s "$KEY" | pnpm ... secret create "Spoolman API key" --host api.example.com
@@ -60,7 +60,7 @@ try {
     }
   } else if (command === 'create') {
     const secret = store.create({ name: arg(0), value: await readStdin(), hosts: values.host ?? [] }, HOST)
-    console.log(`Created "${secret.name}". Assign it to a project with: secret assign <project> "${secret.name}" <ENV_NAME>`)
+    console.log(`Created "${secret.name}". Assign it to a hob with: secret assign <hob> "${secret.name}" <ENV_NAME>`)
   } else if (command === 'update') {
     const value = await readStdin()
     const secret = store.update(arg(0), { value: value || undefined, hosts: values.host }, HOST)

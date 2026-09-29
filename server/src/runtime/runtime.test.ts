@@ -375,8 +375,8 @@ test('deploy syncs Home Assistant triggers and logs the ones that fail', async (
 })
 
 test('trigger registry messages go to the project log', () => {
-  triggerRegistryLogger(host).error('Home Assistant refused trigger "button" of project "filament": invalid')
-  triggerRegistryLogger(host).error('Invoking trigger "a" of project "missing" failed')
+  triggerRegistryLogger(host).error('Home Assistant refused trigger "button" of hob "filament": invalid')
+  triggerRegistryLogger(host).error('Invoking trigger "a" of hob "missing" failed')
   const lines = queryLogs(host, { project: 'filament', limit: 10 })
   expect(lines).toEqual([expect.objectContaining({ event: 'trigger', level: 'error' })])
   expect(lines[0]?.message).toContain('refused trigger "button"')

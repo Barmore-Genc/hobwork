@@ -113,7 +113,7 @@ function RequestForm({ initial }: { initial: HostRequest }) {
         {request.decision === null ? `Send ${request.secret.name} to these sites?` : `Sites for ${request.secret.name}`}
       </h1>
       <p className="mt-3 text-muted">
-        {agent} asked <span title={exactTime(request.createdAt)}>{timeAgo(request.createdAt)}</span>. Projects send
+        {agent} asked <span title={exactTime(request.createdAt)}>{timeAgo(request.createdAt)}</span>. Hobs send
         the secret only to the sites you approve.
       </p>
 

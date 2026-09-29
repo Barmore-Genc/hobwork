@@ -1,6 +1,6 @@
 # Hobwork for iOS and macOS
 
-SwiftUI app for iOS 26 and macOS 26 (`dev.bgenc.hobwork`). It pairs with a Hobwork host, shows the web UI and project apps in a web view, keeps the device WebSocket open, shows notifications from projects and runs their device commands: alarms and timers, Screen Time, Focus, NFC tags and Health on iOS, Focus on macOS. The protocol is in "Device protocol" in `docs/architecture.md`.
+SwiftUI app for iOS 26 and macOS 26 (`dev.bgenc.hobwork`). It pairs with a Hobwork host, shows the web UI and hob apps in a web view, keeps the device WebSocket open, shows notifications from hobs and runs their device commands: alarms and timers, Screen Time, Focus, NFC tags and Health on iOS, Focus on macOS. The protocol is in "Device protocol" in `docs/architecture.md`.
 
 Needs Xcode 26 or newer, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and [just](https://github.com/casey/just).
 
@@ -127,6 +127,6 @@ just push                     # push/actions.apns to the booted simulator
 just push path/to/other.apns
 ```
 
-`push/actions.apns` has the payload the host sends: title and body in `aps.alert`, `category: "hobwork.<id>"` with `mutable-content: 1`, and `hobwork: { id, project, actions }`. Long-press the notification to see the actions. `push/timer.apns` is a command push (the extension runs it once the app is paired) and `push/nfc.apns` a prompt push for an NFC read that runs when tapped. Tapping one sends `{ capability: "notifications", name: "action", data: { id, action } }` to the host, over the socket when connected and with `POST /api/devices/events` otherwise. Tapping the notification itself opens the project in the app.
+`push/actions.apns` has the payload the host sends: title and body in `aps.alert`, `category: "hobwork.<id>"` with `mutable-content: 1`, and `hobwork: { id, project, actions }`. Long-press the notification to see the actions. `push/timer.apns` is a command push (the extension runs it once the app is paired) and `push/nfc.apns` a prompt push for an NFC read that runs when tapped. Tapping one sends `{ capability: "notifications", name: "action", data: { id, action } }` to the host, over the socket when connected and with `POST /api/devices/events` otherwise. Tapping the notification itself opens the hob in the app.
 
 The macOS app has no simulator; pushes to it go through APNs. For real pushes the host needs an APNs key (`HOBWORK_APNS_KEY_FILE`, `HOBWORK_APNS_KEY_ID`, `HOBWORK_APNS_TEAM_ID`). Debug builds register with the sandbox environment, release builds with production.

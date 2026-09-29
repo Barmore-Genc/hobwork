@@ -43,7 +43,7 @@ export function ProjectLayout({
   return (
     <div>
       <Link to="/" className="text-sm text-muted hover:text-fg">
-        All projects
+        All hobs
       </Link>
       <div className="mt-3">
         <PageHeading

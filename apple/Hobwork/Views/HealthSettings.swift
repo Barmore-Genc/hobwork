@@ -22,7 +22,7 @@ struct HealthSection: View {
         } header: {
             Text("Health")
         } footer: {
-            Text("Projects can read the types you share and get new samples as they arrive. iOS asks which data Hobwork may read. Health data can't be read while this iPhone is locked.")
+            Text("Hobs can read the types you share and get new samples as they arrive. iOS asks which data Hobwork may read. Health data can't be read while this iPhone is locked.")
         }
         .task { shared = HealthSharing.file.read().types }
     }

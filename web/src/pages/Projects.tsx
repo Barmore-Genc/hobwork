@@ -11,7 +11,7 @@ export function ProjectsPage() {
 
   return (
     <div>
-      <PageHeading>Projects</PageHeading>
+      <PageHeading>Hobs</PageHeading>
       <p className="mt-3 max-w-prose text-muted">Everything your agents have built for the house, and the version each one is running.</p>
 
       <div className="mt-10 space-y-6">
@@ -19,7 +19,7 @@ export function ProjectsPage() {
           <Notice tone="success">
             Deleted {deleted}. You can restore it from{' '}
             <Link to="/deleted" className="font-semibold underline underline-offset-4">
-              Deleted projects
+              Deleted hobs
             </Link>{' '}
             for 7 days.
           </Notice>
@@ -27,9 +27,9 @@ export function ProjectsPage() {
         {error && <Notice tone="error">{error}</Notice>}
         {projects?.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-6 py-10">
-            <h2 className="text-xl font-semibold">No projects yet</h2>
+            <h2 className="text-xl font-semibold">No hobs yet</h2>
             <p className="mt-2 max-w-prose text-muted">
-              Projects are made by agents. Give an agent access on the{' '}
+              Hobs are made by agents. Give an agent access on the{' '}
               <Link to="/agents" className="font-semibold text-accent-fg underline underline-offset-4">
                 Agent access
               </Link>{' '}
@@ -72,7 +72,7 @@ export function ProjectsPage() {
         )}
         <p>
           <Link to="/deleted" className="text-sm text-muted underline underline-offset-4 hover:text-fg">
-            Deleted projects
+            Deleted hobs
           </Link>
         </p>
       </div>

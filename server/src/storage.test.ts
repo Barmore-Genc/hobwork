@@ -140,17 +140,17 @@ test('the projects API and MCP tools show storage use', async () => {
   }
 })
 
-test('list_projects and get_project show storage use', async () => {
+test('list_hobs and get_hob show storage use', async () => {
   const mcp = await startTestMcp({ storage: (h) => createStorageUsage(h) })
   try {
-    await mcp.call('create_project', { name: 'filament' })
-    const first = JSON.parse(textOf(await mcp.call('list_projects')))
+    await mcp.call('create_hob', { name: 'filament' })
+    const first = JSON.parse(textOf(await mcp.call('list_hobs')))
     expect(first).toEqual([expect.objectContaining({ name: 'filament', storage: null })])
     await vi.waitFor(async () => {
-      const [listed] = JSON.parse(textOf(await mcp.call('list_projects')))
+      const [listed] = JSON.parse(textOf(await mcp.call('list_hobs')))
       expect(listed.storage.repo).toBeGreaterThan(0)
     })
-    const detail = JSON.parse(textOf(await mcp.call('get_project', { project: 'filament' })))
+    const detail = JSON.parse(textOf(await mcp.call('get_hob', { hob: 'filament' })))
     expect(detail.storage).toMatchObject({ database: 0, repo: expect.any(Number), total: expect.any(Number) })
   } finally {
     await mcp.close()

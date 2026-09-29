@@ -7,12 +7,12 @@ export function accessReady(access: Access): boolean {
 }
 
 function list(names: string[]): string {
-  if (names.length <= 1) return names[0] ?? 'no projects'
+  if (names.length <= 1) return names[0] ?? 'no hobs'
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 }
 
 export function projectsText(access: Access): string {
-  return access.projects === null ? 'all projects' : list(access.projects)
+  return access.projects === null ? 'all hobs' : list(access.projects)
 }
 
 export function accessText(access: Access): string {

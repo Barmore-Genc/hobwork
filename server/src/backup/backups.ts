@@ -151,7 +151,7 @@ export function createBackups(
           id,
         )
       logger.info(
-        `Backup ${snapshot.id} done: ${staged.projects.length} projects, ${snapshot.totalBytes} bytes, ${snapshot.uploadedBytes ?? 'unknown'} bytes uploaded`,
+        `Backup ${snapshot.id} done: ${staged.projects.length} hobs, ${snapshot.totalBytes} bytes, ${snapshot.uploadedBytes ?? 'unknown'} bytes uploaded`,
       )
     } catch (err) {
       const message = (err as Error).message

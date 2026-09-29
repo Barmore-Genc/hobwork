@@ -128,7 +128,7 @@ function Runs({ project }: { project: string }) {
   return (
     <section className="mt-8" aria-label="Runs">
       <p className="max-w-prose text-muted">
-        Every time the project runs, because of a schedule, a request, a webhook or something at home.
+        Every time the hob runs, because of a schedule, a request, a webhook or something at home.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
         {branchNames.length > 0 && (
@@ -202,7 +202,7 @@ function Runs({ project }: { project: string }) {
       <div className="mt-6">
         {error && <Notice tone="error">{error}</Notice>}
         {runs?.length === 0 && (
-          <p className="text-muted">{filtered ? 'No runs match these filters.' : 'This project has not run yet.'}</p>
+          <p className="text-muted">{filtered ? 'No runs match these filters.' : 'This hob has not run yet.'}</p>
         )}
         {runs && runs.length > 0 && (
           <ul className="divide-y divide-border border-y border-border">

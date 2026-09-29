@@ -145,7 +145,7 @@ export function createRuntimeHttp(
     }
     const authorized = options.authorizeRoute(req, project)
     if (authorized === 'forbidden') {
-      return sendJson(res, 403, { error: 'This agent token has no access to this project, or can only send GET requests' })
+      return sendJson(res, 403, { error: 'This agent token has no access to this hob, or can only send GET requests' })
     }
     if (authorized === 'unauthenticated') {
       return sendJson(res, 401, { error: 'Send an agent token as "Authorization: Bearer <token>"' }, {

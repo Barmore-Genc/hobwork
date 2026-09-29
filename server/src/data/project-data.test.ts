@@ -160,7 +160,7 @@ test('slow queries and DB size show up in the log and the status', async () => {
   const events = queryLogs(host, { project: 'filament', limit: 20 }).filter((l) => l.event === 'db')
   // The same statement is logged once; the unknown invocation is dropped.
   expect(events.filter((l) => l.message.startsWith('Slow query'))).toEqual([expect.objectContaining({ invocationId: null, level: 'warn' })])
-  expect(events.some((l) => l.message.startsWith('The project DB is'))).toBe(true)
+  expect(events.some((l) => l.message.startsWith('The hob DB is'))).toBe(true)
 })
 
 test('a query that runs too long is abandoned and the DB keeps working', async () => {

@@ -34,9 +34,9 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NFCReaderUsageDescription</key>
-	<string>Hobwork reads and writes NFC tags that run your projects.</string>
+	<string>Hobwork reads and writes NFC tags that run your hobs.</string>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Projects on your Hobwork host can set alarms and timers on this iPhone.</string>
+	<string>Hobs on your Hobwork host can set alarms and timers on this iPhone.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -53,7 +53,7 @@
 		</dict>
 	</dict>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Projects on your Hobwork host can read the Health data you choose to share.</string>
+	<string>Hobs on your Hobwork host can read the Health data you choose to share.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 </dict>

@@ -1,13 +1,13 @@
-# Working on this project
+# Working on this hob
 
-This is a Hobwork project: handlers (routes, crons, webhooks, triggers) and a dashboard. Change it on a branch; `merge` tests, merges and deploys it.
+This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) and a dashboard. Change it on a branch; `merge` tests, merges and deploys it.
 
 ## Layout
 
 - `hobwork.json`: entry points, `egress` hosts and settings, with comments allowed. Only what is declared here runs. `@hobwork/sdk/hobwork.schema.json` describes every field.
-- Project icon: set `icon` in hobwork.json (emoji or image path).
+- Hob icon: set `icon` in hobwork.json (emoji or image path).
 - `src/`: handlers. Each default-exports a function typed `Handler` (`RequestHandler` for routes and webhooks) from `@hobwork/sdk`. It gets `ctx`: `request`, `params`, `payload`, `invocation`, `fetch`, `log`, `db`, `secrets`, `ha`, `device(name)`, `devices()`.
-- `ui/`, `index.html`: the dashboard (React + Tailwind) at the project's app origin, also shown in the Hobwork app. Call routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`). Style with theme utilities (`bg-bg`, `bg-surface`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-danger`, ...), not fixed colors or `dark:`. `/_hobwork/` is reserved.
+- `ui/`, `index.html`: the dashboard (React + Tailwind) at the hob's app origin, also shown in the Hobwork app. Call routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`). Style with theme utilities (`bg-bg`, `bg-surface`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-danger`, ...), not fixed colors or `dark:`. `/_hobwork/` is reserved.
 - `migrations/`: `0001_name.sql`, ..., applied in order on deploy.
 - `tests/`: Vitest. Test files share one module cache; mocks, globals and env vars reset after each test.
 - `package.json`: extra npm packages only. Platform packages, `@hobwork/sdk` and `@hobwork/theme` come with the VM.
@@ -18,7 +18,7 @@ This is a Hobwork project: handlers (routes, crons, webhooks, triggers) and a da
 - Crons use 5-field syntax in the host's time zone. Webhooks are called at a secret URL from `rotate_webhook_token`.
 - Handlers work like AWS Lambda functions: nothing in memory survives between invocations, and there are no servers, timers or background loops. Keep state in `ctx.db`, use a cron for recurring work.
 - `ctx.fetch` only reaches hosts in `egress` and the hosts of assigned secrets. Blocked requests get a 403 and an `egress-blocked` log line. Workspace changes to either apply from the next `bash` command.
-- Delete the greeting examples once the project has its own handlers.
+- Delete the greeting examples once the hob has its own handlers.
 
 ## Data
 
@@ -49,14 +49,14 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 - `screenTime`: block app sets the person made in the app, by name: `sets()`, `block({ set, until })`, `unblock`, `schedule({ name, set, start, end, days })`, `limit({ name, set, minutes })`, `status()`.
 - `focus.status()`, `nfc.write({ text })` (a Hobwork tag) or `nfc.write({ url, text })` (any http/https/mailto/tel/sms link) / `nfc.read()` (the person taps a notification and holds the phone to a tag; waits up to 2 minutes), `health.query({ type, from, to })`.
 - Calls other than `notifications.send` throw `DeviceError` `timeout` after 30 s; the device may still run them within 10 minutes, and the result goes to the logs.
-- Triggers: `{ "device": { "capability": "notifications", "event": "action" } }`, `focus`/`changed`, `nfc`/`scanned` (tags this project wrote; with `"url": "<prefix>"` also other tags whose link starts with it), `health`/`samples`, optionally with `"device": "<name>"`. The event is `ctx.payload`.
+- Triggers: `{ "device": { "capability": "notifications", "event": "action" } }`, `focus`/`changed`, `nfc`/`scanned` (tags this hob wrote; with `"url": "<prefix>"` also other tags whose link starts with it), `health`/`samples`, optionally with `"device": "<name>"`. The event is `ctx.payload`.
 - Only deployed handlers use devices; tests fake them with `createTestContext({ device: () => ({ alarms: { set } }) })`. Try with `invoke` after `merge`.
 
 ## LLMs
 
 `openrouter(ctx)` from `@hobwork/sdk` has `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Both take `{ timeout, signal }` as a second argument (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
 
-People limit which models a project may use and how many requests and dollars it may spend; `get_project` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_model_not_allowed` (pick an allowed model), or `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the project's AI page in Hobwork.
+People limit which models a hob may use and how many requests and dollars it may spend; `get_hob` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_model_not_allowed` (pick an allowed model), or `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the hob's AI page in Hobwork.
 
 ## Workflow
 
@@ -65,6 +65,6 @@ People limit which models a project may use and how many requests and dollars it
 3. Commit, then `merge`. It checks, builds, squash-merges and deploys, or returns the failing output.
 4. Confirm with `invoke`, `list_invocations` and `get_logs`. Debug from logs, do not guess. A deploy that fails completely is reverted (`auto-revert` in the logs).
 
-Over SSH (`ssh <project>/<branch>@<host>`), use `hobwork status|diff|commit|merge|logs|invocations`. The workspace has no git directory.
+Over SSH (`ssh <hob>/<branch>@<host>`), use `hobwork status|diff|commit|merge|logs|invocations`. The workspace has no git directory.
 
 Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add others with `pnpm add` only when none of them does the job.

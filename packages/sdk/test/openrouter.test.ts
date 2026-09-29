@@ -158,7 +158,7 @@ test('the answer may start with whitespace', async () => {
 test('explains a missing secret and accepts another one', async () => {
   const { fetch, sent } = fakeFetch({ body: completion('hi') })
   await expect(openrouter(createTestContext({ fetch })).chat({ model: 'm', messages })).rejects.toThrow(
-    'The project has no OPENROUTER_API_KEY secret',
+    'The hob has no OPENROUTER_API_KEY secret',
   )
   await openrouter(createTestContext({ fetch }), { apiKey: 'GONDOLIN_SECRET_other' }).chat({ model: 'm', messages })
   expect(sent[0]?.headers.authorization).toBe('Bearer GONDOLIN_SECRET_other')
@@ -194,7 +194,7 @@ test('Hobwork limits come back with their own codes', async () => {
     body: {
       error: {
         code: 'hobwork_rate_limit',
-        message: 'This project sent 20 requests to OpenRouter in the last minute, and Hobwork allows 20. Try again in 12 seconds.',
+        message: 'This hob sent 20 requests to OpenRouter in the last minute, and Hobwork allows 20. Try again in 12 seconds.',
         metadata: { limit: 'requestsPerMinute', retry_after_seconds: 12 },
       },
     },

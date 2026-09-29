@@ -2,17 +2,17 @@
 
 ## Warm VM pool
 
-Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start takes an exec instead of a boot. Boot is about 0.7s on `colossus` and 0.5s on the Mac; a running VM answers a command in a few ms. Each spare costs about 175MB of host RSS. The spare has to be configured for the project after boot (mounts, env, egress allowlist, secrets), so the `Sandbox` interface needs a way to apply these to a running VM, or the pool holds VMs per project that is likely to start soon.
+Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start takes an exec instead of a boot. Boot is about 0.7s on `colossus` and 0.5s on the Mac; a running VM answers a command in a few ms. Each spare costs about 175MB of host RSS. The spare has to be configured for the hob after boot (mounts, env, egress allowlist, secrets), so the `Sandbox` interface needs a way to apply these to a running VM, or the pool holds VMs per hob that is likely to start soon.
 
 Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in the image (no debug output, parallel `modprobe`, no `update-ca-certificates` at boot), about 100-200ms; a custom kernel with the virtio and fuse drivers built in.
 
 ## Live updates in the web UI
 
-A WebSocket from the host that tells open pages when something changed (projects, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The project log's long poll could move onto it.
+A WebSocket from the host that tells open pages when something changed (hobs, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The hob log's long poll could move onto it.
 
-## Checking projects against a new guest image
+## Checking hobs against a new guest image
 
-A platform set or SDK update takes effect for every project at once, on its next workspace, pipeline run or build. Before switching to a new image, run every project's pipeline against it. Projects that fail stay on the old image until an agent fixes them, which needs images to be versioned and projects to record the image they were tested with.
+A platform set or SDK update takes effect for every hob at once, on its next workspace, pipeline run or build. Before switching to a new image, run every hob's pipeline against it. Hobs that fail stay on the old image until an agent fixes them, which needs images to be versioned and hobs to record the image they were tested with.
 
 ## claude.ai connectors
 
@@ -20,7 +20,7 @@ Connecting Hobwork as a custom connector in claude.ai, Claude Desktop and Cowork
 
 ## Interrupting runaway queries
 
-A project DB query that runs longer than 30s is abandoned by terminating its worker, since SQLite cannot be interrupted from Node. Interrupt the query instead once Node exposes a way to (SQLite's `sqlite3_interrupt` or a progress handler), so the connection survives.
+A hob DB query that runs longer than 30s is abandoned by terminating its worker, since SQLite cannot be interrupted from Node. Interrupt the query instead once Node exposes a way to (SQLite's `sqlite3_interrupt` or a progress handler), so the connection survives.
 
 ## More Home Assistant commands in `ctx.ha`
 
@@ -33,9 +33,9 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 ## OpenRouter
 
 - Streaming responses from the OpenRouter helper. The AI gateway gets answers to the guest only when they are complete, since Gondolin buffers answers from its `onRequest` hook; streaming needs Gondolin to pass a response body stream through.
-- A spend limit across all projects, next to the per-project ones.
+- A spend limit across all hobs, next to the per-hob ones.
 - Spend limits can be passed by one request, since cost is known only afterwards. Estimating a request's cost from `max_tokens` and the model's prices before sending it would close that gap.
-- Tell people when a project reaches a limit (a notification to their devices), not only in the project log.
+- Tell people when a hob reaches a limit (a notification to their devices), not only in the hob log.
 
 ## Checking push notifications on a device
 
@@ -43,8 +43,4 @@ The host's APNs client is tested against a local HTTP/2 server, and the Apple ap
 
 ## Shared UI components
 
-There is no component library in core; project UIs use the theme's Tailwind utilities. If agents keep rewriting the same components across projects, ship them in the platform set.
-
-## Renaming projects to hobs
-
-Call projects "hobs" everywhere people and agents see them: web UI and iOS app copy, MCP tool names and descriptions (`create_hob`, `list_hobs`), the `hobwork` CLI, the template's AGENTS.md, `hobwork.json` docs and `docs/`. Code identifiers and DB tables can keep `project`. The MCP server instructions define a hob in one line, since agents know "project" without explanation. Do it before more agents and saved prompts depend on the current tool names.
+There is no component library in core; hob UIs use the theme's Tailwind utilities. If agents keep rewriting the same components across hobs, ship them in the platform set.

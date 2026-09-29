@@ -17,7 +17,9 @@ function describe(error: ErrorObject): string {
   const extra =
     error.keyword === 'additionalProperties'
       ? ` ("${(error.params as { additionalProperty: string }).additionalProperty}")`
-      : ''
+      : error.keyword === 'const'
+        ? ` (${JSON.stringify((error.params as { allowedValue: unknown }).allowedValue)})`
+        : ''
   return `${at}: ${error.message ?? error.keyword}${extra}`
 }
 
@@ -32,7 +34,8 @@ export function validateHobworkJson(raw: string | undefined): string[] {
   }
   const validate = validator()
   if (validate(config)) return []
-  return (validate.errors ?? []).map(describe)
+  // An "if" error only repeats the error inside its "then".
+  return (validate.errors ?? []).filter((e) => e.keyword !== 'if').map(describe)
 }
 
 export const VITE_CONFIG = `import { hobworkViteConfig } from '@hobwork/sdk/vite'

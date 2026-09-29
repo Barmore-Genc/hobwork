@@ -146,6 +146,7 @@ export function createDeviceSockets(options: {
       clearTimeout(helloTimer)
       if (!helloed) devices.registry.attach(connection)
       helloed = true
+      devices.resendPending(deviceId)
     }
 
     ws.on('message', (raw, isBinary) => {
@@ -161,7 +162,8 @@ export function createDeviceSockets(options: {
         case 'hello':
           return hello(message)
         case 'result':
-          return devices.registry.result(connection, message as { id: unknown; ok: unknown })
+          if (devices.registry.result(connection, message as { id: unknown; ok: unknown })) return
+          return void devices.handleResult(deviceId, message)
         case 'event':
           return void devices
             .handleEvent(deviceId, { capability: message.capability, name: message.name, data: message.data })

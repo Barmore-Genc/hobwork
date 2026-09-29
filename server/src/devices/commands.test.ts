@@ -1,0 +1,608 @@
+import { generateKeyPairSync } from 'node:crypto'
+import { createServer, type Http2Server, type IncomingHttpHeaders } from 'node:http2'
+import type { AddressInfo } from 'node:net'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { WebSocket } from 'ws'
+import type { DeviceEvent } from '../../../packages/sdk/src/devices.ts'
+import { validateHobworkJson } from '../pipeline/validate.ts'
+import { createProject } from '../projects.ts'
+import { queryLogs } from '../runtime/logs.ts'
+import { createTestHost } from '../test-host.ts'
+import { signedIn, startTestApp, TEST_PUBLIC_URL } from '../test-web.ts'
+import { createApns, type Apns } from './apns.ts'
+import { COMMANDS } from './commands.ts'
+import { createDevices, type DeviceTrigger, type Devices } from './devices.ts'
+import { DeviceError } from './registry.ts'
+import { COMMAND_TTL_MS, getCommand, recordHello, type Push } from './store.ts'
+import { pairDevice } from './test-devices.ts'
+
+vi.setConfig({ testTimeout: 15_000 })
+
+type Message = Record<string, unknown>
+type Received = { headers: IncomingHttpHeaders; body: string }
+type Triggers = Record<string, { device?: DeviceTrigger }>
+
+const PUSH: Push = { token: 'a1b2c3d4e5f60718', environment: 'sandbox' }
+const ALL = ['notifications', 'alarms', 'screenTime', 'focus', 'nfc', 'health']
+
+let host: ReturnType<typeof createTestHost>
+let app: Awaited<ReturnType<typeof startTestApp>>
+let cookie: string
+let apnsServer: Http2Server
+let received: Received[]
+let apns: Apns
+let devices: Devices
+let offset: number
+let triggers: Record<string, Triggers>
+let invoked: { project: string; name: string; payload: DeviceEvent }[]
+
+beforeEach(async () => {
+  host = createTestHost()
+  cookie = signedIn(host).cookie
+  received = []
+  offset = 0
+  invoked = []
+  triggers = {}
+  apnsServer = createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk: Buffer) => (body += chunk))
+    req.on('end', () => {
+      received.push({ headers: req.headers, body })
+      res.writeHead(200).end()
+    })
+  })
+  await new Promise<void>((resolve) => apnsServer.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${(apnsServer.address() as AddressInfo).port}`
+  const now = () => Date.now() + offset
+  apns = createApns({
+    key: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey,
+    keyId: 'KEY1234567',
+    teamId: 'TEAM123456',
+    origins: { sandbox: origin, production: origin },
+    now,
+  })
+  devices = createDevices({
+    host,
+    apns,
+    publicUrl: TEST_PUBLIC_URL,
+    waitMs: { background: 400, foreground: 800 },
+    socketFallbackMs: 150,
+    now,
+    triggers: async (project) => {
+      if (!triggers[project]) throw new Error(`${project} has no deployed version`)
+      return triggers[project]
+    },
+    invokeTrigger: async (project, name, payload) => invoked.push({ project, name, payload }),
+  })
+  app = await startTestApp(host, { devices })
+  await createProject(host, 'bedtime')
+})
+
+afterEach(async () => {
+  devices.close()
+  await app.close()
+  await new Promise<void>((resolve) => apnsServer.close(() => resolve()))
+  host.dispose()
+})
+
+async function until(check: () => boolean, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting')
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
+// A paired phone that reported every capability, with push unless told otherwise.
+async function phone(options: { push?: Push | null; name?: string; capabilities?: string[] } = {}) {
+  const device = await pairDevice(app.base, cookie, { name: options.name ?? 'kaan-iphone' })
+  recordHello(host.db, device.deviceId, {
+    appVersion: '1.0',
+    capabilities: options.capabilities ?? ALL,
+    push: options.push === undefined ? PUSH : options.push,
+  })
+  return device
+}
+
+class AppClient {
+  ws: WebSocket
+  messages: Message[] = []
+  waiters: { match: (m: Message) => boolean; resolve: (m: Message) => void }[] = []
+  closed: Promise<number>
+
+  constructor(token: string) {
+    this.ws = new WebSocket(`${app.base.replace(/^http/, 'ws')}/api/devices/ws`, { headers: { authorization: `Bearer ${token}` } })
+    this.ws.on('message', (raw) => {
+      const message = JSON.parse(raw.toString()) as Message
+      const waiter = this.waiters.find((w) => w.match(message))
+      if (waiter) {
+        this.waiters.splice(this.waiters.indexOf(waiter), 1)
+        waiter.resolve(message)
+      } else this.messages.push(message)
+    })
+    this.closed = new Promise((resolve) => this.ws.on('close', (code) => resolve(code)))
+  }
+
+  static async connect(token: string, capabilities = ALL): Promise<AppClient> {
+    const client = new AppClient(token)
+    await new Promise<void>((resolve, reject) => {
+      client.ws.once('open', () => resolve())
+      client.ws.once('error', reject)
+    })
+    client.send({ type: 'hello', appVersion: '1.0', platform: 'ios', capabilities })
+    await until(() => devices.list().some((d) => d.connected))
+    return client
+  }
+
+  send(message: Message) {
+    this.ws.send(JSON.stringify(message))
+  }
+
+  next(match: (m: Message) => boolean = (m) => m.type === 'call'): Promise<Message> {
+    const found = this.messages.find(match)
+    if (found) {
+      this.messages.splice(this.messages.indexOf(found), 1)
+      return Promise.resolve(found)
+    }
+    return new Promise((resolve) => this.waiters.push({ match, resolve }))
+  }
+}
+
+function postResult(token: string, body: unknown) {
+  return fetch(`${app.base}/api/devices/results`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+function postEvent(token: string, body: unknown) {
+  return fetch(`${app.base}/api/devices/events`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+function pushed(index = 0) {
+  const { headers, body } = received[index]!
+  return { headers, payload: JSON.parse(body) as { aps: Record<string, unknown>; hobwork: { project: string; command: Message } } }
+}
+
+test('commands go over the socket when the app is connected, and the first result wins', async () => {
+  const device = await phone()
+  const client = await AppClient.connect(device.token)
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'set', { title: 'Wake up', time: '07:00', days: ['mon', 'fri'] }, 7)
+  const message = await client.next()
+  expect(message).toEqual({
+    type: 'call',
+    id: expect.any(String),
+    capability: 'alarms',
+    method: 'set',
+    args: { title: 'Wake up', time: '07:00', days: ['mon', 'fri'] },
+  })
+  client.send({ type: 'result', id: message.id, ok: true, value: { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' } })
+  expect(await call).toEqual({ id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' })
+  expect(getCommand(host.db, String(message.id))).toMatchObject({ status: 'done', project: 'bedtime', invocation: 7 })
+
+  // The same command answered again, as after a push that also reached the app.
+  expect((await postResult(device.token, { id: message.id, ok: false, error: { code: 'x', message: 'late' } })).status).toBe(204)
+  expect(host.db.prepare('SELECT status, result FROM device_commands WHERE id = ?').get(String(message.id))).toEqual({
+    status: 'done',
+    result: JSON.stringify({ id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' }),
+  })
+  expect(received).toEqual([])
+})
+
+test("the app's error fails the call with its code", async () => {
+  const device = await phone()
+  const client = await AppClient.connect(device.token)
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'games' }).catch((err: unknown) => err)
+  const message = await client.next()
+  client.send({ type: 'result', id: message.id, ok: false, error: { code: 'unknown_set', message: 'No app set called games' } })
+  expect(await call).toMatchObject({ code: 'unknown_set', message: 'No app set called games' })
+  expect(getCommand(host.db, String(message.id))?.status).toBe('failed')
+})
+
+test('a device that is not connected gets a background command as a passive push, answered by HTTP', async () => {
+  const device = await phone()
+  const until = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'social', until })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const { headers, payload } = pushed()
+  const command = payload.hobwork.command
+  expect(payload).toEqual({
+    aps: {
+      alert: { title: 'bedtime', body: 'Screen Time change for this device. Open Hobwork if it did not apply.' },
+      'mutable-content': 1,
+      'interruption-level': 'passive',
+      'thread-id': 'bedtime',
+    },
+    hobwork: {
+      project: 'bedtime',
+      command: { id: expect.any(String), capability: 'screenTime', method: 'block', args: { set: 'social', until }, expiresAt: expect.any(String) },
+    },
+  })
+  expect(Date.parse(String(command.expiresAt)) - Date.now()).toBeGreaterThan(COMMAND_TTL_MS - 5000)
+  expect(headers).toMatchObject({
+    'apns-push-type': 'alert',
+    'apns-priority': '10',
+    'apns-id': command.id,
+    'apns-collapse-id': command.id,
+  })
+  expect(Math.abs(Number(headers['apns-expiration']) - Date.parse(String(command.expiresAt)) / 1000)).toBeLessThanOrEqual(1)
+
+  expect((await postResult(device.token, { id: command.id, ok: true, value: {} })).status).toBe(204)
+  expect(await call).toEqual({})
+})
+
+test('NFC commands are a prompt push, and nfc.write creates a tag the project owns', async () => {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', { text: 'Desk' })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const { payload } = pushed()
+  const command = payload.hobwork.command
+  const tag = (command.args as { tag: string }).tag
+  expect(payload).toEqual({
+    aps: { alert: { title: 'Write an NFC tag', body: 'bedtime is waiting. Tap to start.' }, sound: 'default', 'thread-id': 'bedtime' },
+    hobwork: {
+      project: 'bedtime',
+      command: {
+        id: expect.any(String),
+        capability: 'nfc',
+        method: 'write',
+        args: { tag, url: `${TEST_PUBLIC_URL}/nfc/${tag}`, text: 'Desk' },
+        expiresAt: expect.any(String),
+        foreground: true,
+      },
+    },
+  })
+  expect(tag).toMatch(/^[A-Za-z0-9_-]{22}$/)
+  expect(host.db.prepare('SELECT p.name FROM nfc_tags t JOIN projects p ON p.id = t.project_id WHERE t.id = ?').get(tag)).toEqual({
+    name: 'bedtime',
+  })
+  // Foreground commands wait longer than background ones.
+  await new Promise((r) => setTimeout(r, 500))
+  expect((await postResult(device.token, { id: command.id, ok: true, value: {} })).status).toBe(204)
+  expect(await call).toEqual({ tag })
+})
+
+test('a failed nfc.write leaves no tag behind', async () => {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', {}).catch((err: unknown) => err)
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const command = pushed().payload.hobwork.command
+  await postResult(device.token, { id: command.id, ok: false, error: { code: 'cancelled', message: 'Closed the sheet' } })
+  expect(await call).toMatchObject({ code: 'cancelled' })
+  expect(host.db.prepare('SELECT count(*) AS n FROM nfc_tags').get()).toEqual({ n: 0 })
+})
+
+test('a socket that does not answer or disconnects falls back to push', async () => {
+  const device = await phone()
+  const silent = await AppClient.connect(device.token)
+  const first = devices.callCommand('bedtime', 'kaan-iphone', 'focus', 'status', {})
+  const call = await silent.next()
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  expect(pushed().payload.hobwork.command.id).toBe(call.id)
+  await postResult(device.token, { id: call.id, ok: true, value: { active: ['work'] } })
+  expect(await first).toEqual({ active: ['work'] })
+
+  // NFC waits for the person on the open app, so only a dropped connection pushes.
+  const second = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'read', {})
+  const read = await silent.next()
+  await new Promise((r) => setTimeout(r, 250))
+  expect(received).toHaveLength(1)
+  silent.ws.close()
+  await vi.waitFor(() => expect(received).toHaveLength(2))
+  expect(pushed(1).payload.hobwork.command).toMatchObject({ id: read.id, foreground: true })
+  await postResult(device.token, { id: read.id, ok: true, value: { records: [] } })
+  expect(await second).toEqual({ records: [] })
+})
+
+test('pending commands go to the app again after every hello, oldest first', async () => {
+  const device = await phone()
+  const first = devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'list', {}).catch((err: unknown) => err)
+  expect(await first).toMatchObject({ code: 'timeout' })
+  const second = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'status')
+  await vi.waitFor(() => expect(received).toHaveLength(2))
+  const [firstId, secondId] = [0, 1].map((i) => pushed(i).payload.hobwork.command.id)
+
+  const client = await AppClient.connect(device.token)
+  const resent = [await client.next(), await client.next()]
+  expect(resent.map((m) => m.id)).toEqual([firstId, secondId])
+  client.send({ type: 'result', id: secondId, ok: true, value: { blocked: [], schedules: [], limits: [] } })
+  expect(await second).toEqual({ blocked: [], schedules: [], limits: [] })
+  client.send({ type: 'result', id: firstId, ok: true, value: [] })
+  await until(() => getCommand(host.db, String(firstId))?.status === 'done')
+
+  // Answered commands are not sent again.
+  client.ws.close()
+  await until(() => !devices.list()[0]!.connected)
+  const again = await AppClient.connect(device.token)
+  await new Promise((r) => setTimeout(r, 100))
+  expect(again.messages.filter((m) => m.type === 'call')).toEqual([])
+})
+
+test('a command without an answer times out, and a late result goes to the project log', async () => {
+  const device = await phone()
+  const err = await devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'timer', { title: 'Tea', seconds: 240 }).catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(DeviceError)
+  expect(err).toMatchObject({ code: 'timeout', message: expect.stringContaining('may still run until') })
+  const late = pushed().payload.hobwork.command
+  expect((await postResult(device.token, { id: late.id, ok: true, value: { id: 'abc' } })).status).toBe(204)
+  const [line] = queryLogs(host, { project: 'bedtime', limit: 5 })
+  expect(line).toMatchObject({ level: 'info', message: 'Device kaan-iphone: alarms.timer finished after the handler stopped waiting: {"id":"abc"}' })
+
+  await devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'cancel', { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' }).catch(() => {})
+  const failed = pushed(1).payload.hobwork.command
+  await postResult(device.token, { id: failed.id, ok: false, error: { code: 'not_authorized', message: 'Alarms are off' } })
+  expect(queryLogs(host, { project: 'bedtime', limit: 5 }).at(-1)).toMatchObject({
+    level: 'warn',
+    message: 'Device kaan-iphone: alarms.cancel failed after the handler stopped waiting: not_authorized: Alarms are off',
+  })
+})
+
+test('commands expire after 10 minutes and are not sent again', async () => {
+  const device = await phone()
+  await devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', {}).catch(() => {})
+  const command = pushed().payload.hobwork.command
+  offset = COMMAND_TTL_MS + 1000
+  devices.expire()
+  expect(getCommand(host.db, String(command.id))?.status).toBe('expired')
+  expect(host.db.prepare('SELECT count(*) AS n FROM nfc_tags').get()).toEqual({ n: 0 })
+  expect(queryLogs(host, { project: 'bedtime', limit: 5 }).at(-1)).toMatchObject({
+    level: 'warn',
+    message: 'Device kaan-iphone: nfc.write expired without an answer from the device',
+  })
+  const client = await AppClient.connect(device.token)
+  await new Promise((r) => setTimeout(r, 100))
+  expect(client.messages.filter((m) => m.type === 'call')).toEqual([])
+})
+
+test('a command that reaches nothing fails at once and does not run later', async () => {
+  const device = await phone({ push: null })
+  const err = await devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'list').catch((e: unknown) => e)
+  expect(err).toMatchObject({ code: 'unreachable', message: expect.stringContaining('has not registered for push') })
+  expect(host.db.prepare('SELECT status FROM device_commands').all()).toEqual([{ status: 'failed' }])
+  const client = await AppClient.connect(device.token)
+  await new Promise((r) => setTimeout(r, 100))
+  expect(client.messages.filter((m) => m.type === 'call')).toEqual([])
+})
+
+test('results for commands of other devices, unknown IDs and bad bodies are refused', async () => {
+  const device = await phone()
+  const laptop = await phone({ name: 'kaan-mac', push: { token: 'ffeeddccbbaa9988', environment: 'sandbox' } })
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'focus', 'status').catch((e: unknown) => e)
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const id = pushed().payload.hobwork.command.id
+  expect((await postResult(laptop.token, { id, ok: true, value: { active: [] } })).status).toBe(404)
+  expect((await postResult(device.token, { id: 'nope', ok: true })).status).toBe(404)
+  expect((await postResult(device.token, { id })).status).toBe(400)
+  expect((await postResult('hwd_wrong', { id, ok: true })).status).toBe(401)
+  expect(await call).toMatchObject({ code: 'timeout' })
+})
+
+test('capabilities the device did not report and unknown methods are unsupported', async () => {
+  await phone({ capabilities: ['notifications'] })
+  await expect(devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'social' })).rejects.toMatchObject({
+    code: 'unsupported',
+    message: expect.stringContaining('Screen Time'),
+  })
+  await expect(devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'snooze', {})).rejects.toMatchObject({
+    code: 'unsupported',
+    message: expect.stringContaining('alarms.set'),
+  })
+  await expect(devices.callCommand('bedtime', 'nobody', 'alarms', 'list', {})).rejects.toMatchObject({ code: 'unknown_device' })
+  expect(host.db.prepare('SELECT count(*) AS n FROM device_commands').get()).toEqual({ n: 0 })
+})
+
+test('arguments are checked on the host', async () => {
+  await phone()
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const past = new Date(Date.now() - 60 * 1000).toISOString()
+  const cases: [string, string, unknown, string][] = [
+    ['alarms', 'set', { title: 'Up' }, 'exactly one of at'],
+    ['alarms', 'set', { title: 'Up', at: future, time: '07:00' }, 'exactly one of at'],
+    ['alarms', 'set', { title: 'Up', at: past }, 'at is in the past'],
+    ['alarms', 'set', { title: 'Up', at: '2030-01-01T07:00' }, 'with a time zone'],
+    ['alarms', 'set', { title: 'Up', time: '7:00' }, 'like "07:30"'],
+    ['alarms', 'set', { title: 'Up', time: '07:00', days: ['monday'] }, 'days must be'],
+    ['alarms', 'set', { title: 'Up', at: future, days: ['mon'] }, 'days only works with time'],
+    ['alarms', 'set', { title: '', time: '07:00' }, 'title must be'],
+    ['alarms', 'set', { title: 'Up', time: '07:00', id: 'x' }, 'id must be a UUID'],
+    ['alarms', 'set', { title: 'Up', time: '07:00', sound: 'loud' }, 'does not take "sound"'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 0 }, 'seconds must be a whole number from 1'],
+    ['alarms', 'cancel', {}, 'needs the id'],
+    ['alarms', 'list', { all: true }, 'takes no arguments'],
+    ['screenTime', 'block', { set: 'Social Apps' }, 'set must be a name'],
+    ['screenTime', 'block', { set: 'social', until: past }, 'until is in the past'],
+    ['screenTime', 'schedule', { name: 'night', set: 'social', start: '22:00', end: '22:00' }, 'start and end must differ'],
+    ['screenTime', 'limit', { name: 'daily', set: 'social', minutes: 1440 }, 'minutes must be a whole number from 1 to 1439'],
+    ['nfc', 'write', { text: 'x'.repeat(1025) }, 'at most 1024 bytes'],
+    ['health', 'query', { type: 'weight', from: past, to: future }, 'type must be one of'],
+    ['health', 'query', { type: 'steps', from: future, to: past }, 'from must be before to'],
+    ['health', 'query', { type: 'steps', from: past, to: future, limit: 5000 }, 'limit must be a whole number from 1 to 1000'],
+    ['focus', 'status', 'now', 'takes an object'],
+  ]
+  for (const [capability, method, args, message] of cases) {
+    const err = await devices.callCommand('bedtime', 'kaan-iphone', capability, method, args).catch((e: unknown) => e)
+    expect(err, `${capability}.${method} ${JSON.stringify(args)}`).toMatchObject({ code: 'bad_request', message: expect.stringContaining(message) })
+  }
+  expect(received).toEqual([])
+
+  const now = Date.now()
+  expect(COMMANDS.alarms!.set!.parse({ title: 'Up', at: future }, now)).toEqual({ title: 'Up', at: future })
+  expect(COMMANDS.screenTime!.schedule!.parse({ name: 'night', set: 'social', start: '22:00', end: '07:00', days: ['sat', 'sun'] }, now)).toEqual({
+    name: 'night',
+    set: 'social',
+    start: '22:00',
+    end: '07:00',
+    days: ['sat', 'sun'],
+  })
+  expect(COMMANDS.health!.query!.parse({ type: 'sleep', from: past, to: future }, now)).toEqual({ type: 'sleep', from: past, to: future })
+})
+
+test('workspaces and branch previews cannot run commands', async () => {
+  await phone()
+  const { devicesResponse } = await import('./internal.ts')
+  const res = await devicesResponse(JSON.stringify({ action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'list' }), {
+    devices,
+    project: 'bedtime',
+    access: 'read',
+  })
+  expect(await res.json()).toMatchObject({ ok: false, error: { code: 'read_only' } })
+})
+
+test('the host serves the apple-app-site-association file for tag links', async () => {
+  const res = await fetch(`${app.base}/.well-known/apple-app-site-association`)
+  expect(res.headers.get('content-type')).toContain('application/json')
+  expect(await res.json()).toEqual({
+    applinks: { details: [{ appIDs: ['63QQLP356Q.dev.bgenc.hobwork'], components: [{ '/': '/nfc/*' }] }] },
+  })
+  const other = await startTestApp(host, { devices, web: { appleAppId: 'ABCDE12345.example.app' } })
+  try {
+    const custom = (await (await fetch(`${other.base}/.well-known/apple-app-site-association`)).json()) as {
+      applinks: { details: { appIDs: string[] }[] }
+    }
+    expect(custom.applinks.details[0]!.appIDs).toEqual(['ABCDE12345.example.app'])
+  } finally {
+    await other.close()
+  }
+})
+
+async function writtenTag(): Promise<string> {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', {})
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  await postResult(device.token, { id: pushed().payload.hobwork.command.id, ok: true, value: {} })
+  return ((await call) as { tag: string }).tag
+}
+
+test('the tag page runs the scan for a signed-in person, and offers the app and sign-in otherwise', async () => {
+  triggers.bedtime = { desk: { device: { capability: 'nfc', event: 'scanned' } }, phoneOnly: { device: { capability: 'nfc', event: 'scanned', device: 'kaan-iphone' } } }
+  const tag = await writtenTag()
+  const page = (headers: Record<string, string> = {}, init: RequestInit = {}) =>
+    fetch(`${app.base}/nfc/${tag}`, { redirect: 'manual', ...init, headers })
+
+  const anonymous = await page()
+  expect(anonymous.status).toBe(200)
+  const html = await anonymous.text()
+  expect(html).toContain(`href="hobwork://nfc/${tag}"`)
+  expect(html).toContain(`href="/login?returnTo=${encodeURIComponent(`/nfc/${tag}`)}"`)
+  expect(html).not.toContain('bedtime')
+
+  // Another site sending the person here gets a button, not a scan.
+  const crossSite = await page({ cookie, 'sec-fetch-site': 'cross-site' })
+  expect(await crossSite.text()).toContain('<form method="post"')
+  expect(invoked).toEqual([])
+
+  const opened = await page({ cookie, 'sec-fetch-site': 'none' })
+  expect(opened.status).toBe(303)
+  expect(opened.headers.get('location')).toBe(`/nfc/${tag}?scanned`)
+  await until(() => invoked.length === 1)
+  expect(invoked).toEqual([{ project: 'bedtime', name: 'desk', payload: { device: null, capability: 'nfc', event: 'scanned', tag } }])
+  const result = await fetch(`${app.base}/nfc/${tag}?scanned`, { headers: { cookie } })
+  expect(await result.text()).toContain('bedtime got the scan')
+  expect(invoked).toHaveLength(1)
+
+  const tapped = await page({ cookie, origin: TEST_PUBLIC_URL, 'content-type': 'application/x-www-form-urlencoded' }, { method: 'POST' })
+  expect(tapped.status).toBe(303)
+  await until(() => invoked.length === 2)
+  const forged = await page({ cookie, origin: 'https://evil.example' }, { method: 'POST' })
+  expect(forged.status).toBe(200)
+  expect(invoked).toHaveLength(2)
+
+  expect((await fetch(`${app.base}/nfc/AAAAAAAAAAAAAAAAAAAAAA`, { headers: { cookie } })).status).toBe(404)
+  expect((await fetch(`${app.base}/nfc/nope`)).status).toBe(404)
+})
+
+test('tag scans from the app run the triggers of the project that wrote the tag', async () => {
+  await createProject(host, 'other')
+  triggers.bedtime = {
+    desk: { device: { capability: 'nfc', event: 'scanned' } },
+    macOnly: { device: { capability: 'nfc', event: 'scanned', device: 'kaan-mac' } },
+    focus: { device: { capability: 'focus', event: 'changed' } },
+  }
+  triggers.other = { steal: { device: { capability: 'nfc', event: 'scanned' } } }
+  const tag = await writtenTag()
+  const device = { token: (await pairDevice(app.base, cookie, { name: 'scanner' })).token }
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { tag } })
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { tag: 'AAAAAAAAAAAAAAAAAAAAAA' } })
+  await until(() => invoked.length === 1)
+  await new Promise((r) => setTimeout(r, 50))
+  expect(invoked).toEqual([{ project: 'bedtime', name: 'desk', payload: { device: 'scanner', capability: 'nfc', event: 'scanned', tag } }])
+
+  triggers.bedtime = {}
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { tag } })
+  expect(queryLogs(host, { project: 'bedtime', limit: 1 })[0]).toMatchObject({
+    level: 'warn',
+    event: 'trigger',
+    message: expect.stringContaining('no trigger handles it'),
+  })
+})
+
+test('Focus and Health events go to every project with a matching trigger, filtered by device', async () => {
+  await createProject(host, 'fitness')
+  await createProject(host, 'undeployed')
+  triggers.bedtime = {
+    anyFocus: { device: { capability: 'focus', event: 'changed' } },
+    macFocus: { device: { capability: 'focus', event: 'changed', device: 'kaan-mac' } },
+  }
+  triggers.fitness = {
+    phoneFocus: { device: { capability: 'focus', event: 'changed', device: 'kaan-iphone' } },
+    samples: { device: { capability: 'health', event: 'samples' } },
+  }
+  const device = await phone()
+  const client = await AppClient.connect(device.token)
+  client.send({ type: 'event', capability: 'focus', name: 'changed', data: { label: 'work', active: true } })
+  await until(() => invoked.length === 2)
+  const focus = { device: 'kaan-iphone', capability: 'focus', event: 'changed', label: 'work', active: true }
+  expect(invoked.map((i) => [i.project, i.name, i.payload]).sort()).toEqual([
+    ['bedtime', 'anyFocus', focus],
+    ['fitness', 'phoneFocus', focus],
+  ])
+
+  invoked = []
+  const samples = [{ type: 'steps', start: '2026-09-28T10:00:00Z', end: '2026-09-28T11:00:00Z', value: 800, unit: 'count', source: 'iPhone' }]
+  await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'steps', samples } })
+  await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'weight', samples } })
+  await postEvent(device.token, { capability: 'health', name: 'samples', data: { type: 'steps', samples: Array(501).fill(samples[0]) } })
+  await postEvent(device.token, { capability: 'focus', name: 'changed', data: { label: 'work' } })
+  await until(() => invoked.length === 1)
+  await new Promise((r) => setTimeout(r, 50))
+  expect(invoked).toEqual([
+    { project: 'fitness', name: 'samples', payload: { device: 'kaan-iphone', capability: 'health', event: 'samples', type: 'steps', samples } },
+  ])
+})
+
+test('notification action triggers can be limited to one device', async () => {
+  triggers.bedtime = {
+    mac: { device: { capability: 'notifications', event: 'action', device: 'kaan-mac' } },
+    phone: { device: { capability: 'notifications', event: 'action', device: 'kaan-iphone' } },
+  }
+  const device = await phone()
+  const client = await AppClient.connect(device.token)
+  const sent = devices.sendNotification('bedtime', 'kaan-iphone', { title: 'Bed?', actions: [{ id: 'yes', title: 'Yes' }] })
+  const call = await client.next()
+  client.send({ type: 'result', id: call.id, ok: true, value: null })
+  const { id } = await sent
+  client.send({ type: 'event', capability: 'notifications', name: 'action', data: { id, action: 'yes' } })
+  await until(() => invoked.length === 1)
+  expect(invoked[0]).toMatchObject({ project: 'bedtime', name: 'phone', payload: { device: 'kaan-iphone', action: 'yes' } })
+})
+
+test('hobwork.json accepts the device trigger pairs and a device name', () => {
+  const check = (device: unknown) => validateHobworkJson(JSON.stringify({ triggers: { t: { device, handler: 'src/t.ts' } } }))
+  for (const [capability, event] of [
+    ['notifications', 'action'],
+    ['focus', 'changed'],
+    ['nfc', 'scanned'],
+    ['health', 'samples'],
+  ]) {
+    expect(check({ capability, event }), `${capability}/${event}`).toEqual([])
+    expect(check({ capability, event, device: 'kaans-iphone' })).toEqual([])
+  }
+  expect(check({ capability: 'focus', event: 'scanned' })).not.toEqual([])
+  expect(check({ capability: 'alarms', event: 'rang' })).not.toEqual([])
+  expect(check({ capability: 'nfc', event: 'scanned', device: "Kaan's iPhone" })).not.toEqual([])
+})

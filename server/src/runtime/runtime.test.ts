@@ -591,3 +591,43 @@ test('handlers notify devices, and a tapped notification action runs the device 
     { device: 'kaan-iphone', capability: 'notifications', event: 'action', notificationId: body.sent.id, action: 'order', data: { spool: 4 } },
   ])
 })
+
+test('handlers run device commands and get the answer', async () => {
+  const devices = createDevices({ host })
+  start({ devices })
+  const { user } = signedIn(host)
+  const { verifier, challenge } = pkce()
+  const code = createPairingCode(host.db, { userId: user.id, name: 'kaan-iphone', platform: 'ios', codeChallenge: challenge })
+  const { device } = exchangePairingCode(host.db, code, verifier)
+  recordHello(host.db, device.id, { appVersion: '1.0', capabilities: ['alarms'] })
+  const calls: unknown[] = []
+  const app: DeviceConnection = {
+    deviceId: device.id,
+    send(message) {
+      if (message.type !== 'call') return
+      calls.push({ capability: message.capability, method: message.method, args: message.args })
+      queueMicrotask(() => devices.handleResult(device.id, { id: message.id, ok: true, value: { id: 'alarm-1' } }))
+    },
+    close() {},
+  }
+  devices.registry.attach(app)
+
+  await deploy(
+    projectFiles({
+      hobwork: HOBWORK_JSON,
+      handlers: {
+        'handlers/spools.js': `export default async (ctx) => {
+          const set = await ctx.device('kaan-iphone').alarms.set({ title: 'Print done', time: '07:00' })
+          const refused = await ctx.device('kaan-iphone').alarms.set({ title: 'Print done' }).catch((err) => [err.name, err.code])
+          return { set, refused }
+        }`,
+      },
+    }),
+  )
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  expect(bodyOf(outcome)).toEqual({ set: { id: 'alarm-1' }, refused: ['DeviceError', 'bad_request'] })
+  expect(calls).toEqual([{ capability: 'alarms', method: 'set', args: { title: 'Print done', time: '07:00' } }])
+  expect(queryLogs(host, { project: 'filament', invocationId: outcome.invocationId, limit: 10 }).map((l) => l.message)).toContain(
+    'Device kaan-iphone: alarms.set answered {"id":"alarm-1"}',
+  )
+})

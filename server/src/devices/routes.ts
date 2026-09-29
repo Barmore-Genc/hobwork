@@ -4,9 +4,10 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ApiRoute } from '../api/router.ts'
 import type { Auth } from '../auth/auth.ts'
 import { getUser, isAllowed } from '../auth/users.ts'
-import type { Allowlist } from '../config.ts'
+import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
+import { createNfcPage, NFC_PATH } from './nfc-page.ts'
 import { deviceFromRequest, parsePush } from './socket.ts'
 import {
   createPairingCode,
@@ -28,6 +29,9 @@ import {
 
 // The app checks the address a person typed with this before pairing.
 export const DISCOVERY_PATH = '/.well-known/hobwork'
+// Lets the app open tag URLs (universal links) when it is built with this host
+// in its Associated Domains.
+export const AASA_PATH = '/.well-known/apple-app-site-association'
 const HOST_VERSION = String(
   (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown }).version,
 )
@@ -35,6 +39,9 @@ const TOKEN_PATH = '/api/devices/token'
 const WEB_SESSION_PATH = '/api/devices/web-session'
 const PUSH_PATH = '/api/devices/push'
 const EVENTS_PATH = '/api/devices/events'
+const RESULTS_PATH = '/api/devices/results'
+// Health samples and query results are larger than other bodies.
+const MAX_DEVICE_BODY_BYTES = 1024 * 1024
 const SELF_PATH = '/api/devices/self'
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
@@ -164,8 +171,11 @@ export function createDeviceRoutes(options: {
   allowlist: Allowlist
   publicUrl: string
   devices: Devices
+  appleAppId?: string
 }) {
   const { db, auth, allowlist, publicUrl, devices } = options
+  const appleAppId = options.appleAppId ?? DEFAULT_APPLE_APP_ID
+  const nfcPage = createNfcPage({ db, auth, publicUrl, devices })
 
   function requireDevice(req: IncomingMessage): Device {
     const auth = deviceFromRequest(db, allowlist, req)
@@ -215,10 +225,23 @@ export function createDeviceRoutes(options: {
 
   async function events(req: IncomingMessage, res: ServerResponse) {
     const device = requireDevice(req)
-    const body = await readJson(req)
+    const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
     if (!isObject(body)) throw new HttpError(400, 'Send { capability, name, data }')
     touchDevice(db, device.id)
     await devices.handleEvent(device.id, { capability: body.capability, name: body.name, data: body.data })
+    res.writeHead(204).end()
+  }
+
+  // Command results from the notification service extension, or from the
+  // app when HTTP is quicker than connecting.
+  async function results(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
+    if (!isObject(body) || typeof body.id !== 'string' || typeof body.ok !== 'boolean') {
+      throw new HttpError(400, 'Send { id, ok: true, value } or { id, ok: false, error: { code, message } }')
+    }
+    touchDevice(db, device.id)
+    if (devices.handleResult(device.id, body) === 'unknown') throw new HttpError(404, 'This device has no command with this ID')
     res.writeHead(204).end()
   }
 
@@ -227,12 +250,22 @@ export function createDeviceRoutes(options: {
     [WEB_SESSION_PATH]: { method: 'POST', handle: webSession },
     [PUSH_PATH]: { method: 'PUT', handle: push },
     [EVENTS_PATH]: { method: 'POST', handle: events },
+    [RESULTS_PATH]: { method: 'POST', handle: results },
     [SELF_PATH]: { method: 'DELETE', handle: removeSelf },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {
     if (pathname === DISCOVERY_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
       json(res, 200, { hobwork: 1, name: new URL(publicUrl).hostname, version: HOST_VERSION })
+      return true
+    }
+    if (pathname === AASA_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+      json(res, 200, { applinks: { details: [{ appIDs: [appleAppId], components: [{ '/': '/nfc/*' }] }] } })
+      return true
+    }
+    const nfc = NFC_PATH.exec(pathname)
+    if (nfc) {
+      await nfcPage(req, res, nfc[1]!, search)
       return true
     }
     if (pathname === DEVICE_LINK_PATH && req.method === 'GET') {

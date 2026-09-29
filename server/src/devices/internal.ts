@@ -26,6 +26,12 @@ const STATUS_BY_CODE: Record<string, number> = {
   push_failed: 502,
 }
 
+// What a command log line says about how it went.
+function describe(value: unknown): string {
+  const text = JSON.stringify(value) ?? 'null'
+  return text.length > 200 ? `${text.slice(0, 200)}...` : text
+}
+
 function answer(response: DeviceResponse, status = 200): Response {
   return Response.json(response, { status })
 }
@@ -58,10 +64,12 @@ export async function devicesResponse(
       'Workspaces and branch previews cannot use devices. Deployed handlers can; in tests, fake ctx.device with createTestContext',
     )
   }
-  if (request.capability !== 'notifications' || request.method !== 'send') {
-    return failure('unsupported', `Hobwork does not know ${request.capability}.${request.method}. Devices can do notifications.send`)
-  }
   try {
+    if (request.capability !== 'notifications' || request.method !== 'send') {
+      const value = await devices.callCommand(options.project, request.device, request.capability, request.method, request.args, invocation)
+      options.log?.({ invocation, level: 'info', message: `Device ${request.device}: ${request.capability}.${request.method} answered ${describe(value)}` })
+      return answer({ ok: true, result: value })
+    }
     const sent = await devices.sendNotification(options.project, request.device, request.args)
     const title = (request.args as { title?: unknown }).title
     options.log?.({

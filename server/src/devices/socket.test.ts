@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { WebSocket } from 'ws'
-import type { NotificationActionEvent } from '../../../packages/sdk/src/devices.ts'
+import type { DeviceEvent } from '../../../packages/sdk/src/devices.ts'
 import { createProject } from '../projects.ts'
 import { queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
@@ -21,7 +21,7 @@ let host: ReturnType<typeof createTestHost>
 let app: Awaited<ReturnType<typeof startTestApp>>
 let cookie: string
 let devices: Devices
-let invoked: { project: string; name: string; payload: NotificationActionEvent }[]
+let invoked: { project: string; name: string; payload: DeviceEvent }[]
 let triggers: Record<string, { device?: { capability: 'notifications'; event: 'action' } }>
 let sockets: DeviceSockets | undefined
 let server: Server | undefined

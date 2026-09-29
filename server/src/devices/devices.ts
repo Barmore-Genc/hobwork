@@ -1,24 +1,49 @@
-import type { DeviceInfo, NotificationActionEvent, SentNotification } from '../../../packages/sdk/src/devices.ts'
+import { randomUUID } from 'node:crypto'
+import type { DeviceEvent, DeviceInfo, HealthSample, HealthType, NotificationActionEvent, SentNotification } from '../../../packages/sdk/src/devices.ts'
 import { isAllowed } from '../auth/users.ts'
 import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
-import { getProject } from '../projects.ts'
+import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
 import { MAX_PAYLOAD_BYTES, PayloadTooLarge, type Apns } from './apns.ts'
-import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_REVOKED, createDeviceRegistry, DeviceError, type DeviceRegistry } from './registry.ts'
+import { commandSpec, fallbackBody, HEALTH_TYPES, knownMethods, promptAlert } from './commands.ts'
 import {
+  CLOSE_OWNER_NOT_ALLOWED,
+  CLOSE_REVOKED,
+  createDeviceRegistry,
+  DeviceError,
+  type DeviceConnection,
+  type DeviceRegistry,
+} from './registry.ts'
+import {
+  answerCommand,
   answerNotification,
+  COMMAND_TTL_MS,
+  deleteNfcTag,
+  expireCommands,
   findDeviceByName,
   findNotification,
+  getCommand,
   getDevice,
   listDevices,
+  newNfcTagId,
+  nfcTagProject,
+  pendingCommands,
+  recordCommand,
+  recordNfcTag,
   recordNotification,
   revokeDevice,
   setPushToken,
+  type CommandRecord,
   type Device,
 } from './store.ts'
 
-export type DeviceTrigger = { capability: 'notifications'; event: 'action' }
+// A `device` block of a trigger in hobwork.json. device limits it to one
+// device by name.
+export type DeviceTrigger = { capability: string; event: string; device?: string }
+
+// Capability/event pairs the app sends and hobwork.json triggers may name.
+export const DEVICE_EVENTS = ['notifications/action', 'focus/changed', 'nfc/scanned', 'health/samples'] as const
 
 export type AppEvent = { capability: unknown; name: unknown; data?: unknown }
 
@@ -34,6 +59,16 @@ export type DeviceSummary = DeviceInfo & {
 
 // Delivery through the app's socket failed in a way that push can fix.
 const TRANSPORT_ERRORS = new Set(['not_connected', 'disconnected', 'timeout'])
+export const BACKGROUND_WAIT_MS = 30_000
+export const FOREGROUND_WAIT_MS = 120_000
+// A background command sent over a socket that stays silent this long also
+// goes by push: the socket may be half-open after the phone changed networks,
+// and the app runs a command it gets twice only once.
+export const SOCKET_FALLBACK_MS = 10_000
+const EXPIRY_INTERVAL_MS = 60_000
+const MAX_HEALTH_EVENT_SAMPLES = 500
+const MAX_FOCUS_LABEL = 64
+const MAX_LOGGED_RESULT = 500
 const MAX_ACTIONS = 4
 const MAX_TITLE_BYTES = 200
 const MAX_BODY_BYTES = 2000
@@ -115,6 +150,72 @@ function checkPushSize(project: string, n: ParsedNotification) {
   }
 }
 
+type Outcome = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }
+
+type Waiter = {
+  command: CommandRecord
+  device: string
+  foreground: boolean
+  payload: unknown
+  resolve: (value: unknown) => void
+  reject: (err: DeviceError) => void
+  timer: NodeJS.Timeout
+  // The connection the command went to, while it is open.
+  connection?: DeviceConnection
+  fallback?: NodeJS.Timeout
+  pushed: boolean
+}
+
+// The command object in pushes and what the NSE and the app run.
+function pushCommand(command: CommandRecord, foreground: boolean) {
+  return {
+    id: command.id,
+    capability: command.capability,
+    method: command.method,
+    args: command.args,
+    expiresAt: command.expiresAt,
+    ...(foreground ? { foreground: true } : {}),
+  }
+}
+
+// Background commands go as a passive alert that the notification service
+// extension turns into the command and whose text it replaces with what
+// happened. Background pushes (content-available) are throttled and dropped
+// after a force quit, so they are not used. Foreground commands are an
+// ordinary alert the person taps to open the app.
+export function commandPushPayload(project: string, command: CommandRecord, foreground: boolean) {
+  const hobwork = { project, command: pushCommand(command, foreground) }
+  if (foreground) {
+    return { aps: { alert: promptAlert(project, command.method), sound: 'default', 'thread-id': project }, hobwork }
+  }
+  return {
+    aps: {
+      alert: { title: project, body: fallbackBody(command.capability, command.method) },
+      'mutable-content': 1,
+      'interruption-level': 'passive',
+      'thread-id': project,
+    },
+    hobwork,
+  }
+}
+
+function parseOutcome(message: { ok?: unknown; value?: unknown; error?: unknown }): Outcome {
+  if (message.ok === true) return { ok: true, value: message.value ?? null }
+  const error = isObject(message.error) ? message.error : {}
+  return {
+    ok: false,
+    error: {
+      code: typeof error.code === 'string' && error.code ? error.code.slice(0, 64) : 'device_error',
+      message: typeof error.message === 'string' && error.message ? error.message.slice(0, 2000) : 'The device reported an error',
+    },
+  }
+}
+
+function short(value: unknown): string {
+  const text = JSON.stringify(value) ?? 'null'
+  return text.length > MAX_LOGGED_RESULT ? `${text.slice(0, MAX_LOGGED_RESULT)}...` : text
+}
+
 export type Devices = ReturnType<typeof createDevices>
 
 export function createDevices(options: {
@@ -123,13 +224,32 @@ export function createDevices(options: {
   // Devices of people no longer on it are hidden from projects.
   allowlist?: Allowlist
   registry?: DeviceRegistry
+  // Origin of NFC tag URLs.
+  publicUrl?: string
   // The deployed version's device triggers of a project, from hobwork.json.
   triggers?: (project: string) => Promise<Record<string, { device?: DeviceTrigger }>>
-  invokeTrigger?: (project: string, name: string, payload: NotificationActionEvent) => Promise<unknown>
+  invokeTrigger?: (project: string, name: string, payload: DeviceEvent) => Promise<unknown>
+  // Tests shorten how long calls wait and move the clock.
+  waitMs?: { background: number; foreground: number }
+  socketFallbackMs?: number
+  now?: () => number
 }) {
   const { host, apns } = options
   const registry = options.registry ?? createDeviceRegistry()
+  const publicUrl = options.publicUrl ?? 'http://localhost'
+  const now = options.now ?? Date.now
+  const waitMs = options.waitMs ?? { background: BACKGROUND_WAIT_MS, foreground: FOREGROUND_WAIT_MS }
+  const socketFallbackMs = options.socketFallbackMs ?? SOCKET_FALLBACK_MS
   const closers: (() => void)[] = []
+  const waiters = new Map<string, Waiter>()
+  const expiry = setInterval(() => {
+    try {
+      expire()
+    } catch (err) {
+      console.error('Expiring device commands failed', err)
+    }
+  }, EXPIRY_INTERVAL_MS)
+  expiry.unref()
 
   function ownerAllowed(device: Device): boolean {
     if (!options.allowlist) return true
@@ -168,17 +288,34 @@ export function createDevices(options: {
     }
   }
 
-  async function sendNotification(project: string, deviceName: string, args: unknown): Promise<SentNotification> {
-    const device = typeof deviceName === 'string' ? findDeviceByName(host.db, deviceName) : undefined
-    if (!reachable(device)) {
-      const names = listDevices(host.db)
-        .filter(ownerAllowed)
-        .map((d) => d.name)
-      throw new DeviceError(
-        'unknown_device',
-        `No device called ${JSON.stringify(deviceName)}. ${names.length ? `Paired devices: ${names.join(', ')}` : 'No device is paired with Hobwork yet'}`,
-      )
+  // With the invocation that made the command, when it still exists.
+  function commandLog(command: CommandRecord, level: 'info' | 'warn', message: string) {
+    const entry = { project: command.project, source: 'runtime' as const, level, message }
+    try {
+      appendLog(host, command.invocation === null ? entry : { ...entry, invocationId: command.invocation })
+    } catch {
+      try {
+        appendLog(host, entry)
+      } catch (err) {
+        console.error(`Could not record a device command result for ${command.project}`, err)
+      }
     }
+  }
+
+  function findReachable(deviceName: string): Device {
+    const device = typeof deviceName === 'string' ? findDeviceByName(host.db, deviceName) : undefined
+    if (reachable(device)) return device
+    const names = listDevices(host.db)
+      .filter(ownerAllowed)
+      .map((d) => d.name)
+    throw new DeviceError(
+      'unknown_device',
+      `No device called ${JSON.stringify(deviceName)}. ${names.length ? `Paired devices: ${names.join(', ')}` : 'No device is paired with Hobwork yet'}`,
+    )
+  }
+
+  async function sendNotification(project: string, deviceName: string, args: unknown): Promise<SentNotification> {
+    const device = findReachable(deviceName)
     if (!device.capabilities.includes('notifications')) {
       throw new DeviceError('unsupported', `${device.name} has not said it can show notifications. Open the Hobwork app on it and allow notifications`)
     }
@@ -220,18 +357,328 @@ export function createDevices(options: {
     return { id, delivery: 'push' }
   }
 
+  const CAPABILITY_NAMES: Record<string, string> = {
+    alarms: 'alarms',
+    screenTime: 'Screen Time',
+    focus: 'Focus status',
+    nfc: 'NFC',
+    health: 'Health data',
+  }
+
+  // A call other than notifications.send. Resolves with the device's answer,
+  // or throws its error, "timeout" when it does not answer in time (the
+  // command may still run until it expires), or a delivery failure.
+  async function callCommand(
+    project: string,
+    deviceName: string,
+    capability: string,
+    method: string,
+    args?: unknown,
+    invocation?: number,
+  ): Promise<unknown> {
+    const spec = commandSpec(capability, method)
+    if (!spec) throw new DeviceError('unsupported', `Hobwork does not know ${capability}.${method}. Devices can do ${knownMethods()}`)
+    const device = findReachable(deviceName)
+    if (!device.capabilities.includes(capability)) {
+      throw new DeviceError(
+        'unsupported',
+        `${device.name} has not said it can use ${CAPABILITY_NAMES[capability] ?? capability}. Set it up in the Hobwork app's settings on the device and allow it`,
+      )
+    }
+    if (args !== undefined && args !== null && !isObject(args)) bad(`${capability}.${method} takes an object`)
+    const parsed = spec.parse((args ?? {}) as Record<string, unknown>, now())
+    const projectRow = getProject(host, project)
+    if (!projectRow) bad(`Project "${project}" does not exist`)
+    const tag = capability === 'nfc' && method === 'write' ? newNfcTagId() : undefined
+    const sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
+    const id = randomUUID()
+    const createdAt = now()
+    const draft: CommandRecord = {
+      id,
+      deviceId: device.id,
+      project,
+      invocation: invocation ?? null,
+      capability,
+      method,
+      args: sent,
+      status: 'pending',
+      createdAt: new Date(createdAt).toISOString(),
+      expiresAt: new Date(createdAt + COMMAND_TTL_MS).toISOString(),
+    }
+    const foreground = Boolean(spec.foreground)
+    const payload = commandPushPayload(project, draft, foreground)
+    // Checked before anything is sent, so every command can also go by push.
+    const size = Buffer.byteLength(JSON.stringify(payload))
+    if (size > MAX_PAYLOAD_BYTES) {
+      throw new DeviceError('too_large', `The command is ${size} bytes as a push, and Apple allows ${MAX_PAYLOAD_BYTES}. Send less`)
+    }
+    expire()
+    if (tag) recordNfcTag(host.db, tag, projectRow.id, createdAt)
+    const command = recordCommand(host.db, { id, deviceId: device.id, projectId: projectRow.id, invocation, capability, method, args: sent }, createdAt)
+
+    const wait = foreground ? waitMs.foreground : waitMs.background
+    const answered = new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const waiter = waiters.get(id)
+        if (!waiter) return
+        forget(waiter)
+        reject(
+          new DeviceError(
+            'timeout',
+            `${device.name} did not answer ${capability}.${method} within ${Math.round(wait / 1000)}s. The command was sent and may still run until ${command.expiresAt}; its result will be in the project log`,
+          ),
+        )
+      }, wait)
+      waiters.set(id, { command, device: device.name, foreground, payload, resolve, reject, timer, pushed: false })
+    })
+    // Keeps a failed delivery from being an unhandled rejection before it is awaited.
+    answered.catch(() => {})
+    const waiter = waiters.get(id)!
+    if (!sendOverSocket(waiter)) {
+      try {
+        await push(waiter, `${device.name} is not connected`)
+      } catch (err) {
+        // A command that reached nothing must not run later by surprise.
+        const error = err as DeviceError
+        answerCommand(host.db, id, { ok: false, error: { code: error.code, message: error.message } }, now())
+        if (tag) deleteNfcTag(host.db, tag)
+        forget(waiter)
+        throw err
+      }
+    }
+    return answered
+  }
+
+  function forget(waiter: Waiter) {
+    clearTimeout(waiter.timer)
+    clearTimeout(waiter.fallback)
+    waiters.delete(waiter.command.id)
+  }
+
+  function callMessage(command: CommandRecord) {
+    return { type: 'call' as const, id: command.id, capability: command.capability, method: command.method, args: command.args }
+  }
+
+  function sendOverSocket(waiter: Waiter): boolean {
+    let connection: DeviceConnection | undefined
+    try {
+      connection = registry.send(waiter.command.deviceId, callMessage(waiter.command))
+    } catch {
+      return false
+    }
+    if (!connection) return false
+    waiter.connection = connection
+    if (!waiter.foreground && !waiter.pushed) {
+      clearTimeout(waiter.fallback)
+      waiter.fallback = setTimeout(() => fallBackToPush(waiter, `${waiter.device} did not answer on its connection`), socketFallbackMs)
+    }
+    return true
+  }
+
+  // For a command the socket took but did not answer. The handler keeps
+  // waiting either way, so a failed push is only logged.
+  function fallBackToPush(waiter: Waiter, reason: string) {
+    if (waiter.pushed || waiters.get(waiter.command.id) !== waiter) return
+    push(waiter, reason).catch((err: unknown) =>
+      commandLog(waiter.command, 'warn', `Device ${waiter.device}: ${waiter.command.capability}.${waiter.command.method}: ${(err as Error).message}`),
+    )
+  }
+
+  async function push(waiter: Waiter, offline: string): Promise<void> {
+    const { command } = waiter
+    if (!apns) throw new DeviceError('unreachable', `${offline}, and push notifications are not set up on this Hobwork host`)
+    const device = getDevice(host.db, command.deviceId)
+    if (!device?.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
+    waiter.pushed = true
+    const ttlSeconds = Math.max(1, Math.ceil((Date.parse(command.expiresAt) - now()) / 1000))
+    let result
+    try {
+      result = await apns.send(device.push, { id: command.id, payload: waiter.payload, ttlSeconds })
+    } catch (err) {
+      waiter.pushed = false
+      if (err instanceof PayloadTooLarge) throw new DeviceError('too_large', err.message)
+      throw new DeviceError('push_failed', `${offline}, and Apple's push service could not be reached: ${(err as Error).message}`)
+    }
+    if (!result.ok) {
+      waiter.pushed = false
+      if (result.tokenGone) setPushToken(host.db, device.id, null)
+      throw new DeviceError('push_failed', `${offline}, and Apple's push service refused the push: ${result.reason}`)
+    }
+  }
+
+  // A connection a command went to closed before it answered. A newer
+  // connection of the device gets the command after its hello instead.
+  registry.onDetach((connection) => {
+    for (const waiter of waiters.values()) {
+      if (waiter.connection !== connection) continue
+      waiter.connection = undefined
+      clearTimeout(waiter.fallback)
+      if (registry.connected(waiter.command.deviceId)) continue
+      fallBackToPush(waiter, `${waiter.device} disconnected before it answered`)
+    }
+  })
+
+  // Every hello: commands still pending go to the app again, oldest first.
+  // The app runs each command once, however often it arrives.
+  function resendPending(deviceId: number) {
+    expire()
+    for (const command of pendingCommands(host.db, deviceId, now())) {
+      const waiter = waiters.get(command.id)
+      if (waiter) {
+        clearTimeout(waiter.fallback)
+        if (!sendOverSocket(waiter)) return
+        continue
+      }
+      try {
+        if (!registry.send(deviceId, callMessage(command))) return
+      } catch {
+        return
+      }
+    }
+  }
+
+  // Results over the socket or POST /api/devices/results. The first result of
+  // a command wins; "unknown" for an ID that is not this device's command.
+  function handleResult(deviceId: number, message: { id?: unknown; ok?: unknown; value?: unknown; error?: unknown }): 'unknown' | 'ignored' | 'accepted' {
+    if (typeof message.id !== 'string') return 'unknown'
+    const command = getCommand(host.db, message.id)
+    if (!command || command.deviceId !== deviceId) return 'unknown'
+    let outcome = parseOutcome(message)
+    if (!answerCommand(host.db, command.id, outcome, now())) return 'ignored'
+    const tag = command.capability === 'nfc' && command.method === 'write' ? (command.args as { tag: string }).tag : undefined
+    if (tag) {
+      if (outcome.ok) outcome = { ok: true, value: { tag } }
+      else deleteNfcTag(host.db, tag)
+    }
+    const waiter = waiters.get(command.id)
+    const what = `${command.capability}.${command.method}`
+    if (waiter) {
+      forget(waiter)
+      if (outcome.ok) waiter.resolve(outcome.value)
+      else waiter.reject(new DeviceError(outcome.error.code, outcome.error.message))
+      return 'accepted'
+    }
+    const name = getDevice(host.db, deviceId)?.name ?? `device ${deviceId}`
+    if (outcome.ok) commandLog(command, 'info', `Device ${name}: ${what} finished after the handler stopped waiting: ${short(outcome.value)}`)
+    else {
+      commandLog(
+        command,
+        'warn',
+        `Device ${name}: ${what} failed after the handler stopped waiting: ${outcome.error.code}: ${outcome.error.message}`,
+      )
+    }
+    return 'accepted'
+  }
+
+  function expire() {
+    for (const command of expireCommands(host.db, now())) {
+      if (command.capability === 'nfc' && command.method === 'write') deleteNfcTag(host.db, (command.args as { tag: string }).tag)
+      const name = getDevice(host.db, command.deviceId)?.name ?? `device ${command.deviceId}`
+      commandLog(command, 'warn', `Device ${name}: ${command.capability}.${command.method} expired without an answer from the device`)
+    }
+  }
+
+  function matching(entries: Record<string, { device?: DeviceTrigger }>, capability: string, event: string, device: string | null): string[] {
+    return Object.entries(entries)
+      .filter(([, entry]) => {
+        const trigger = entry.device
+        if (trigger?.capability !== capability || trigger.event !== event) return false
+        return trigger.device === undefined || trigger.device === device
+      })
+      .map(([name]) => name)
+  }
+
+  function run(project: string, names: string[], payload: DeviceEvent) {
+    for (const name of names) {
+      Promise.resolve()
+        .then(() => options.invokeTrigger?.(project, name, payload))
+        .catch((err: unknown) =>
+          projectLog(project, 'warn', `Running trigger "${name}" for ${payload.capability}/${payload.event} failed: ${(err as Error).message}`),
+        )
+    }
+  }
+
   // Events the app sends over its socket or POST /api/devices/events.
   // Unknown ones are ignored, so older hosts work with newer apps. Resolves
   // once the triggers started, not when they finish: a handler may run for
-  // minutes, and iOS gives an app woken for an action a few seconds. An action
-  // no trigger took stays unanswered, so a retry from the app can still run it.
+  // minutes, and iOS gives an app woken in the background a few seconds.
   async function handleEvent(deviceId: number, event: AppEvent): Promise<void> {
-    if (event.capability !== 'notifications' || event.name !== 'action' || !isObject(event.data)) return
-    const { id, action } = event.data
-    if (typeof id !== 'string' || typeof action !== 'string') return
+    if (!isObject(event.data)) return
     const device = getDevice(host.db, deviceId)
     if (!reachable(device)) return
-    const record = findNotification(host.db, id, deviceId, action)
+    const data = event.data
+    const pair = `${String(event.capability)}/${String(event.name)}`
+    if (pair === 'notifications/action') return notificationAction(device, data)
+    if (pair === 'nfc/scanned') {
+      if (typeof data.tag === 'string') await nfcScanned(data.tag, device.name)
+      return
+    }
+    if (pair === 'focus/changed') {
+      const { label, active } = data
+      if (typeof label !== 'string' || !label || label.length > MAX_FOCUS_LABEL || typeof active !== 'boolean') return
+      return broadcast({ device: device.name, capability: 'focus', event: 'changed', label, active })
+    }
+    if (pair === 'health/samples') {
+      const { type, samples } = data
+      if (!(HEALTH_TYPES as readonly unknown[]).includes(type)) return
+      if (!Array.isArray(samples) || !samples.length || samples.length > MAX_HEALTH_EVENT_SAMPLES || !samples.every(isObject)) return
+      return broadcast({
+        device: device.name,
+        capability: 'health',
+        event: 'samples',
+        type: type as HealthType,
+        samples: samples as HealthSample[],
+      })
+    }
+  }
+
+  // Focus and Health events belong to no project, so they go to every
+  // project whose deployed version has a matching trigger.
+  async function broadcast(payload: DeviceEvent) {
+    for (const { name: project } of listProjects(host)) {
+      let entries: Record<string, { device?: DeviceTrigger }>
+      try {
+        entries = (await options.triggers?.(project)) ?? {}
+      } catch {
+        // Projects that were never deployed have no triggers.
+        continue
+      }
+      run(project, matching(entries, payload.capability, payload.event, payload.device), payload)
+    }
+  }
+
+  // A scan of a Hobwork tag, from the app or the tag's web page (device null).
+  // Runs the triggers of the project that wrote the tag. False for an unknown tag.
+  async function nfcScanned(tag: string, device: string | null): Promise<boolean> {
+    const project = nfcTagProject(host.db, tag)
+    if (!project) return false
+    const from = device ?? 'A browser'
+    let entries: Record<string, { device?: DeviceTrigger }>
+    try {
+      entries = (await options.triggers?.(project)) ?? {}
+    } catch (err) {
+      projectLog(project, 'warn', `${from}: NFC tag ${tag} was scanned, but the project's triggers could not be read: ${(err as Error).message}`)
+      return true
+    }
+    const names = matching(entries, 'nfc', 'scanned', device)
+    if (!names.length) {
+      projectLog(
+        project,
+        'warn',
+        `${from}: NFC tag ${tag} was scanned, but no trigger handles it. Add one with "device": { "capability": "nfc", "event": "scanned" } to hobwork.json`,
+      )
+      return true
+    }
+    run(project, names, { device, capability: 'nfc', event: 'scanned', tag })
+    return true
+  }
+
+  // An action no trigger took stays unanswered, so a retry from the app can
+  // still run it.
+  async function notificationAction(device: Device, data: Record<string, unknown>): Promise<void> {
+    const { id, action } = data
+    if (typeof id !== 'string' || typeof action !== 'string') return
+    const record = findNotification(host.db, id, device.id, action)
     if (!record) return
     let entries: Record<string, { device?: DeviceTrigger }>
     try {
@@ -244,10 +691,8 @@ export function createDevices(options: {
       )
       return
     }
-    const triggers = Object.entries(entries).filter(
-      ([, entry]) => entry.device?.capability === 'notifications' && entry.device.event === 'action',
-    )
-    if (!triggers.length) {
+    const names = matching(entries, 'notifications', 'action', device.name)
+    if (!names.length) {
       projectLog(
         record.project,
         'warn',
@@ -264,13 +709,7 @@ export function createDevices(options: {
       action,
       ...(record.data !== undefined ? { data: record.data } : {}),
     }
-    for (const [name] of triggers) {
-      Promise.resolve()
-        .then(() => options.invokeTrigger?.(record.project, name, payload))
-        .catch((err: unknown) =>
-          projectLog(record.project, 'warn', `Running trigger "${name}" for a notification action failed: ${(err as Error).message}`),
-        )
-    }
+    run(record.project, names, payload)
   }
 
   return {
@@ -286,7 +725,12 @@ export function createDevices(options: {
           return { name, platform, owner, capabilities, connected, lastSeenAt }
         }),
     sendNotification,
+    callCommand,
+    handleResult,
+    resendPending,
+    expire,
     handleEvent,
+    nfcScanned,
     revoke(id: number): boolean {
       const revoked = revokeDevice(host.db, id)
       registry.disconnect(id, CLOSE_REVOKED, 'This device was removed from Hobwork')
@@ -298,6 +742,11 @@ export function createDevices(options: {
       closers.push(closer)
     },
     close() {
+      clearInterval(expiry)
+      for (const waiter of waiters.values()) {
+        forget(waiter)
+        waiter.reject(new DeviceError('unreachable', 'Hobwork is shutting down'))
+      }
       registry.closeAll(1001, 'Hobwork is shutting down')
       for (const closer of closers) closer()
       apns?.close()

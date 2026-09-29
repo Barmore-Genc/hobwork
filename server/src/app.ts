@@ -86,6 +86,7 @@ export function createApp(
     delivery,
     authenticate: options.authenticate ?? mcpAuth(host, oauth.verifyAccessToken),
     resourceMetadataUrl: oauth.resourceMetadataUrl,
+    publicUrl: web.publicUrl,
     ssh: options.sshPort === undefined ? undefined : { host: new URL(web.publicUrl).hostname, port: options.sshPort },
     homeAssistant: options.homeAssistant,
     runtime: options.runtime,

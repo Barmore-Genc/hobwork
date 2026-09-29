@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, expect, test } from 'vitest'
-import { createAgentToken } from '../agents.ts'
+import { createAgentToken, ensureAgent } from '../agents.ts'
 import { registerClient } from '../oauth/clients.ts'
 import { approveRequest, exchangeCode, getRequest, saveRequest } from '../oauth/grants.ts'
 import { s256 } from '../oauth/secrets.ts'
 import { createProject } from '../projects.ts'
 import { queryLogs } from '../runtime/logs.ts'
-import { createSecretStore, type SecretInfo, type SecretStore } from '../secrets.ts'
+import { createSecretStore, type HostRequest, type SecretInfo, type SecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
 
@@ -114,7 +114,7 @@ test('invalid secrets, clashes and unknown projects are refused', async () => {
   const lower = await call('PUT', '/api/projects/filament/secrets/lower', { secretId: id })
   expect(lower.status).toBe(400)
   expect(await lower.json()).toEqual({ error: expect.stringContaining('capital letters') })
-  expect((await call('POST', '/api/secrets', { name: 'New', value: 'x' })).status).toBe(400)
+  expect((await call('POST', '/api/secrets', { name: 'New', hosts: ['a.example'] })).status).toBe(400)
   expect((await call('POST', '/api/secrets', { name: 'New', value: 1, hosts: ['a.example'] })).status).toBe(400)
   expect((await call('POST', '/api/secrets', { name: 'key', value: 'x', hosts: ['a.example'] })).status).toBe(409)
   const nowhere = { name: 'New', value: 'x', hosts: ['a.example'], assign: { project: 'nope', envName: 'NEW' } }
@@ -126,6 +126,8 @@ test('invalid secrets, clashes and unknown projects are refused', async () => {
 
 test('agent and OAuth tokens get nothing from any secret endpoint, and writes need CSRF protection', async () => {
   const { id } = secrets.create({ name: 'Key', value: 'the-value', hosts: ['a.example'] }, { kind: 'host' })
+  const agent = { kind: 'agent' as const, id: ensureAgent(host.db, 'claude').id, name: 'claude' }
+  const request = secrets.requestHosts('Key', ['evil.example'], 'Because', agent)
   const tokens = [createAgentToken(host.db, 'claude').token, oauthAccessToken()]
   const endpoints: [string, string, unknown?][] = [
     ['GET', '/api/secrets'],
@@ -136,6 +138,9 @@ test('agent and OAuth tokens get nothing from any secret endpoint, and writes ne
     ['GET', '/api/projects/filament/secrets'],
     ['PUT', '/api/projects/filament/secrets/KEY', { secretId: id }],
     ['DELETE', '/api/projects/filament/secrets/KEY'],
+    ['GET', `/api/secrets/host-requests/${request.id}`],
+    ['POST', `/api/secrets/host-requests/${request.id}/approve`],
+    ['POST', `/api/secrets/host-requests/${request.id}/deny`],
   ]
   for (const token of tokens) {
     const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-hobwork-csrf': '1' }
@@ -154,4 +159,37 @@ test('agent and OAuth tokens get nothing from any secret endpoint, and writes ne
   }
   expect(secrets.list()).toMatchObject([{ id, name: 'Key', hosts: ['a.example'], assignments: [] }])
   expect(secrets.forSandbox('filament')).toEqual({})
+})
+
+test('people approve or deny the hosts an agent asked for', async () => {
+  const agent = { kind: 'agent' as const, id: ensureAgent(host.db, 'claude').id, name: 'claude' }
+  const created = await call('POST', '/api/secrets', { name: 'Spools', value: 'v', assign: { project: 'filament', envName: 'SPOOLS' } })
+  expect(created.status).toBe(201)
+  expect(await created.json()).toMatchObject({ hosts: [], pendingHostRequest: null })
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [] } })
+
+  const first = secrets.requestHosts('Spools', ['old.example'], 'First try', agent)
+  const request = secrets.requestHosts('Spools', ['API.Spools.example', '*.cdn.example'], 'Spoolman lives there', agent)
+  expect(((await (await call('GET', `/api/secrets/host-requests/${first.id}`)).json()) as HostRequest).decision).toBe('superseded')
+  expect((await call('POST', `/api/secrets/host-requests/${first.id}/approve`)).status).toBe(409)
+
+  const [listed] = (await (await call('GET', '/api/secrets')).json()) as SecretInfo[]
+  expect(listed?.pendingHostRequest).toEqual({ id: request.id, hosts: ['api.spools.example', '*.cdn.example'], agent: 'claude' })
+  expect(await (await call('GET', `/api/secrets/host-requests/${request.id}`)).json()).toMatchObject({
+    secret: { name: 'Spools', hosts: [] },
+    agent: 'claude',
+    hosts: ['api.spools.example', '*.cdn.example'],
+    reason: 'Spoolman lives there',
+    decision: null,
+  })
+
+  const approved = await call('POST', `/api/secrets/host-requests/${request.id}/approve`)
+  expect(await approved.json()).toMatchObject({ decision: 'approved', decidedBy: expect.any(String) })
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: ['api.spools.example', '*.cdn.example'] } })
+  expect((await call('POST', `/api/secrets/host-requests/${request.id}/deny`)).status).toBe(409)
+
+  const denied = secrets.requestHosts('Spools', ['evil.example'], 'Trust me', agent)
+  expect(((await (await call('POST', `/api/secrets/host-requests/${denied.id}/deny`)).json()) as HostRequest).decision).toBe('denied')
+  expect(secrets.get('Spools')).toMatchObject({ hosts: ['api.spools.example', '*.cdn.example'], pendingHostRequest: null })
+  expect((await call('GET', '/api/secrets/host-requests/999')).status).toBe(404)
 })

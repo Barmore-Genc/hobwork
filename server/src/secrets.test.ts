@@ -166,7 +166,6 @@ test('assignment changes and changes to assigned secrets show up in the project 
 test.each([
   [{ name: '', value: 'x', hosts: ['a.example'] }, 'Give the secret a name'],
   [{ name: 'x'.repeat(81), value: 'x', hosts: ['a.example'] }, 'at most 80'],
-  [{ name: 'New', value: 'x', hosts: [] }, 'at least one host'],
   [{ name: 'New', value: 'x', hosts: ['*'] }, 'is not a host name'],
   [{ name: 'New', value: 'x', hosts: ['hobwork.internal'] }, 'is not a host name'],
   [{ name: 'New', value: 'x', hosts: ['https://a.example/path'] }, 'is not a host name'],

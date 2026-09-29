@@ -36,6 +36,8 @@ export type McpContext = {
   workspaces: WorkspaceManager<ExecWorkspaceVm>
   delivery: Delivery
   agent: AuthenticatedAgent
+  // Origin of the web UI, for links agents show the user.
+  publicUrl: string
   ssh?: SshAddress
   homeAssistant?: HomeAssistant
   runtime?: Runtime
@@ -58,7 +60,7 @@ Rules:
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.
 - Debug from logs and invocation records. Do not guess.
 - Only people can delete a project, in the Hobwork web UI. There is no tool for it.
-- Only the user creates secrets and sets their values and the hosts they may be sent to, in the Hobwork UI. When a project needs one, look for it with list_secrets and assign it to the project with assign_secret. If it does not exist, ask the user to create it in Hobwork with the hosts it may be sent to, then assign it. Handlers read it as ctx.secrets.<env name>.
+- Only the user creates secrets and sets their values, in the Hobwork UI. When a project needs one, look for it with list_secrets and assign it to the project with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
 
 const MAX_READ_LINES = 2000
@@ -110,6 +112,7 @@ export function createMcpServer({
   workspaces,
   delivery,
   agent,
+  publicUrl,
   ssh,
   homeAssistant,
   runtime,
@@ -465,7 +468,7 @@ export function createMcpServer({
   registerDeliveryTools(server, { host, delivery, agent })
   if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
   registerRuntimeTools(server, { host, runtime })
-  registerSecretTools(server, { host, secrets, agent })
+  registerSecretTools(server, { host, secrets, agent, publicUrl })
   registerSshKeyTools(server, { host, agent, ssh })
   if (devices) registerDeviceTools(server, devices)
 

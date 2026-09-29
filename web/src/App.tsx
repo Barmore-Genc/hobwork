@@ -4,6 +4,7 @@ import { AgentsPage } from './pages/Agents.tsx'
 import { AllActivityPage } from './pages/AllActivity.tsx'
 import { ConnectPage } from './pages/Connect.tsx'
 import { DeviceConnectPage } from './pages/DeviceConnect.tsx'
+import { HostRequestPage } from './pages/HostRequest.tsx'
 import { LoginPage } from './pages/Login.tsx'
 import { ProjectPage } from './pages/Project.tsx'
 import { ActivityPage } from './pages/project/Activity.tsx'
@@ -90,6 +91,8 @@ export default function App() {
   }
   if (connect) return <ConnectPage requestId={search.get('request')} error={null} />
   if (pathname === '/devices/connect') return <DeviceConnectPage search={search} />
+  const hostRequest = /^\/secrets\/requests\/(\d+)\/?$/.exec(pathname)
+  if (hostRequest) return <HostRequestPage id={Number(hostRequest[1])} />
   return (
     <Shell user={session.user} pathname={pathname} onSignedOut={loadSession} wide={/^\/projects\/[^/]+\/(app|preview\/[^/]+)\/?$/.test(pathname)}>
       <Page pathname={pathname} />

@@ -149,11 +149,25 @@ export type Secret = {
   id: number
   name: string
   hosts: string[]
+  pendingHostRequest: { id: number; hosts: string[]; agent: string | null } | null
   createdAt: string
   updatedAt: string
   createdBy: string | null
   updatedBy: string | null
   assignments: SecretAssignment[]
+}
+
+// Hosts an agent asked a secret to be sent to.
+export type HostRequest = {
+  id: number
+  secret: { id: number; name: string; hosts: string[] }
+  agent: string | null
+  hosts: string[]
+  reason: string
+  createdAt: string
+  decision: 'approved' | 'denied' | 'superseded' | null
+  decidedAt: string | null
+  decidedBy: string | null
 }
 
 // A secret as one project uses it.
@@ -170,7 +184,6 @@ export type ProjectSecret = {
 export type NewSecret = {
   name: string
   value: string
-  hosts: string[]
   assign?: { project: string; envName: string }
 }
 
@@ -387,6 +400,9 @@ export const api = {
   updateSecret: (id: number, change: { name?: string; value?: string; hosts?: string[] }) =>
     request<Secret>('PATCH', `/api/secrets/${id}`, change),
   deleteSecret: (id: number) => request<void>('DELETE', `/api/secrets/${id}`),
+  hostRequest: (id: number) => request<HostRequest>('GET', `/api/secrets/host-requests/${id}`),
+  decideHostRequest: (id: number, approve: boolean) =>
+    request<HostRequest>('POST', `/api/secrets/host-requests/${id}/${approve ? 'approve' : 'deny'}`),
   projectSecrets: (project: string) => request<ProjectSecret[]>('GET', projectSecretsPath(project)),
   assignSecret: (project: string, envName: string, secretId: number) =>
     request<ProjectSecret>('PUT', `${projectSecretsPath(project)}/${encodeURIComponent(envName)}`, { secretId }),

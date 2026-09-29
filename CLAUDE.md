@@ -1,6 +1,6 @@
 # Working on Hobwork
 
-Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them when the design changes.
+Design source of truth: `docs/architecture.md` (what the system is) and `docs/todo.md` (what is planned or missing). Update them when the design changes.
 
 ## Layout
 

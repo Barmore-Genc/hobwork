@@ -1,3 +1,4 @@
+import { APP_FRAME_SANDBOX } from '../../ui.tsx'
 import { ProjectLayout } from './ProjectLayout.tsx'
 
 export function ProjectAppPage({ name }: { name: string }) {
@@ -13,6 +14,7 @@ export function ProjectAppPage({ name }: { name: string }) {
             </div>
             <iframe
               src={project.appUrl}
+              sandbox={APP_FRAME_SANDBOX}
               title={`${name} app`}
               className="block h-[calc(100dvh-17rem)] min-h-[28rem] w-full rounded-lg border border-border bg-bg"
             />

@@ -14,7 +14,6 @@ Sections are in the order to work on them.
 ### Quick fixes
 
 - **Webhook and route response headers**: handler responses on the Hobwork origin (`/hooks/`, `/p/<hob>/api`) get `Content-Security-Policy: sandbox; default-src 'none'` and `X-Content-Type-Options: nosniff`, and lose `Set-Cookie`. Tested with a branch webhook and a route whose handler returns HTML with a script and a cookie, and by checking that such a page cannot call `/api` as the user.
-- **Sandboxed app iframes**: `sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"` on the app iframes, without top navigation.
 - **Session token on `hobwork.internal`**: workspace VMs' `/v1/db`, `/v1/ha` and `/v1/devices` require `HOBWORK_SESSION`, like the CLI routes.
 - **Reading `hobwork.json` and `package.json` from workspaces**: open with `O_NOFOLLOW`, require a regular file, cap the size. Replaced later by reading them from git or the VM.
 - **AI usage accounting**: the gateway always sets `usage: { include: true }`, whatever the guest sent.

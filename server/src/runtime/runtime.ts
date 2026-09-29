@@ -46,6 +46,8 @@ import {
   type LogLevel,
   type NewLogEntry,
 } from './logs.ts'
+import { createLineSplitter } from './line-splitter.ts'
+import { createLogLimiter, type LogLimiter } from './log-limiter.ts'
 import { parseRoutes, type Route } from './routes.ts'
 import { createScheduler, type ScheduledCron } from './scheduler.ts'
 
@@ -139,6 +141,7 @@ type Instance = {
   token: string
   inflight: Set<number>
   lines: Map<number, number>
+  idleLog: LogLimiter
   stopping: boolean
   idleTimer?: NodeJS.Timeout
   lifetimeTimer?: NodeJS.Timeout
@@ -279,19 +282,21 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   }
 
   function outputLogger(project: string, branch: string | undefined, tail: string[]) {
-    const partial = { stdout: '', stderr: '' }
-    return (chunk: { stream: 'stdout' | 'stderr'; text: string }) => {
-      const lines = (partial[chunk.stream] + chunk.text).split('\n')
-      partial[chunk.stream] = lines.pop() ?? ''
-      const entries: NewLogEntry[] = lines
-        .filter((line) => line.trim())
-        .map((message) => ({ project, branch, source: 'runtime', level: chunk.stream === 'stderr' ? 'error' : 'info', message }))
-      for (const entry of entries) {
-        tail.push(entry.message)
+    let entries: NewLogEntry[] = []
+    const splitters = (['stdout', 'stderr'] as const).map((stream) =>
+      createLineSplitter((message) => {
+        if (!message.trim()) return
+        entries.push({ project, branch, source: 'runtime', level: stream === 'stderr' ? 'error' : 'info', message })
+        tail.push(message)
         if (tail.length > OUTPUT_TAIL_LINES) tail.shift()
-      }
+      }),
+    )
+    return (chunk: { stream: 'stdout' | 'stderr'; text: string }) => {
+      splitters[chunk.stream === 'stderr' ? 1 : 0]!(chunk.text)
+      const batch = entries
+      entries = []
       try {
-        appendLogs(host, entries)
+        appendLogs(host, batch)
       } catch (err) {
         console.error(`Could not record runtime output for ${project}`, err)
       }
@@ -328,6 +333,13 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
               message: `More than ${MAX_LINES_PER_INVOCATION} log lines; the rest of this invocation's lines were dropped`,
             })
             return
+          }
+        }
+        if (invocationId === undefined && inst) {
+          const { keep, dropped } = inst.idleLog.take()
+          if (!keep) return
+          if (dropped) {
+            entries.push({ project, source: 'runtime', level: 'warn', message: `${dropped} log lines dropped` })
           }
         }
         entries.push({ ...entry, invocationId })
@@ -486,6 +498,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         token,
         inflight: new Set(),
         lines: new Map(),
+        idleLog: createLogLimiter(),
         stopping: false,
         onIdle: [],
       }

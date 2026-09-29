@@ -1,5 +1,5 @@
 import type { ExecWorkspaceVm } from '../workspaces.ts'
-import { truncateMiddle } from './output.ts'
+import { HeadTailOutput, truncateMiddle } from './output.ts'
 
 export type BashOutcome = { text: string; failed: boolean }
 
@@ -16,7 +16,7 @@ export async function runBash(
 ): Promise<BashOutcome> {
   const timeout = AbortSignal.timeout(options.timeoutMs)
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
-  const streamed = { stdout: '', stderr: '' }
+  const streamed = { stdout: new HeadTailOutput(), stderr: new HeadTailOutput() }
 
   const aborted = new Promise<'aborted'>((resolve) => {
     if (signal.aborted) resolve('aborted')
@@ -29,7 +29,7 @@ export async function runBash(
       signal,
       env: options.env,
       onOutput: (stream, chunk) => {
-        streamed[stream] += chunk
+        streamed[stream].push(chunk)
       },
     }),
     aborted,
@@ -39,7 +39,8 @@ export async function runBash(
     const reason = timeout.aborted
       ? `Command timed out after ${options.timeoutMs / 1000}s and was stopped. Pass a larger timeout_seconds for slow commands.`
       : 'Command was cancelled.'
-    const output = result === 'aborted' ? streamed : result
+    const output =
+      result === 'aborted' ? { stdout: streamed.stdout.toString(), stderr: streamed.stderr.toString() } : result
     return { text: reason + section('stdout', output.stdout) + section('stderr', output.stderr), failed: true }
   }
   return {

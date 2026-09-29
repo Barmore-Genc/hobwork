@@ -121,6 +121,27 @@ test('fails a step that times out or whose VM cannot start', async () => {
   expect(broken.steps.find((s) => s.name === 'typecheck')?.output).toContain('no KVM')
 })
 
+test('keeps only the head and tail of a step that prints endlessly', async () => {
+  const noisy = recordingVm(() => ({ exitCode: 0, stdout: '', stderr: '' }))
+  const streaming: PipelineOptions['startVm'] = async (options) => {
+    const vm = await noisy(options)
+    return {
+      ...vm,
+      async exec(command, execOptions) {
+        for (let i = 0; i < 500; i++) execOptions.onOutput?.('stdout', `line ${i} ${'x'.repeat(1000)}\n`)
+        execOptions.onOutput?.('stdout', 'last line\n')
+        return vm.exec(command, execOptions)
+      },
+    }
+  }
+  const run = await runPipeline(host, { startVm: streaming }, { project: 'filament', ...(await seed()) })
+  const output = run.steps.find((s) => s.name === 'typecheck')?.output ?? ''
+  expect(output.length).toBeLessThan(31_000)
+  expect(output.startsWith('$ pnpm run typecheck\nline 0 ')).toBe(true)
+  expect(output).toContain('characters omitted')
+  expect(output.endsWith('last line\n')).toBe(true)
+})
+
 test('marks runs interrupted by a restart as failed', async () => {
   const { gitDir, commit } = await seed()
   const { promise: gate, resolve: release } = Promise.withResolvers<void>()

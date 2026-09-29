@@ -46,11 +46,9 @@ Sections are in the order to work on them.
 
 ### Resources
 
-- **Bounded output**: pipeline step output streams to the log store; bash results keep a head and a tail; the log line splitter has a maximum line length.
+- **Pipeline output in the log store**: pipeline step output streams to the log store line by line, instead of a 2,000-character summary per step. Memory is already bounded (head and tail).
 - **VM resources and budget**: `hobwork.json` can ask for less memory and fewer vCPUs per VM kind, never more than the defaults. Starting a VM reserves its resources from a global memory and vCPU budget. When the budget is full, requests wait in per-hob queues with an equal share per active hob, borrowing idle capacity; idle workspace VMs over their share stop first. The main runtime goes first, then builds and previews, then workspaces. Waits end with a "host busy" error.
-- **Webhook token first**: check the webhook token before resolving a branch label, which runs git.
 - **OAuth limits**: key IPv6 rate limits by /64, and evict the oldest unapproved clients and requests instead of refusing new ones.
-- **Log rate limit**: per-VM limit on log lines outside invocations.
 
 ### Guest privilege
 
@@ -75,7 +73,6 @@ The Gondolin VFS provider runs in the host's Node process and QEMU is its child,
 
 - Hide the `ha_*` tools from credentials limited to some hobs.
 - Read-only tools read from git instead of opening a workspace.
-- Refuse any git HTTP path ending in `git-receive-pack` for read-only tokens.
 
 ## Warm VM pool
 

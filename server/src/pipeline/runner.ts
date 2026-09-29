@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { publishChange } from '../changes.ts'
 import { git, GitError } from '../git.ts'
 import type { Host } from '../host.ts'
-import { truncateMiddle } from '../mcp/output.ts'
+import { HeadTailOutput, truncateMiddle } from '../mcp/output.ts'
 import { requireProject } from '../projects.ts'
 import { saveBuild } from '../runtime/builds.ts'
 import { appendLog } from '../runtime/logs.ts'
@@ -102,7 +102,7 @@ export async function checkout(gitDir: string, commit: string, tmp: string): Pro
 
 async function exec(vm: PipelineVm, command: string, timeoutMs: number): Promise<StepOutcome> {
   const timeout = AbortSignal.timeout(timeoutMs)
-  let streamed = ''
+  const streamed = new HeadTailOutput()
   const timedOut = new Promise<'timeout'>((resolve) => {
     timeout.addEventListener('abort', () => resolve('timeout'), { once: true })
   })
@@ -112,16 +112,17 @@ async function exec(vm: PipelineVm, command: string, timeoutMs: number): Promise
       timeoutMs,
       signal: timeout,
       onOutput: (_, chunk) => {
-        streamed += chunk
+        streamed.push(chunk)
       },
     }),
     timedOut,
   ])
   const header = `$ ${command}\n`
+  const streamedText = streamed.toString()
   if (result === 'timeout') {
-    return { status: 'failed', output: `${header}${streamed}\nTimed out after ${timeoutMs / 1000}s` }
+    return { status: 'failed', output: `${header}${streamedText}\nTimed out after ${timeoutMs / 1000}s` }
   }
-  const output = streamed || result.stdout + result.stderr
+  const output = streamedText || result.stdout + result.stderr
   if (result.exitCode !== 0) {
     return { status: 'failed', output: `${header}${output}\nexit code: ${result.exitCode}` }
   }

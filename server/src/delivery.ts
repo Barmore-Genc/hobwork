@@ -17,7 +17,7 @@ export type Deployment = {
   reason: 'merge' | 'restore'
 }
 
-// Called after main moved to a new version. Phase 5 starts the new runtime here.
+// Called after main moved to a new version. The runtime implements it.
 export type Deploy = (deployment: Deployment) => Promise<void>
 
 export type MergeResult =
@@ -184,7 +184,13 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
   }
 
   // Commits the version's tree as a new commit on main. History is never rewritten.
-  async function restore(request: { project: string; version: number; agent: Agent }): Promise<RestoreResult> {
+  // Without an agent (auto-revert), Hobwork is the author.
+  async function restore(request: {
+    project: string
+    version: number
+    agent?: Agent
+    summary?: string
+  }): Promise<RestoreResult> {
     const { project, agent } = request
     const { id: projectId } = requireProject(host, project)
     return serialized(project, async () => {
@@ -198,14 +204,15 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
       if (tree === (await inRepo(['rev-parse', `${main}^{tree}`])).trim()) {
         throw new ProjectError(`${DEFAULT_BRANCH} already has the code of version ${target.number}`)
       }
-      const summary = `Restore version ${target.number}`
-      const commit = (await inRepo(['commit-tree', tree, '-p', main, '-F', '-'], authorEnv(agent), summary)).trim()
+      const summary = request.summary ?? `Restore version ${target.number}`
+      const env = agent ? authorEnv(agent) : HOBWORK_IDENTITY
+      const commit = (await inRepo(['commit-tree', tree, '-p', main, '-F', '-'], env, summary)).trim()
       await inRepo(['update-ref', `refs/heads/${DEFAULT_BRANCH}`, commit, main])
       const version = recordVersion(host, {
         projectId,
         commit,
         summary,
-        agentId: agent.id,
+        agentId: agent?.id,
         restoredFrom: target.number,
       })
       const deployError = await deployVersion({ project, version: version.number, commit, reason: 'restore' })

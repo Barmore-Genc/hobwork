@@ -5,6 +5,8 @@ import { git, GitError } from '../git.ts'
 import type { Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { requireProject } from '../projects.ts'
+import { saveBuild } from '../runtime/builds.ts'
+import { appendLog } from '../runtime/logs.ts'
 import type { ExecWorkspaceVm } from '../workspaces.ts'
 import { extraDependencies } from '../platform.ts'
 import { validateHobworkJson } from './validate.ts'
@@ -63,6 +65,8 @@ export type Candidate = {
 }
 
 const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000
+// Full step output stays in pipeline_status. The log store gets enough to see what happened.
+const PIPELINE_LOG_CHARS = 2_000
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
@@ -73,7 +77,7 @@ const skipMigrations: MigrationDryRun = async () => ({
 
 // Read from git rather than the checkout so a symlinked file cannot make the
 // host read something outside the candidate.
-async function readBlob(gitDir: string, commit: string, path: string): Promise<string | undefined> {
+export async function readBlob(gitDir: string, commit: string, path: string): Promise<string | undefined> {
   try {
     return await git(['--git-dir', gitDir, 'show', `${commit}:${path}`])
   } catch (err) {
@@ -82,7 +86,7 @@ async function readBlob(gitDir: string, commit: string, path: string): Promise<s
   }
 }
 
-async function checkout(gitDir: string, commit: string, tmp: string): Promise<string> {
+export async function checkout(gitDir: string, commit: string, tmp: string): Promise<string> {
   const dir = join(tmp, 'files')
   mkdirSync(dir)
   const env = { GIT_INDEX_FILE: join(tmp, 'index') }
@@ -136,6 +140,19 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     'UPDATE pipeline_steps SET status = ?, output = ?, duration_ms = ? WHERE run_id = ? AND name = ?',
   )
 
+  function logStep(id: number, name: PipelineStepName, outcome: StepOutcome, durationMs: number) {
+    const where = candidate.branch ? ` (${candidate.branch})` : ''
+    appendLog(host, {
+      project: candidate.project,
+      source: 'pipeline',
+      event: 'pipeline',
+      level: outcome.status === 'failed' ? 'error' : 'info',
+      message: `Pipeline run ${id}${where}: ${name} ${outcome.status} in ${(durationMs / 1000).toFixed(1)}s${
+        outcome.output ? `\n${truncateMiddle(outcome.output, PIPELINE_LOG_CHARS)}` : ''
+      }`,
+    })
+  }
+
   const tmp = mkdtempSync(join(tmpdir(), 'hobwork-pipeline-'))
   let vm: ExecWorkspaceVm | undefined
   let checkedOut: Promise<string> | undefined
@@ -166,7 +183,12 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     typecheck: () => inVm('pnpm run typecheck'),
     lint: () => inVm('pnpm run lint'),
     test: () => inVm('pnpm run test'),
-    build: () => inVm('pnpm run build'),
+    async build() {
+      const outcome = await inVm('pnpm run build')
+      // The checkout is deleted after the run, so the build is kept for deploy.
+      if (outcome.status === 'passed') await saveBuild(host, { project: candidate.project, gitDir, commit, dir: await dir() })
+      return outcome
+    },
     migrations: async () => migrationDryRun({ project: candidate.project, commit, dir: await dir() }),
   }
 
@@ -185,7 +207,9 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
       } catch (err) {
         outcome = { status: 'failed', output: `Step could not run: ${(err as Error).message}` }
       }
-      updateStep.run(outcome.status, truncateMiddle(outcome.output), Math.round(performance.now() - started), runId, name)
+      const durationMs = Math.round(performance.now() - started)
+      updateStep.run(outcome.status, truncateMiddle(outcome.output), durationMs, runId, name)
+      logStep(runId, name, outcome, durationMs)
       if (outcome.status === 'failed') failedStep = name
     }
   } finally {

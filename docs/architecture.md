@@ -141,7 +141,7 @@ All entry points are declared in `hobwork.json`. The host reads it directly and 
 
 - **Crons**: run on a schedule. The host owns the schedule.
 - **Webhooks**: called from outside at `/hooks/<project>/<name>/<token>`. The token is a rotatable secret. The request is passed to the handler.
-- **Routes**: authenticated API for the project's own dashboard, at `/p/<project>/api/...`.
+- **Routes**: authenticated API for the project's own dashboard, at `/p/<project>/api/...`. `"GET /spools/:id"` answers `GET /p/<project>/api/spools/42` with `ctx.params.id = "42"`. Static segments win over parameters, and `HEAD` is served by the `GET` route.
 - **Triggers**: events from integrations (Home Assistant, devices). The trigger payload is passed to the handler.
 
 A handler file exports a default function that receives the invocation context:
@@ -154,6 +154,10 @@ export default (async (ctx) => {
   ...
 }) satisfies Handler;
 ```
+
+The context (`packages/sdk/src/index.ts`) has `invocation` (ID, kind, name, whether it was started by hand), `request` (a standard `Request`, for routes and webhooks), `params`, `payload` (trigger variables, or what a manual invocation passed), `fetch` (the guest's own `fetch`, which the egress allowlist controls) and `log`. `RequestHandler` is the variant with `request` always set. A route or webhook answers with the handler's return value: a `Response` is sent as is, `undefined` as 204, anything else as JSON. A thrown error answers 500 with the invocation ID and no details, since webhook callers are outside the household; the error and stack trace are in the invocation record.
+
+The SDK API is the context rather than imported functions, so handler bundles contain no SDK runtime code and tests build a context by hand.
 
 ### Dependencies
 
@@ -171,7 +175,7 @@ How the layering works (prototyped in `server/src/sandbox/gondolin.test.ts`):
 - The template sets `autoInstallPeers: false` in `pnpm-workspace.yaml`. Without it, pnpm installs a second React for an extra that has React as a peer dependency. With it, the peer resolves to the platform React through the same parent-directory lookup.
 - Installing extras needs egress to `registry.npmjs.org`. Egress is fixed when a VM is created, so pipeline VMs can reach the registry (and nothing else) for the whole run, not only during the install step. Workspace VMs can reach it too, so agents can `pnpm add` extras.
 
-`@hobwork/sdk` is part of the platform set. The image build copies `packages/sdk` (its `package.json`, `src/` and schema) to `/opt/hobwork/platform/node_modules/@hobwork/sdk`, so project code resolves it through `/node_modules` like any platform package, in workspace, pipeline and runtime VMs alike. It is versioned with the image: an SDK change needs an image rebuild, and every project's pipeline runs against the new SDK before it switches, the same as for other platform updates. Rejected: mounting `packages/sdk` from the host read-only, which would let the SDK drift from what a deployed version was tested against. The SDK is shipped as TypeScript source. That works for types and for Vite builds; Phase 5 decides whether its runtime part is compiled to JavaScript (Node does not strip types inside `node_modules`).
+`@hobwork/sdk` is part of the platform set. The image build copies `packages/sdk` (its `package.json`, `src/` and schema) to `/opt/hobwork/platform/node_modules/@hobwork/sdk`, so project code resolves it through `/node_modules` like any platform package, in workspace, pipeline and runtime VMs alike. It is versioned with the image: an SDK change needs an image rebuild, and every project's pipeline runs against the new SDK before it switches, the same as for other platform updates. Rejected: mounting `packages/sdk` from the host read-only, which would let the SDK drift from what a deployed version was tested against. The SDK is shipped as TypeScript source. That works for types and for Vite builds, and handler bundles contain no SDK runtime code (see [Entry points](#entry-points)), so nothing is compiled. The runner in `packages/sdk/src/runner/` is host code and reaches runtime VMs differently (see [Runtime](#runtime)).
 
 ### Workspace file layout
 
@@ -223,7 +227,7 @@ Workspaces and files: `create_branch`, `list_branches`, `read_file`, `write_file
 
 Delivery: `merge` (runs the pipeline, squash-merges and deploys on success, returns failures otherwise), `pipeline_status`, `list_versions`, `restore_version`.
 
-Runtime: `invoke` (call a route or trigger a cron/event by hand, on `main` or in a workspace), `list_invocations`, `get_logs`, `tail_logs`.
+Runtime: `invoke` (call a route or trigger a cron/event by hand on `main`; in a workspace later), `list_invocations`, `get_logs`, `tail_logs`, `rotate_webhook_token`.
 
 Secrets: `list_secrets` (names and bound hosts only, never values).
 
@@ -276,6 +280,13 @@ Details:
 - Restoring code does not roll back data. Additive migrations keep this safe.
 - **Auto-revert**: if a new version fails completely (runtime does not start, or every invocation fails for several minutes after deploy), Hobwork restores the previous version automatically and records why, so the agent can see it.
 
+Auto-revert details (`server/src/runtime/auto-revert.ts`):
+
+- Only versions deployed by a merge are watched. Restores, including the auto-revert's own, are not, so a broken old version cannot start a loop.
+- "Does not start": the VM does not boot, or the runner exits or does not answer within 60s. The runner imports every handler before it reports ready, so a handler that throws at import time counts.
+- "Every invocation fails": within 1 hour of the deploy, no invocation succeeded, at least 5 failed, and the first and the latest failure are at least 3 minutes apart. One success ends the watch. The time span keeps a short outage of something a handler calls from reverting a good version; the count keeps a single failed cron from doing it.
+- The target is version N-1, since versions on `main` are linear. The restore goes through the normal restore path with Hobwork as the author and the reason as the summary (`Auto-revert to version 4: version 5 did not start`). An `auto-revert` event in the project log says why. The merge that deployed the broken version reports the start failure and the pending revert in its result.
+
 ## Runtime
 
 - Each deployed project has 0 or 1 runtime VMs. There is no scaling beyond 1. Concurrent invocations run in the same VM.
@@ -284,6 +295,21 @@ Details:
 - The host owns scheduling and trigger subscriptions. A cron tick, webhook call or trigger wakes the VM if it is asleep.
 - Deploy: start the new VM, wait until it is ready, switch traffic, drain and stop the old one.
 - Handlers call back to the host (DB, logs, devices, events) through the SDK over an internal endpoint that only the project's VMs can reach.
+
+Implementation (`server/src/runtime/`):
+
+- **What runs** is the newest version on `main`. The host reads its `hobwork.json` from git and keeps it in memory; after a host restart it reads it back from the versions table. On start the host registers the crons and HA triggers of every project's current version, including version 1 of a new project.
+- **Build artifacts.** A build is the project's `dist/` after `pnpm run build`, stored at `data/builds/<project>/<tree>/`. The pipeline deletes its checkout after the run, so its build step copies `dist/` there first. Builds are keyed by git tree, not commit: a restore commits an old tree as a new commit and finds that version's build already there, so a restore does not build again. A version with no stored build (the template commit of a new project, or versions from before builds were kept) is built on deploy or first invocation in a fresh pipeline VM (install extras, `pnpm run build`, no tests). Only directories and regular files are copied, since the runtime VM mounts the build and a symlink written by project code could point at host files. Builds are limited to 256MB and are not deleted yet.
+- **Handler bundles.** The template's `vite.config.ts` builds two Vite environments in one `vite build`: the dashboard (`dist/ui/`, `dist/assets/`) and the handlers. Every handler in `hobwork.json` becomes `dist/handlers/<path without extension>.js`, an ES module with all dependencies bundled in (Node built-ins stay external), so the runtime VM needs no `node_modules`.
+- **Runner delivery.** The runner is `packages/sdk/src/runner/` and uses only Node built-ins. The host mounts that directory read-only at `/opt/hobwork/runner` and runs `node /opt/hobwork/runner/main.ts`, with the build read-only at `/app`. The runner is host code, not SDK API: it speaks the host's invoke protocol, so it has to match the host version, and outside `node_modules` Node runs its TypeScript directly. Project code depends only on the context type from the SDK in the image, so context changes must stay additive for builds tested against an older SDK to keep working.
+- **Protocol** (`packages/sdk/src/runner/protocol.ts`). The host POSTs `/invoke` on the runner's ingress with the invocation (ID, kind, name, manual), the handler path, the serialized request (method, URL, headers, base64 body), route params and payload. The runner answers with the serialized response or the error (name, message, stack). `GET /ready` answers once every handler module loaded. Console output inside an invocation (tracked with `AsyncLocalStorage`) and `ctx.log` lines are batched to `POST http://hobwork.internal/v1/logs` and flushed before the invocation answers. Output outside any invocation goes to the runner's stdout, which the host records as runtime logs.
+- **VMs** get 512MB and 2 vCPUs, the project's `egress`, and an internal handler bound to the project. A blocked egress request is logged as an `egress-blocked` event.
+- **Deploy** (the delivery `Deploy` hook): ensure the build, switch crons and HA triggers (`syncProjectTriggers`) to the new version, start the new VM and wait for `/ready`, switch, then retire the old VM: wait for its running invocations (up to the invocation timeout) and stop it. Without a runtime VM backend the bookkeeping still happens and invocations fail with an explanation.
+- **Invocations** time out after 5 minutes on the host. Gondolin cannot signal the handler, so it may keep running until the VM stops. A runner that exits is logged as a `crash`, and the next invocation starts a new VM.
+- **Routes** at `/p/<project>/api/*` require an agent token (`Authorization: Bearer`) for now. The check is a `RouteAuthorizer` function in `server/src/runtime/http.ts`, which Phase 7 extends with user sessions for dashboards. `authorization`, `cookie` and `proxy-authorization` headers are never passed to the handler. Request bodies are limited to 10MB.
+- **Webhooks** at `/hooks/<project>/<name>/<token>` accept any method. Tokens are 256 random bits, stored as SHA-256 hashes in `webhook_tokens`, and created or replaced with `rotate_webhook_token`, which shows the URL once. A webhook without a token cannot be called. Unknown project, webhook and token all answer 404. The handler sees the URL without the token.
+- **Crons** use standard 5-field syntax, parsed by `server/src/runtime/cron.ts` rather than a dependency: numbers, ranges, lists, steps, month and weekday names, and Vixie cron's rule that a day matches either day field when both are restricted. Times are in the host's local time zone. A time skipped by a DST change does not run, a time that happens twice runs once, and ticks missed while the host is down are not caught up.
+- **HA triggers** fire through the trigger registry's `invoke` hook as invocations of kind `trigger` with HA's trigger variables as `payload`. Refused or failing triggers, and HA connection losses that drop trigger events, are logged as `trigger` events in the affected projects' logs.
 
 ### Internal endpoint
 
@@ -300,6 +326,12 @@ Rejected: an allowed internal host (a real host port through `allowedInternalHos
 Every invocation is recorded: ID, project, version, trigger (route, cron, event, manual), start, duration, result, error with stack trace. Console output from handlers is captured per invocation. Pipeline output and runtime lifecycle events (start, stop, crash, auto-revert) go to the same log store.
 
 Agents read this through MCP (`list_invocations`, `get_logs`, `tail_logs`) and the `hobwork logs` CLI over SSH. Users see it in the UI.
+
+Storage (`server/migrations/0004_runtime.sql`, `server/src/runtime/logs.ts`):
+
+- `invocations`: kind (`route`, `webhook`, `cron`, `trigger`), name (route key or entry name), `manual`, status (`running`, `ok`, `error`), HTTP status for routes and webhooks, error and stack. Invocations still running at host start are marked failed.
+- `logs`: one row per line with source (`handler`, `runtime`, `pipeline`), level, an optional invocation, and for lifecycle lines an event kind (`start`, `stop`, `crash`, `deploy`, `auto-revert`, `egress-blocked`, `trigger`, `pipeline`). Pipeline runs log one line per step with up to 2,000 characters of its output; `pipeline_status` has all of it. Log line IDs are the cursor for `get_logs` and `tail_logs`.
+- Bounds: messages are cut to 8,000 characters in the middle, an invocation keeps at most 1,000 lines (then one line saying the rest was dropped), and rows older than 30 days or beyond the newest 200,000 lines per project are pruned hourly. MCP output is cut at whole lines with a cursor to continue, and `tail_logs` waits at most 60 seconds.
 
 ## Data
 

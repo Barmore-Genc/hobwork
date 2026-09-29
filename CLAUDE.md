@@ -6,11 +6,12 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 
 - `server/` (`@hobwork/server`): the host. Node runs the TypeScript directly, no build step.
 - `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api` to the host on port 7420.
-- `packages/sdk/` (`@hobwork/sdk`): SDK types and the `hobwork.json` JSON schema (`hobwork.schema.json`).
+- `packages/sdk/` (`@hobwork/sdk`): SDK types, the `hobwork.json` JSON schema (`hobwork.schema.json`), and the runner (`src/runner/`) that the host mounts into project runtime VMs.
 - `templates/project/`: template for new projects (not a workspace package).
 - `apple/` (planned): Xcode projects for the iOS and macOS apps, bundle ID prefix `dev.bgenc.hobwork`. Not part of the pnpm workspace.
 - `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.
 - `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin. `server/src/guest-vm.ts` builds the workspace and pipeline VM backends on it.
+- `server/src/runtime/`: project runtime VMs, builds, invocations and logs, crons, routes and webhooks.
 - `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). The host connects to HA when `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN` are set. Integration tests against it run with `HOBWORK_HA_TESTS=1`. See its README.
 - `data/`: runtime data (gitignored). Override with `HOBWORK_DATA_DIR`. Port: `HOBWORK_PORT` (default 7420). Guest image: `HOBWORK_IMAGE_DIR` (default `images/build/<arch>`). Workspace VM idle stop: `HOBWORK_WORKSPACE_IDLE_MINUTES` (default 30).
 
@@ -21,7 +22,7 @@ Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspac
 - `pnpm dev`: host (`node --watch`) and web in parallel.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test`: run across the workspace.
 - `images/build.sh`: build the guest image (needs Docker). Required for the VM commands below and for `bash` and `merge` in the host. Rebuild after changing `packages/sdk`, since the image contains it.
-- `pnpm -C server test:vm`: sandbox, workspace VM and pipeline VM tests that boot real VMs (skipped by `pnpm test`). Some need egress to `example.com` and `registry.npmjs.org`.
+- `pnpm -C server test:vm`: sandbox, workspace, pipeline and runtime VM tests that boot real VMs (skipped by `pnpm test`). The runtime test waits for a cron tick, so it takes about a minute. Some need egress to `example.com` and `registry.npmjs.org`.
 - `pnpm -C server bench:sandbox [vm|vfs]`: sandbox benchmarks.
 
 ## Connecting Claude Code to a local host

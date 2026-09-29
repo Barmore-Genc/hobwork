@@ -66,6 +66,8 @@ Done when: an agent can merge a branch, gets test failures back when tests fail,
 
 Done when: a merged route answers HTTP requests, a cron fires on schedule, and an agent can find a thrown error and its stack trace through MCP. **MVP complete.**
 
+Status: done, covered end to end by `pnpm -C server test:vm` (template project merged over MCP, route over HTTP, cron by hand and on schedule, a thrown error found with `list_invocations` and `get_logs`, restore of a version without a stored build). Deferred: `invoke` in a branch workspace, deleting old builds, user sessions for routes (Phase 7).
+
 ## Phase 6: Data, secrets, egress
 
 - Project DBs owned by the host, SDK query API, migrations applied on deploy (with dry run in the pipeline).

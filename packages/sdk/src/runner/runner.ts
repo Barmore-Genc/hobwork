@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -10,6 +11,7 @@ import { createHaClient, httpHaSender } from './ha-client.ts'
 import { createHostClient, type HostClient } from './host-client.ts'
 import {
   handlerModulePath,
+  MAX_RESPONSE_BODY_BYTES,
   type InvokeRequest,
   type InvokeResult,
   type SerializedError,
@@ -21,6 +23,8 @@ export type RunnerOptions = {
   // The deployed build (the project's dist/), mounted read-only.
   appDir: string
   internalUrl: string
+  // Every request to the runner must carry it as a bearer token.
+  token: string
   // Loaded before the runner reports ready, so a handler that fails to import
   // fails the start instead of every invocation.
   handlers: string[]
@@ -59,10 +63,25 @@ function toRequest(serialized: SerializedRequest): Request {
   return new Request(serialized.url, { method, headers: serialized.headers, body })
 }
 
+async function readLimited(response: Response): Promise<Buffer> {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  if (response.body) {
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      size += chunk.length
+      if (size > MAX_RESPONSE_BODY_BYTES) {
+        throw new Error(`The response body is larger than ${MAX_RESPONSE_BODY_BYTES / 1024 / 1024}MB`)
+      }
+      chunks.push(chunk)
+    }
+  }
+  return Buffer.concat(chunks)
+}
+
 async function toSerializedResponse(value: unknown): Promise<SerializedResponse> {
   if (value instanceof Response) {
     const headers = [...value.headers].filter(([name]) => !DROPPED_RESPONSE_HEADERS.has(name))
-    const body = Buffer.from(await value.arrayBuffer()).toString('base64')
+    const body = (await readLimited(value)).toString('base64')
     return { status: value.status, headers, body }
   }
   if (value === undefined) return { status: 204, headers: [], body: '' }
@@ -87,6 +106,12 @@ async function readBody(req: IncomingMessage): Promise<string> {
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+function tokenMatches(header: string | undefined, token: string): boolean {
+  const given = Buffer.from(header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : '')
+  const expected = Buffer.from(token)
+  return given.length === expected.length && timingSafeEqual(given, expected)
 }
 
 export async function startRunner(options: RunnerOptions, port: number): Promise<Runner> {
@@ -163,6 +188,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
   for (const handler of options.handlers) await load(handler)
 
   const server = createServer((req, res) => {
+    if (!tokenMatches(req.headers.authorization, options.token)) return send(res, 401, { error: 'unauthorized' })
     if (req.method === 'GET' && req.url === '/ready') return send(res, 200, { ok: true })
     if (req.method !== 'POST' || req.url !== '/invoke') return send(res, 404, { error: 'not found' })
     readBody(req)

@@ -718,3 +718,71 @@ test('handlers run device commands and get the answer', async () => {
     'Device kaan-iphone: alarms.set answered {"id":"alarm-1"}',
   )
 })
+
+const LIFETIME_JSON = {
+  ...HOBWORK_JSON,
+  routes: { ...HOBWORK_JSON.routes, 'GET /slow': { handler: 'src/slow.ts' }, 'GET /big': { handler: 'src/big.ts' } },
+}
+
+function lifetimeFiles(): Files {
+  return projectFiles({
+    hobwork: LIFETIME_JSON,
+    handlers: {
+      'handlers/slow.js': `export default async (ctx) => { await new Promise((r) => setTimeout(r, ctx.request.headers.get('x-delay') ?? 0)); return 'done' }`,
+      'handlers/big.js': `export default async () => new Response(new Uint8Array(24 * 1024 * 1024), { headers: { 'x-big': 'x'.repeat(10 * 1024 * 1024) } })`,
+    },
+  })
+}
+
+const slow = (delay: number) => ({
+  kind: 'route' as const,
+  name: 'GET /slow',
+  manual: true,
+  request: { method: 'GET', url: 'http://x/slow', headers: [['x-delay', String(delay)]] as [string, string][] },
+})
+
+test('replaces a runtime VM once it reaches its maximum lifetime, letting running invocations finish', async () => {
+  start({ maxLifetimeMs: 600 })
+  await deploy(lifetimeFiles())
+  const first = [...sandboxes.running][0]!
+  const running = runtime.invoke('filament', slow(1200))
+  await until(() => !runtime.status('filament').running)
+  expect(sandboxes.running.has(first)).toBe(true)
+  const next = await runtime.invoke('filament', { kind: 'cron', name: 'tick', manual: true })
+  expect(next.ok).toBe(true)
+  expect(sandboxes.created).toHaveLength(2)
+  expect((await running).ok).toBe(true)
+  const stops = () => queryLogs(host, { project: 'filament', source: 'runtime', limit: 50 }).filter((l) => l.event === 'stop')
+  await until(() => stops().length > 0)
+  expect(stops()[0]?.message).toContain('maximum lifetime')
+  expect(sandboxes.running.has(first)).toBe(false)
+})
+
+test('a VM whose invocation timed out serves no further invocations', async () => {
+  start({ invocationTimeoutMs: 300 })
+  await deploy(lifetimeFiles())
+  const first = [...sandboxes.running][0]!
+  const timedOut = await runtime.invoke('filament', slow(5000))
+  expect(!timedOut.ok && timedOut.error.name).toBe('TimeoutError')
+  await until(() => !sandboxes.running.has(first))
+  const next = await runtime.invoke('filament', { kind: 'cron', name: 'tick', manual: true })
+  expect(next.ok).toBe(true)
+  expect(sandboxes.created).toHaveLength(2)
+})
+
+test('fails an invocation whose runner response is too large', async () => {
+  start()
+  await deploy(lifetimeFiles())
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /big', manual: true })
+  expect(!outcome.ok && outcome.error.message).toMatch(/response is larger than \d+MB/)
+})
+
+test('the runner only answers requests that carry its token', async () => {
+  start()
+  await deploy()
+  const url = await [...sandboxes.running][0]!.ingress(8080)
+  expect((await fetch(`${url}/ready`)).status).toBe(401)
+  const message = { invocation: { id: 1, kind: 'cron', name: 'tick', manual: true }, handler: 'src/tick.ts' }
+  expect((await fetch(`${url}/invoke`, { method: 'POST', body: JSON.stringify(message) })).status).toBe(401)
+  expect((await runtime.invoke('filament', { kind: 'cron', name: 'tick', manual: true })).ok).toBe(true)
+})

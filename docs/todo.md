@@ -14,7 +14,6 @@ Sections are in the order to work on them.
 ### Limiting a compromised hob
 
 - **Default CSP for hob UIs**: app origins serve hob UIs and route responses with a strict CSP (`script-src 'self'`, no inline scripts, `object-src 'none'`, `base-uri 'none'`) and `nosniff`, so most XSS bugs in agent-written UIs cannot run script. `hobwork.json` can loosen it for a hob that needs to.
-- **Runtime VM lifetime**: a runtime VM serves invocations for up to its idle timeout (default 1 hour), so code that gets in through one invocation sees later ones (other webhooks, notification actions, HA events). Cap a runtime VM's total lifetime, and replace it after an invocation times out or the runner crashes.
 - **HA service calls**: see Home Assistant below. It is the main limit on what a compromised handler can do in the house.
 
 ### Supply chain
@@ -47,12 +46,11 @@ Sections are in the order to work on them.
 
 ### Resources
 
-- **Bounded output**: pipeline step output streams to the log store; bash results keep a head and a tail; the log line splitter has a maximum line length; the runner response has a size limit.
+- **Bounded output**: pipeline step output streams to the log store; bash results keep a head and a tail; the log line splitter has a maximum line length.
 - **VM resources and budget**: `hobwork.json` can ask for less memory and fewer vCPUs per VM kind, never more than the defaults. Starting a VM reserves its resources from a global memory and vCPU budget. When the budget is full, requests wait in per-hob queues with an equal share per active hob, borrowing idle capacity; idle workspace VMs over their share stop first. The main runtime goes first, then builds and previews, then workspaces. Waits end with a "host busy" error.
 - **Webhook token first**: check the webhook token before resolving a branch label, which runs git.
 - **OAuth limits**: key IPv6 rate limits by /64, and evict the oldest unapproved clients and requests instead of refusing new ones.
 - **Log rate limit**: per-VM limit on log lines outside invocations.
-- **`idleTimeout`**: clamp it below `setTimeout`'s maximum.
 
 ### Guest privilege
 
@@ -75,8 +73,6 @@ The Gondolin VFS provider runs in the host's Node process and QEMU is its child,
 
 ### Smaller items
 
-- Match the branch too when attaching runner log lines to an invocation.
-- Auth on the runner's ingress port.
 - Hide the `ha_*` tools from credentials limited to some hobs.
 - Read-only tools read from git instead of opening a workspace.
 - Refuse any git HTTP path ending in `git-receive-pack` for read-only tokens.

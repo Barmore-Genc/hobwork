@@ -8,6 +8,15 @@ import type { Invocation, LogLevel } from '../index.ts'
 // Inside the guest. Nothing else listens there.
 export const RUNNER_PORT = 8080
 
+// The guest file the host writes the runner's token to before starting it. The
+// runner reads and deletes it, so it is gone before any handler code runs.
+export const RUNNER_TOKEN_FILE = '/tmp/hobwork-runner-token'
+
+// Largest response body a handler may return. Bodies travel as base64 in the
+// invoke result, so the host allows for that and for the rest of the JSON.
+export const MAX_RESPONSE_BODY_BYTES = 24 * 1024 * 1024
+export const MAX_INVOKE_RESULT_BYTES = Math.ceil((MAX_RESPONSE_BODY_BYTES * 4) / 3) + 1024 * 1024
+
 export type SerializedRequest = {
   method: string
   url: string

@@ -9,6 +9,7 @@ import { listConnections, revokeGrant } from '../oauth/grants.ts'
 import { latestRun } from '../pipeline/runner.ts'
 import { getProject, listProjects, ProjectError, type Project } from '../projects.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import { SecretError, type SecretStore } from '../secrets.ts'
 import { addSshKey, deleteSshKey, listSshKeys, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
 
@@ -45,8 +46,44 @@ function positiveInt(value: string | undefined): number {
   return n
 }
 
-export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Delivery; runtime?: Runtime }) {
+export function createApiRoutes(options: {
+  host: Host
+  auth: Auth
+  delivery: Delivery
+  runtime?: Runtime
+  secrets?: SecretStore
+}) {
   const { host, auth, delivery, runtime } = options
+
+  function secretStore(): SecretStore {
+    if (!options.secrets) throw new HttpError(503, 'This Hobwork server has no secret store')
+    return options.secrets
+  }
+
+  // Values go in and never come out: responses only name the secret and its hosts.
+  async function putSecret(req: IncomingMessage, res: ServerResponse, project: string | undefined, name: string) {
+    const body = (await readJson(req)) as { value?: unknown; hosts?: unknown } | null
+    if (typeof body !== 'object' || body === null) throw new HttpError(400, 'Send an object with value and hosts')
+    if (body.value !== undefined && typeof body.value !== 'string') throw new HttpError(400, 'value must be a string')
+    if (body.hosts !== undefined && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) {
+      throw new HttpError(400, 'hosts must be a list of host names')
+    }
+    const store = secretStore()
+    let created: boolean
+    try {
+      ;({ created } = store.set({ project, name, value: body.value, hosts: body.hosts as string[] | undefined }))
+    } catch (err) {
+      if (err instanceof SecretError) throw new HttpError(400, err.message)
+      throw err
+    }
+    const secret = store.list(project).find((s) => s.name === name)
+    json(res, created ? 201 : 200, secret)
+  }
+
+  function deleteSecret(res: ServerResponse, project: string | undefined, name: string) {
+    if (!secretStore().remove(project, name)) throw new HttpError(404, `There is no secret called ${name}`)
+    res.writeHead(204).end()
+  }
 
   // The deployed version can lag behind the newest one while a deploy runs or
   // after it failed. Without a runtime (tests), the newest version counts.
@@ -111,6 +148,39 @@ export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Del
           throw err
         }
       },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/secrets$/,
+      handle: ({ res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        json(res, 200, secretStore().effective(project.name))
+      },
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/projects\/([^/]+)\/secrets\/([^/]+)$/,
+      handle: ({ req, res, params }) => putSecret(req, res, requireProjectByName(host, params[0]!).name, params[1]!),
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/projects\/([^/]+)\/secrets\/([^/]+)$/,
+      handle: ({ res, params }) => deleteSecret(res, requireProjectByName(host, params[0]!).name, params[1]!),
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/secrets$/,
+      handle: ({ res }) => json(res, 200, secretStore().list()),
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/secrets\/([^/]+)$/,
+      handle: ({ req, res, params }) => putSecret(req, res, undefined, params[0]!),
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/secrets\/([^/]+)$/,
+      handle: ({ res, params }) => deleteSecret(res, undefined, params[0]!),
     },
     {
       method: 'GET',

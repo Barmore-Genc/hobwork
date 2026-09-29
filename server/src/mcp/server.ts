@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import type { Agent } from '../agents.ts'
+import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
 import {
   checkoutDirectory,
@@ -15,6 +16,7 @@ import {
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import type { SecretStore } from '../secrets.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
@@ -23,6 +25,7 @@ import { registerDeliveryTools } from './delivery.ts'
 import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 import { registerRuntimeTools } from './runtime.ts'
+import { registerSecretTools } from './secrets.ts'
 
 export type McpContext = {
   host: Host
@@ -31,6 +34,8 @@ export type McpContext = {
   agent: Agent
   homeAssistant?: HomeAssistant
   runtime?: Runtime
+  data?: ProjectData
+  secrets?: SecretStore
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
@@ -45,6 +50,7 @@ Rules:
 - Every change needs tests. Merging runs typecheck, lint, tests and build, and refuses on failure.
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.
 - Debug from logs and invocation records. Do not guess.
+- Secrets are for users to create. Use list_secrets to see which exist, and ctx.secrets in handlers.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
 
 const MAX_READ_LINES = 2000
@@ -91,7 +97,16 @@ function formatReadResult(content: string, offset: number, limit: number): strin
   return notes.length ? `${body}\n\n[${notes.join(' ')}]` : body
 }
 
-export function createMcpServer({ host, workspaces, delivery, agent, homeAssistant, runtime }: McpContext): McpServer {
+export function createMcpServer({
+  host,
+  workspaces,
+  delivery,
+  agent,
+  homeAssistant,
+  runtime,
+  data,
+  secrets,
+}: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
   // main is never written through a workspace, so its checkout is refreshed to
@@ -138,7 +153,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
   server.registerTool(
     'get_project',
     {
-      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, its branches and the state of each branch workspace.`,
+      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, its branches and the state of each branch workspace.`,
       inputSchema: { project },
       annotations: { readOnlyHint: true },
     },
@@ -156,6 +171,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
         }
       }
       const { crons = {}, webhooks = {}, routes = {}, triggers = {}, ...settings } = config
+      const configEgress = Array.isArray(settings.egress) ? settings.egress.map(String) : []
       return json({
         name: record.name,
         defaultBranch: record.defaultBranch,
@@ -163,6 +179,9 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
         entryPoints: { routes, crons, webhooks, triggers },
         settings,
         ...(configError ? { configError } : {}),
+        egress: [...new Set([...configEgress, ...(secrets?.hosts(name) ?? [])])],
+        secrets: secrets?.effective(name).map((secret) => secret.name) ?? [],
+        ...(data ? { database: data.status(name) } : {}),
         branches: await listBranches(host, name),
         workspaces: workspaces
           .list(name)
@@ -427,6 +446,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
   registerDeliveryTools(server, { host, delivery, agent })
   if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
   registerRuntimeTools(server, { host, runtime })
+  registerSecretTools(server, { host, secrets })
 
   return server
 }

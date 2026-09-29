@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./testing": "./src/testing.ts",
     "./hobwork.schema.json": "./hobwork.schema.json"
   },
   "scripts": {

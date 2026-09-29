@@ -16,6 +16,8 @@ export type LifecycleEvent =
   | 'egress-blocked'
   | 'trigger'
   | 'pipeline'
+  | 'migration'
+  | 'db'
 
 export const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
 

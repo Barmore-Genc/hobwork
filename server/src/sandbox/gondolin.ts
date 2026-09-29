@@ -22,6 +22,7 @@ import {
   type SandboxProcess,
   type SpawnOptions,
 } from './sandbox.ts'
+import { hostMatches } from './egress.ts'
 
 const KILL_GRACE_MS = 2000
 const EXEC_ID_VAR = 'HOBWORK_EXEC_ID'
@@ -42,16 +43,26 @@ true
 
 export async function createGondolinSandbox(options: SandboxOptions): Promise<Sandbox> {
   const internal = options.internal
+  const egress = options.egress ?? []
+  const onBlocked = options.onEgressBlocked
   const hooks = createHttpHooks({
-    allowedHosts: options.egress ?? [],
+    allowedHosts: egress,
     secrets: options.secrets,
+    // Gondolin checks the allowlist only after resolving the name, so a host
+    // that does not resolve would fail with a 502 and never reach the blocked
+    // callback. Checking the name first answers 403 and reports it.
+    isRequestAllowed: (request) => {
+      const { hostname, port, protocol } = new URL(request.url)
+      if (hostname === INTERNAL_HOST || hostMatches(hostname, egress)) return true
+      onBlocked?.({ hostname, ip: '', port: Number(port) || (protocol === 'https:' ? 443 : 80) })
+      return false
+    },
     // Gondolin injects secrets after onRequest, so the internal handler only sees placeholders.
     onRequest: internal
       ? (request) => (new URL(request.url).hostname === INTERNAL_HOST ? internal(request) : undefined)
       : undefined,
   })
   const isIpAllowed = hooks.httpHooks.isIpAllowed
-  const onBlocked = options.onEgressBlocked
   if (isIpAllowed && onBlocked) {
     hooks.httpHooks.isIpAllowed = async (info) => {
       const allowed = await isIpAllowed(info)

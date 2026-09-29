@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { InvocationKind } from '../src/index.ts'
-import type { InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
+import type { DbRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
 import { startRunner, type Runner } from '../src/runner/runner.ts'
 
 let app: string
 let internal: Server
 let internalUrl: string
 let received: LogLine[]
+let dbRequests: DbRequest[]
 let runner: Runner | undefined
 let url: string
 
@@ -33,6 +34,12 @@ const HANDLERS: Record<string, string> = {
     return ctx.payload.tag
   }`,
   'handlers/src/broken.js': 'export const notDefault = 1',
+  'handlers/src/db.js': `export default async (ctx) => {
+    const rows = await ctx.db.query('SELECT ? AS blob', [new Uint8Array([7])])
+    let error
+    try { await ctx.db.run('BAD') } catch (err) { error = err.name + ': ' + err.message + ' @' + err.statement }
+    return { blob: Array.from(rows[0].blob), error, secrets: ctx.secrets }
+  }`,
 }
 
 function write(files: Record<string, string>) {
@@ -64,10 +71,21 @@ beforeEach(async () => {
   app = mkdtempSync(join(tmpdir(), 'hobwork-runner-'))
   write(HANDLERS)
   received = []
+  dbRequests = []
   internal = createServer((req, res) => {
     let data = ''
     req.on('data', (chunk: Buffer) => (data += chunk))
     req.on('end', () => {
+      if (req.url === '/v1/db') {
+        const request = JSON.parse(data) as DbRequest
+        dbRequests.push(request)
+        const response =
+          request.statements[0]?.sql === 'BAD'
+            ? { ok: false, error: { message: 'syntax error', statement: 0 } }
+            : { ok: true, results: [{ rows: [{ blob: request.statements[0]?.params?.[0 as never] }], changes: 0, lastInsertRowid: 0 }] }
+        res.writeHead(response.ok ? 200 : 400, { 'content-type': 'application/json' }).end(JSON.stringify(response))
+        return
+      }
       if (req.url === '/v1/logs') received.push(...(JSON.parse(data) as { lines: LogLine[] }).lines)
       res.writeHead(204).end()
     })
@@ -141,4 +159,20 @@ test('reports a missing handler module as an invocation error', async () => {
   await start()
   const result = await invoke('src/missing.ts')
   expect(result.ok).toBe(false)
+})
+
+test('handlers reach the host DB with ctx.db and see secret placeholders in ctx.secrets', async () => {
+  runner = await startRunner({ appDir: app, internalUrl, handlers: [], secrets: { API_KEY: 'GONDOLIN_SECRET_abc' } }, 0)
+  url = `http://127.0.0.1:${(runner.server.address() as AddressInfo).port}`
+  const result = await invoke('src/db.ts')
+  expect(JSON.parse(body(result))).toEqual({
+    blob: [7],
+    error: 'DbError: syntax error @0',
+    secrets: { API_KEY: 'GONDOLIN_SECRET_abc' },
+  })
+  expect(dbRequests[0]).toEqual({
+    statements: [{ sql: 'SELECT ? AS blob', params: [{ $blob: 'Bw==' }] }],
+    transaction: false,
+    invocation: result.id,
+  })
 })

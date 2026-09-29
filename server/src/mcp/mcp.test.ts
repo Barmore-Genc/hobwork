@@ -135,6 +135,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'list_files',
       'list_invocations',
       'list_projects',
+      'list_secrets',
       'list_versions',
       'log',
       'merge',

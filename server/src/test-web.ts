@@ -5,6 +5,7 @@ import { signInOidcUser, type User } from './auth/users.ts'
 import { createApp, type WebOptions } from './app.ts'
 import type { Delivery } from './delivery.ts'
 import type { Host } from './host.ts'
+import type { SecretStore } from './secrets.ts'
 
 export const TEST_PUBLIC_URL = 'http://hobwork.test'
 
@@ -20,11 +21,12 @@ export async function freePort(): Promise<number> {
 // URLs in OAuth metadata and redirects work from the test.
 export async function startTestApp(
   host: Host,
-  options: { web?: Partial<WebOptions>; delivery?: Delivery; selfPublicUrl?: boolean } = {},
+  options: { web?: Partial<WebOptions>; delivery?: Delivery; selfPublicUrl?: boolean; secrets?: SecretStore } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
   const server = createApp(host, {
     delivery: options.delivery,
+    secrets: options.secrets,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },

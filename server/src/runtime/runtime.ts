@@ -1,12 +1,21 @@
 import { resolve } from 'node:path'
-import type { InvokeRequest, InvokeResult, LogBatch, SerializedRequest, SerializedResponse } from '../../../packages/sdk/src/runner/protocol.ts'
+import type {
+  InvokeRequest,
+  InvokeResult,
+  LogBatch,
+  SerializedRequest,
+  SerializedResponse,
+} from '../../../packages/sdk/src/runner/protocol.ts'
 import { RUNNER_PORT } from '../../../packages/sdk/src/runner/protocol.ts'
+import { dbResponse } from '../data/internal.ts'
+import type { ProjectData } from '../data/project-data.ts'
 import type { Deployment } from '../delivery.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
 import type { Host } from '../host.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
 import { listProjects, ProjectError } from '../projects.ts'
 import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
+import type { SecretStore } from '../secrets.ts'
 import { listVersions } from '../versions.ts'
 import { createDeployHealth, DEFAULT_AUTO_REVERT_POLICY, type AutoRevertPolicy, type DeployHealth } from './auto-revert.ts'
 import { createBuilder } from './builds.ts'
@@ -50,6 +59,10 @@ export type RuntimeOptions = {
   // Restores a version (delivery.restore), used by auto-revert.
   revert?: (request: { project: string; version: number; summary: string }) => Promise<unknown>
   triggers?: TriggerRegistry
+  // Project DBs for handlers (ctx.db) and migrations on deploy.
+  data?: ProjectData
+  // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
+  secrets?: SecretStore
   autoRevert?: AutoRevertPolicy
   invocationTimeoutMs?: number
   readyTimeoutMs?: number
@@ -83,6 +96,8 @@ type Deployed = {
 
 type Instance = {
   deployed: Deployed
+  // Secrets are fixed when a VM starts, so a change starts a new one.
+  secretsFingerprint: string
   sandbox: Sandbox
   url: string
   inflight: Set<number>
@@ -96,7 +111,7 @@ type ProjectState = {
   deployed?: Deployed
   loading?: Promise<Deployed>
   instance?: Instance
-  starting?: { deployed: Deployed; promise: Promise<Instance> }
+  starting?: { deployed: Deployed; secretsFingerprint: string; promise: Promise<Instance> }
 }
 
 class RuntimeUnavailable extends Error {}
@@ -193,11 +208,17 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
 
   async function handleInternal(project: string, instance: () => Instance | undefined, request: Request): Promise<Response> {
     const url = new URL(request.url)
-    if (request.method !== 'POST' || url.pathname !== '/v1/logs') {
-      return Response.json({ error: `${request.method} ${url.pathname} does not exist` }, { status: 404 })
+    const route = `${request.method} ${url.pathname}`
+    if (route !== 'POST /v1/logs' && route !== 'POST /v1/db') {
+      return Response.json({ error: `${route} does not exist` }, { status: 404 })
     }
     const body = await request.text()
-    if (body.length > MAX_INTERNAL_BODY_BYTES) return Response.json({ error: 'Too many log lines' }, { status: 413 })
+    if (body.length > MAX_INTERNAL_BODY_BYTES) return Response.json({ error: 'Request body too large' }, { status: 413 })
+    if (route === 'POST /v1/db') {
+      const data = options.data
+      if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
+      return dbResponse(body, (request) => data.execute({ project }, request))
+    }
     let batch: LogBatch
     try {
       batch = JSON.parse(body) as LogBatch
@@ -263,12 +284,18 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     throw new Error(`Runner exited during start${tail.length ? `:\n${tail.join('\n')}` : ''}`)
   }
 
-  async function startInstance(project: string, deployed: Deployed): Promise<Instance> {
+  function secretsFingerprint(project: string): string {
+    return options.secrets?.fingerprint(project) ?? ''
+  }
+
+  async function startInstance(project: string, deployed: Deployed, fingerprint: string): Promise<Instance> {
     const createSandbox = options.createSandbox
     if (!createSandbox || !options.image) {
       throw new RuntimeUnavailable('This Hobwork host cannot run handlers: no runtime VM backend is configured')
     }
     const buildDir = await builder.ensure(project, deployed.commit)
+    const secrets = options.secrets?.forSandbox(project) ?? {}
+    const egress = [...new Set([...deployed.config.egress, ...(options.secrets?.hosts(project) ?? [])])]
     let inst: Instance | undefined
     const sandbox = await createSandbox({
       image: options.image,
@@ -279,14 +306,15 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         [RUNNER_DIR]: { hostPath: HOST_RUNNER_DIR, readonly: true },
       },
       env: { NODE_ENV: 'production' },
-      egress: deployed.config.egress,
+      egress,
+      secrets,
       internal: (request) => handleInternal(project, () => inst, request),
       onEgressBlocked: ({ hostname, ip, port }) =>
         event(
           project,
           'warn',
           'egress-blocked',
-          `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it`,
+          `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or bind a secret to it`,
         ),
       label: `runtime ${project} v${deployed.version}`,
     })
@@ -297,12 +325,22 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
           HOBWORK_APP_DIR: APP_DIR,
           HOBWORK_RUNNER_PORT: String(RUNNER_PORT),
           HOBWORK_HANDLERS: JSON.stringify(allHandlers(deployed.config)),
+          HOBWORK_SECRETS: JSON.stringify(Object.keys(secrets)),
         },
         onOutput: outputLogger(project, tail),
       })
       const url = await sandbox.ingress(RUNNER_PORT)
       await waitReady(url, proc.result, tail)
-      inst = { deployed, sandbox, url, inflight: new Set(), lines: new Map(), stopping: false, onIdle: [] }
+      inst = {
+        deployed,
+        secretsFingerprint: fingerprint,
+        sandbox,
+        url,
+        inflight: new Set(),
+        lines: new Map(),
+        stopping: false,
+        onIdle: [],
+      }
       const started = inst
       void proc.result.then(
         (result) => {
@@ -322,11 +360,15 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
 
   function ensureInstance(project: string, deployed: Deployed): Promise<Instance> {
     const s = state(project)
-    if (s.instance && s.instance.deployed === deployed && !s.instance.stopping) return Promise.resolve(s.instance)
-    if (s.starting?.deployed === deployed) return s.starting.promise
+    const fingerprint = secretsFingerprint(project)
+    const current = s.instance
+    if (current && current.deployed === deployed && current.secretsFingerprint === fingerprint && !current.stopping) {
+      return Promise.resolve(current)
+    }
+    if (s.starting?.deployed === deployed && s.starting.secretsFingerprint === fingerprint) return s.starting.promise
     const promise = (async () => {
       const started = performance.now()
-      const inst = await startInstance(project, deployed)
+      const inst = await startInstance(project, deployed, fingerprint)
       if (s.deployed !== deployed) {
         await retire(project, inst, 'a newer version was deployed while it started')
         throw new Error('A newer version was deployed while the runtime started. Try again')
@@ -334,11 +376,14 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       const old = s.instance
       s.instance = inst
       event(project, 'info', 'start', `Runtime of version ${deployed.version} started in ${Math.round(performance.now() - started)}ms`)
-      if (old) void retire(project, old, `replaced by version ${deployed.version}`)
+      if (old) {
+        const reason = old.deployed === deployed ? 'secrets changed' : `replaced by version ${deployed.version}`
+        void retire(project, old, reason)
+      }
       armIdle(project, inst)
       return inst
     })()
-    s.starting = { deployed, promise }
+    s.starting = { deployed, secretsFingerprint: fingerprint, promise }
     void promise
       .finally(() => {
         if (s.starting?.promise === promise) s.starting = undefined
@@ -517,6 +562,17 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       health: createDeployHealth(policy, Date.now()),
     }
     const s = state(project)
+    try {
+      await options.data?.migrate(project, commit)
+    } catch (err) {
+      // The dry run passed, so the production data changed since. The version
+      // cannot run without its schema.
+      s.deployed = deployed
+      const message = `Version ${version} did not start: ${errorMessage(err)}`
+      event(project, 'error', 'migration', message)
+      const target = scheduleAutoRevert(project, deployed, 'could not migrate the project DB')
+      throw new Error(target ? `${message}\nRestoring version ${target} automatically.` : message)
+    }
     s.deployed = deployed
     await applyEntryPoints(project, deployed)
     if (!options.createSandbox) return

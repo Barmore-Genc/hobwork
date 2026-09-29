@@ -2,6 +2,8 @@ import { join } from 'node:path'
 import { createApp } from './app.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
+import { createProjectData } from './data/project-data.ts'
+import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
@@ -13,6 +15,7 @@ import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/home
 import { createRuntime } from './runtime/runtime.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
+import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
 import { createWorkspaceApi } from './workspace-api.ts'
 import { createWorkspaceManager, type InteractiveWorkspaceVm } from './workspaces.ts'
@@ -23,9 +26,17 @@ const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir
 // Keeps hooks current in repos created by an older host version.
 for (const project of listProjects(host)) installHooks(repoPath(host, project.name))
 
+const secrets = createSecretStore(host, loadSecretKey(config.dataDir, config.secretKey))
+const data = createProjectData(host)
+
 const image = imageDir()
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
-  ? { image, createSandbox: createGondolinSandbox, log: (message) => console.warn(message) }
+  ? {
+      image,
+      createSandbox: createGondolinSandbox,
+      log: (message) => console.warn(message),
+      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets }),
+    }
   : undefined
 if (vmOptions) console.log(`guest image: ${image}`)
 else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
@@ -56,10 +67,12 @@ const runtime = createRuntime(host, {
   startBuildVm: pipelineVms?.start,
   revert: (request) => delivery.restore(request),
   triggers,
+  data,
+  secrets,
 })
 const delivery = createDelivery(host, {
   workspaces,
-  pipeline: pipelineVms && { startVm: pipelineVms.start },
+  pipeline: pipelineVms && { startVm: pipelineVms.start, migrationDryRun: data.migrationDryRun },
   deploy: runtime.deploy,
 })
 const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime })
@@ -79,6 +92,8 @@ const server = createApp(host, {
   delivery,
   homeAssistant,
   runtime,
+  data,
+  secrets,
   web: { publicUrl: config.publicUrl, allowlist: config.allowlist, oidc: config.oidc, webDist: config.webDist },
 })
 
@@ -96,6 +111,7 @@ async function shutdown() {
   homeAssistant.stop()
   ssh?.close()
   await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
+  await data.stop()
   server.close(() => {
     host.db.close()
     process.exit(0)

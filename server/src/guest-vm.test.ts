@@ -1,8 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
+import { createProjectData } from './data/project-data.ts'
+import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { pipelineVmBackend, workspaceVmBackend } from './guest-vm.ts'
+import { createProject } from './projects.ts'
+import { queryLogs } from './runtime/logs.ts'
+import { createSecretStore } from './secrets.ts'
+import { createTestHost } from './test-host.ts'
 import type { ExecOptions, Sandbox, SandboxOptions, SpawnOptions } from './sandbox/sandbox.ts'
 import type { Workspace } from './workspaces.ts'
 
@@ -158,6 +165,54 @@ test('the internal handler is bound to the workspace', async () => {
   })(workspace())
   expect(seen).toEqual(['filament/spools'])
   expect(sandboxes[0]?.options.internal).toBeTypeOf('function')
+})
+
+test('workspace VMs get secrets, their hosts, the branch DB and blocked egress logging', async () => {
+  const host = createTestHost()
+  const data = createProjectData(host)
+  try {
+    await createProject(host, 'filament')
+    const secrets = createSecretStore(host, randomBytes(32))
+    secrets.set({ project: 'filament', name: 'API_KEY', value: 'real', hosts: ['api.spools.example'] })
+    mkdirSync(join(dir, 'migrations'))
+    writeFileSync(join(dir, 'migrations', '0001_spools.sql'), 'CREATE TABLE spools (color TEXT) STRICT;')
+    const workspaceEnvironment = createWorkspaceEnvironment(host, { data, secrets })
+    const vm = await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () =>
+      new Response('cli'),
+    )(workspace())
+    const options = sandboxes[0]!.options
+    expect(options.egress).toEqual(['registry.npmjs.org', 'api.spools.example'])
+    expect(options.secrets).toEqual({ API_KEY: { value: 'real', hosts: ['api.spools.example'] } })
+
+    const db = (sql: string) =>
+      options.internal!(
+        new Request('http://hobwork.internal/v1/db', {
+          method: 'POST',
+          body: JSON.stringify({ statements: [{ sql }], transaction: false }),
+        }),
+      )
+    expect((await db("INSERT INTO spools VALUES ('red')")).status).toBe(200)
+    expect(await (await db('SELECT color FROM spools')).json()).toMatchObject({ ok: true, results: [{ rows: [{ color: 'red' }] }] })
+    const bad = await db('SELECT nope FROM spools')
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ ok: false, error: { message: 'no such column: nope', statement: 0 } })
+    expect(existsSync(data.branchDbPath('filament', 'spools'))).toBe(true)
+    expect(existsSync(data.dbPath('filament'))).toBe(false)
+    const cli = await options.internal!(new Request('http://hobwork.internal/v1/workspace/status'))
+    expect(await cli.text()).toBe('cli')
+
+    options.onEgressBlocked?.({ hostname: 'tracker.example', ip: '', port: 443 })
+    const [blocked] = queryLogs(host, { project: 'filament', limit: 10 })
+    expect(blocked).toMatchObject({ event: 'egress-blocked', message: expect.stringContaining('Workspace spools: blocked') })
+
+    expect(vm.isStale?.()).toBe(false)
+    secrets.set({ project: 'filament', name: 'API_KEY', value: 'rotated' })
+    expect(vm.isStale?.()).toBe(true)
+    await vm.stop()
+  } finally {
+    await data.stop()
+    host.dispose()
+  }
 })
 
 test('a workspace VM is stale once the egress allowlist changes', async () => {

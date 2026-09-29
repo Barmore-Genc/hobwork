@@ -10,10 +10,11 @@
     "create-token": "node src/cli/create-token.ts",
     "add-ssh-key": "node src/cli/add-ssh-key.ts",
     "sign-in-link": "node src/cli/sign-in-link.ts",
+    "secret": "node src/cli/secret.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox src/guest-vm src/runtime/runtime.vm src/ssh/ssh.vm",
+    "test:vm": "HOBWORK_VM_TESTS=1 vitest run src/sandbox src/guest-vm src/runtime/runtime.vm src/ssh/ssh.vm src/data/data.vm",
     "bench:sandbox": "node scripts/bench-sandbox.ts"
   },
   "devDependencies": {

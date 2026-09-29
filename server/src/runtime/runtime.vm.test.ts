@@ -90,7 +90,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     config.routes['GET /boom/:id'] = { handler: 'src/boom.ts' }
     config.routes['GET /lights'] = { handler: 'src/lights.ts' }
-    config.crons.tick = { schedule: '* * * * *', handler: 'src/tick.ts' }
+    config.crons = { tick: { schedule: '* * * * *', handler: 'src/tick.ts' } }
     await ok('write_file', { ...p, path: 'hobwork.json', content: JSON.stringify(config, null, 2) })
     await ok('write_file', {
       ...p,

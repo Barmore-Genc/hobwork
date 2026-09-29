@@ -6,10 +6,6 @@ Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start
 
 Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in the image (no debug output, parallel `modprobe`, no `update-ca-certificates` at boot), about 100-200ms; a custom kernel with the virtio and fuse drivers built in.
 
-## Storage use in the projects list
-
-Show how much disk each project uses in the web UI's projects list, with the project DB broken out since it is the part that grows. Other parts worth counting: the bare repo, branch DB copies, builds and logs. Agents get the same numbers from the `list_projects` and `get_project` MCP tools. Sizes can be read from the data dir; cache them or compute them in the background so the list stays fast.
-
 ## Live updates in the web UI
 
 A WebSocket from the host that tells open pages when something changed (projects, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The project log's long poll could move onto it.

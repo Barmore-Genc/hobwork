@@ -1,6 +1,6 @@
-import { api } from '../api.ts'
+import { api, type StorageUse } from '../api.ts'
 import { useLocation } from '../navigation.ts'
-import { exactTime, timeAgo } from '../format.ts'
+import { bytes, exactTime, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
@@ -55,6 +55,7 @@ export function ProjectsPage() {
                         Version {project.currentVersion.number}, {timeAgo(project.currentVersion.createdAt)}
                       </span>
                     )}
+                    {project.storage && <StorageLine storage={project.storage} />}
                   </div>
                 </Link>
               </li>
@@ -63,5 +64,23 @@ export function ProjectsPage() {
         )}
       </div>
     </div>
+  )
+}
+
+const PARTS: [keyof StorageUse, string][] = [
+  ['database', 'Database'],
+  ['branchDatabases', 'Branch database copies'],
+  ['workspaces', 'Branch files'],
+  ['repo', 'Code history'],
+  ['builds', 'Builds'],
+  ['logs', 'Logs'],
+]
+
+function StorageLine({ storage }: { storage: StorageUse }) {
+  const breakdown = PARTS.map(([key, label]) => `${label}: ${bytes(storage[key] as number)}`).join('\n')
+  return (
+    <span className="text-sm text-muted tabular" title={breakdown}>
+      {bytes(storage.total)} on disk, database {storage.database ? bytes(storage.database) : 'empty'}
+    </span>
   )
 }

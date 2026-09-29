@@ -23,6 +23,7 @@ import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
+import { createStorageUsage } from './storage.ts'
 import { createWorkspaceApi } from './workspace-api.ts'
 import { createWorkspaceManager, type InteractiveWorkspaceVm } from './workspaces.ts'
 
@@ -99,6 +100,8 @@ const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, a
 homeAssistant.start()
 await runtime.start()
 const housekeeping = startHousekeeping(host, runtime)
+const storage = createStorageUsage(host)
+void storage.measureAll(listProjects(host))
 
 if (!config.allowlist.everyone && !config.allowlist.emails.length && !config.allowlist.subjects.length) {
   console.warn('HOBWORK_ALLOWED_USERS is empty, so nobody can sign in to the web UI.')
@@ -126,6 +129,7 @@ const server = createApp(host, {
   runtime,
   data,
   secrets,
+  storage,
   backups,
   devices,
   sshPort: config.sshPort,

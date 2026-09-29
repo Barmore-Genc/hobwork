@@ -39,6 +39,7 @@ import {
   type SecretChange,
   type SecretStore,
 } from '../secrets.ts'
+import type { StorageUsage } from '../storage.ts'
 import { addSshKey, listSshKeys, revokeSshKey, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
 
@@ -149,6 +150,7 @@ export function createApiRoutes(options: {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  storage?: StorageUsage
 }) {
   const { host, auth, delivery, runtime } = options
 
@@ -206,6 +208,7 @@ export function createApiRoutes(options: {
       ...(configError ? { configError } : {}),
       egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort(),
       database: options.data?.status(project.name) ?? null,
+      ...(options.storage ? { storage: options.storage.get(project) } : {}),
       app: config ? await hasApp(project.name) : false,
       appUrl: options.appOrigin?.({ project: project.name }) ?? null,
     }
@@ -278,6 +281,7 @@ export function createApiRoutes(options: {
               status,
               currentVersion: current ? versionView(current) : null,
               iconUrl: iconUrl(project.name),
+              ...(options.storage ? { storage: options.storage.get(project) } : {}),
             }
           }),
         ),

@@ -253,7 +253,7 @@ Three ways in. All of them act on the same repos and workspaces.
 
 ### MCP tools
 
-Projects: `list_projects`, `create_project` (from template), `get_project` (entry points, current version, status, the app URL and each branch's preview URL).
+Projects: `list_projects` (with each project's storage use), `create_project` (from template), `get_project` (entry points, current version, status, [storage use](#storage-use), the app URL and each branch's preview URL).
 
 Workspaces and files: `create_branch`, `list_branches` (with each branch's app URL), `set_branch_home_assistant` (see [Hobwork to HA](#hobwork-to-ha-actions)), `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files`, `search`, `bash` (runs in the branch workspace VM), `commit`, `diff`, `log`.
 
@@ -438,6 +438,18 @@ Handlers get `ctx.db` (`packages/sdk/src/index.ts`): `query(sql, params)` (rows)
 - Statements slower than 500ms on a production DB are logged as `db` events (with the invocation, when the runner sent one), at most once per statement text every 10 minutes, and counted.
 - DB size (file plus WAL) is checked at most once a minute after queries, and after migrations. Every time it crosses another 100 MB, a `db` warning is logged.
 - `get_project` shows `database`: size, a size warning once over 100 MB, and the slow query count, slowest time and last slow statement since the host started.
+
+### Storage use
+
+The projects list in the web UI shows how much disk each project uses, with the project DB broken out since it is the part that grows (a tooltip has every part). `GET /api/projects`, `GET /api/projects/<name>` and the `list_projects` and `get_project` MCP tools return it as `storage`, in bytes (`server/src/storage.ts`):
+
+- `database`: `data/projects/<project>/` (the DB file, WAL and shared memory).
+- `branchDatabases`: the `db.sqlite*` files in each `data/workspaces/<project>/<branch>/`. `workspaces`: everything else there (checkouts and their git directories).
+- `repo`: `data/repos/<project>.git`. `builds`: `data/builds/<project>/`.
+- `logs`: the text of the project's log lines and invocation errors and stacks in the host DB (`octet_length`), which shares one file with every other project. Row and index overhead is left out.
+- `total`: the sum. Sizes are apparent file sizes, and symlinks are not followed.
+
+Walking a project's directories is too slow for every request, so the host keeps the last measurement in memory, keyed by project ID so a renamed project keeps it until the next one. Requests answer from it, and a project with no measurement or one older than 5 minutes is measured again in the background, one project at a time. `storage` is `null` until the first measurement. The host measures every project when it starts. Rejected: storing sizes in the host DB, which needs a migration for numbers that are cheap to measure again after a restart.
 
 ## Backups
 

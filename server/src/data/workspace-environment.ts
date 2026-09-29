@@ -43,7 +43,7 @@ export function createWorkspaceEnvironment(
               source: 'runtime',
               level: 'warn',
               event: 'egress-blocked',
-              message: `Workspace ${branch}: blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or bind a secret to it`,
+              message: `Workspace ${branch}: blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or assign a secret that may be sent to it`,
             })
           } catch (err) {
             console.error(`Could not record blocked egress for ${project}`, err)

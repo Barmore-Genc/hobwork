@@ -342,7 +342,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
           project,
           'warn',
           'egress-blocked',
-          `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or bind a secret to it`,
+          `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or assign a secret that may be sent to it`,
         ),
       label: `runtime ${project} v${deployed.version}`,
     })

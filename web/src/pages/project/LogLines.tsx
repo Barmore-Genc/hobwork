@@ -14,6 +14,7 @@ const EVENT_LABELS: Record<string, string> = {
   pipeline: 'Check',
   migration: 'Data change',
   db: 'Data',
+  secret: 'Secret',
 }
 
 const LEVEL_STYLES: Record<LogLine['level'], string> = {

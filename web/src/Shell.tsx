@@ -7,7 +7,7 @@ type NavItem = { to: string; label: string; match: (pathname: string) => boolean
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Projects', match: (p) => p === '/' || p.startsWith('/projects/') },
-  { to: '/secrets', label: 'Shared secrets', match: (p) => p.startsWith('/secrets') },
+  { to: '/secrets', label: 'Secrets', match: (p) => p.startsWith('/secrets') },
   { to: '/agents', label: 'Agent access', match: (p) => p.startsWith('/agents') },
   { to: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
 ]

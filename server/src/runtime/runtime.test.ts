@@ -15,7 +15,7 @@ import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
 import { signedIn, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
-import { createSecretStore } from '../secrets.ts'
+import { createSecretStore, type Actor } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
@@ -23,6 +23,8 @@ import { getInvocation, listInvocations, queryLogs, startInvocation } from './lo
 import { createRuntime, type Runtime, type RuntimeOptions } from './runtime.ts'
 import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
 import { rotateWebhookToken } from './webhooks.ts'
+
+const HOST_ACTOR: Actor = { kind: 'host' }
 
 let host: ReturnType<typeof createTestHost>
 let sandboxes: FakeRuntimeSandboxes
@@ -408,8 +410,12 @@ test('slow queries are logged with their invocation', async () => {
 
 test('secrets reach runtime VMs as placeholders, their hosts join egress, and a change starts a new VM', async () => {
   const secrets = createSecretStore(host, randomBytes(32))
-  secrets.set({ project: 'filament', name: 'SPOOL_API_KEY', value: 'real-value', hosts: ['api.spools.example'] })
-  secrets.set({ name: 'SHARED_TOKEN', value: 'shared', hosts: ['shared.example'] })
+  const spools = secrets.create({ name: 'Spools', value: 'real-value', hosts: ['api.spools.example'] }, HOST_ACTOR)
+  secrets.assign('filament', spools.id, 'SPOOL_API_KEY', HOST_ACTOR)
+  secrets.create(
+    { name: 'Shared', value: 'shared', hosts: ['shared.example'], assign: { project: 'filament', envName: 'SHARED_TOKEN' } },
+    HOST_ACTOR,
+  )
   start({ secrets })
   await deploy(
     projectFiles({
@@ -429,13 +435,26 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
     SPOOL_API_KEY: `${FAKE_PLACEHOLDER_PREFIX}SPOOL_API_KEY`,
   })
 
-  secrets.set({ project: 'filament', name: 'SPOOL_API_KEY', value: 'rotated' })
+  secrets.update(spools.id, { value: 'rotated' }, HOST_ACTOR)
   await route()
   expect(sandboxes.created).toHaveLength(2)
   expect(sandboxes.created[1]?.secrets?.SPOOL_API_KEY?.value).toBe('rotated')
   await until(() => sandboxes.running.size === 1)
   const stop = queryLogs(host, { project: 'filament', source: 'runtime', limit: 50 }).find((l) => l.event === 'stop')
   expect(stop?.message).toContain('secrets changed')
+
+  secrets.unassign('filament', 'SPOOL_API_KEY', HOST_ACTOR)
+  expect(bodyOf(await route())).toEqual({ SHARED_TOKEN: `${FAKE_PLACEHOLDER_PREFIX}SHARED_TOKEN` })
+  expect(sandboxes.created).toHaveLength(3)
+  expect(sandboxes.created[2]?.egress?.sort()).toEqual(['shared.example', 'weather.example'])
+
+  secrets.assign('filament', spools.id, 'SPOOLS', HOST_ACTOR)
+  expect(bodyOf(await route())).toEqual({
+    SHARED_TOKEN: `${FAKE_PLACEHOLDER_PREFIX}SHARED_TOKEN`,
+    SPOOLS: `${FAKE_PLACEHOLDER_PREFIX}SPOOLS`,
+  })
+  expect(sandboxes.created).toHaveLength(4)
+  expect(sandboxes.created[3]?.egress?.sort()).toEqual(['api.spools.example', 'shared.example', 'weather.example'])
 })
 
 test('blocked egress is logged to the project log', async () => {

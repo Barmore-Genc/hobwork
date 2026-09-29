@@ -520,6 +520,18 @@ Project UIs run agent-written JavaScript. On the Hobwork origin that code would 
 - If a capability needs the app in the foreground (NFC), the host sends a push notification. Tapping it opens the app straight into the action.
 - NFC tags written by Hobwork contain a URL that opens the app (universal link), not the browser.
 
+### Device protocol
+
+- **Pairing**: the app asks for the host URL, then opens `ASWebAuthenticationSession` at `<public URL>/devices/connect?name=<device name>&platform=ios&challenge=<PKCE S256>&state=<random>&redirect_uri=hobwork://paired`. The page needs a signed-in person like every page (so Pocket ID or a passkey happens inside the session), shows the device name and asks to approve. Approving creates a device owned by that person and redirects to `hobwork://paired?code=<code>&state=<state>` (code: 5 minutes, single use). The app sends `POST /api/devices/token` with the code and PKCE verifier and gets `{ deviceId, token }`. The device token (`hwd_...`, stored hashed) does not expire; people revoke devices in the web UI. The app keeps it in the Keychain.
+- **Web session in the app**: device tokens never go to the WebView. The app calls `POST /api/devices/web-session` (Bearer device token) and gets a one-time URL (60 seconds, single use) that sets a normal Hobwork session cookie for the device's owner and redirects to a path it names. The app loads that URL in its `WKWebView` (persistent data store), which then signs in to project apps through the usual app-origin redirects.
+- **Connection**: `GET /api/devices/ws` upgraded to a WebSocket, `Authorization: Bearer hwd_...`. Messages are JSON objects with a `type`:
+  - app → host `hello`: `{ appVersion, platform, capabilities: string[], push?: { token, environment: "sandbox" | "production" } }`. Sent on every connect. The push token can also be updated with `PUT /api/devices/push` while disconnected.
+  - host → app `call`: `{ id, capability, method, args }`; app → host `result`: `{ id, ok: true, value }` or `{ id, ok: false, error: { code, message } }`.
+  - app → host `event`: `{ capability, name, data }` (for example a notification action).
+  - Both sides send `ping`/`pong` every 30 seconds; the host drops a connection that misses two.
+- **Push**: APNs with a token (`.p8`) key: `HOBWORK_APNS_KEY_FILE`, `HOBWORK_APNS_KEY_ID`, `HOBWORK_APNS_TEAM_ID`, topic `dev.bgenc.hobwork`. Without them push is off and notifications only reach connected devices.
+- **SDK**: `ctx.device(name)` returns the capabilities; `ctx.devices()` lists devices with their capabilities and whether they are connected. Branch workspaces cannot call devices, like Home Assistant control.
+
 Planned capabilities:
 
 - **Notifications** (APNs), with actions that send events back to scripts.

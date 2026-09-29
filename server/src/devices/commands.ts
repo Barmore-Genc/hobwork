@@ -8,6 +8,10 @@ export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
 export const HEALTH_TYPES = ['sleep', 'steps', 'heartRate', 'restingHeartRate', 'activeEnergy', 'bodyMass', 'workouts', 'mindfulness'] as const
 export const MAX_HEALTH_SAMPLES = 1000
 export const MAX_NFC_TEXT_BYTES = 1024
+export const MAX_NFC_URL_BYTES = 2048
+// What iOS opens from a tag without an app (background tag reading), besides
+// universal links. Other schemes would only do something in an app that reads the tag.
+export const NFC_URL_SCHEMES = ['http', 'https', 'mailto', 'tel', 'sms', 'facetime', 'facetime-audio', 'shortcuts'] as const
 const MAX_TITLE = 100
 const MAX_TIMER_SECONDS = 24 * 60 * 60
 const MAX_LIMIT_MINUTES = 24 * 60 - 1
@@ -106,6 +110,23 @@ function defined(args: Args): Args {
   return Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
 }
 
+// A URL to write to a tag, normalized the way the host compares URLs.
+function nfcUrl(value: unknown): string {
+  if (typeof value !== 'string' || !URL.canParse(value) || /[\s\p{Cc}]/u.test(value)) {
+    bad('url must be an absolute URL without spaces, like "https://example.com/spools/3"')
+  }
+  const url = new URL(value)
+  const scheme = url.protocol.slice(0, -1)
+  if (!(NFC_URL_SCHEMES as readonly string[]).includes(scheme)) {
+    bad(`url must use one of the schemes ${NFC_URL_SCHEMES.map((s) => `${s}:`).join(', ')}`)
+  }
+  if ((scheme === 'http' || scheme === 'https') && (url.username || url.password)) {
+    bad('url must not contain a user name or password')
+  }
+  if (Buffer.byteLength(url.href) > MAX_NFC_URL_BYTES) bad(`url must be at most ${MAX_NFC_URL_BYTES} bytes`)
+  return url.href
+}
+
 const noArgs = (method: string): CommandSpec => ({
   parse(args) {
     only(args, method, [])
@@ -198,15 +219,16 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
     status: noArgs('focus.status'),
   },
   nfc: {
-    // The host adds the tag and its URL (see createDevices).
+    // Without url, the host adds a new tag and its URL (see createDevices).
     write: {
       foreground: true,
       parse(args) {
-        only(args, 'nfc.write', ['text'])
-        if (args.text === undefined) return {}
+        only(args, 'nfc.write', ['url', 'text'])
+        const url = args.url === undefined ? undefined : nfcUrl(args.url)
+        if (args.text === undefined) return defined({ url })
         if (typeof args.text !== 'string' || !args.text) bad('text must be a non-empty string')
         if (Buffer.byteLength(args.text) > MAX_NFC_TEXT_BYTES) bad(`text must be at most ${MAX_NFC_TEXT_BYTES} bytes as UTF-8`)
-        return { text: args.text }
+        return defined({ url, text: args.text })
       },
     },
     read: { foreground: true, ...noArgs('nfc.read') },

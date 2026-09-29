@@ -125,7 +125,11 @@ export type NfcRecord = { type: 'url' | 'text' | 'other'; value: string }
 export interface Nfc {
   // Writes a new Hobwork tag owned by this project, plus text when given.
   // Scanning it runs the project's NfcScannedEvent triggers.
-  write(tag?: { text?: string }): Promise<{ tag: string }>
+  write(tag?: { text?: string }): Promise<{ tag: string; url: string }>
+  // Writes any URL instead: http, https, mailto, tel, sms, facetime,
+  // facetime-audio or shortcuts, at most 2,048 bytes. Scans run triggers with
+  // a matching "url" prefix in every project. Returns the URL as written.
+  write(tag: { url: string; text?: string }): Promise<{ url: string }>
   // tag is set when the tag is a Hobwork tag of this host.
   read(): Promise<{ records: NfcRecord[]; tag?: string }>
 }
@@ -193,12 +197,17 @@ export type FocusChangedEvent = {
 }
 
 // { "device": { "capability": "nfc", "event": "scanned" } }: someone scanned a
-// tag this project wrote. device is null when the tag was opened in a browser.
+// tag this project wrote (tag is set). With a "url" prefix on the trigger, also
+// scans of any other URL starting with it, from the app's Scan Tag button or a
+// Shortcut. device is null when a Hobwork tag was opened in a browser.
 export type NfcScannedEvent = {
   device: string | null
   capability: 'nfc'
   event: 'scanned'
-  tag: string
+  tag?: string
+  url: string
+  // The tag's records, when the app read the tag itself.
+  records?: NfcRecord[]
 }
 
 // { "device": { "capability": "health", "event": "samples" } }: new samples of

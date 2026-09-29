@@ -47,9 +47,9 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 - `ctx.device(name).notifications.send({ title, body, actions, data })`.
 - `alarms`: `set({ title, at | time, days })`, `timer({ title, seconds })`, `cancel({ id })`, `list()`.
 - `screenTime`: block app sets the person made in the app, by name: `sets()`, `block({ set, until })`, `unblock`, `schedule({ name, set, start, end, days })`, `limit({ name, set, minutes })`, `status()`.
-- `focus.status()`, `nfc.write({ text })` / `nfc.read()` (the person taps a notification and holds the phone to a tag; waits up to 2 minutes), `health.query({ type, from, to })`.
+- `focus.status()`, `nfc.write({ text })` (a Hobwork tag) or `nfc.write({ url, text })` (any http/https/mailto/tel/sms link) / `nfc.read()` (the person taps a notification and holds the phone to a tag; waits up to 2 minutes), `health.query({ type, from, to })`.
 - Calls other than `notifications.send` throw `DeviceError` `timeout` after 30 s; the device may still run them within 10 minutes, and the result goes to the logs.
-- Triggers: `{ "device": { "capability": "notifications", "event": "action" } }`, `focus`/`changed`, `nfc`/`scanned` (tags this project wrote), `health`/`samples`, optionally with `"device": "<name>"`. The event is `ctx.payload`.
+- Triggers: `{ "device": { "capability": "notifications", "event": "action" } }`, `focus`/`changed`, `nfc`/`scanned` (tags this project wrote; with `"url": "<prefix>"` also other tags whose link starts with it), `health`/`samples`, optionally with `"device": "<name>"`. The event is `ctx.payload`.
 - Only deployed handlers use devices; tests fake them with `createTestContext({ device: () => ({ alarms: { set } }) })`. Try with `invoke` after `merge`.
 
 ## LLMs

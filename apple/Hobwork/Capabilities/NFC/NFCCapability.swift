@@ -48,13 +48,13 @@ final class NFCCapability: CapabilityHandler {
             let records = try await run { () throws(NFCSessionError) in try await session.read() }
             return try JSONValue(encoding: Self.readResult(records, host: host()))
         case "write":
-            let tag = try args.string("tag")
-            guard let url = try URL(string: args.string("url")), ["http", "https"].contains(url.scheme?.lowercased()) else {
-                throw CallError.badRequest("url must be an http or https URL")
+            let tag = try args.optionalString("tag")
+            guard let url = try URL(string: args.string("url")), NFCTagLink.writableSchemes.contains(url.scheme?.lowercased() ?? "") else {
+                throw CallError.badRequest("url must be an http, https, mailto, tel, sms, facetime, facetime-audio or shortcuts URL")
             }
             let text = try args.optionalString("text")
             try await run { () throws(NFCSessionError) in try await session.write(url: url, text: text) }
-            return .object(["tag": .string(tag)])
+            return .object(tag.map { ["tag": .string($0), "url": .string(url.absoluteString)] } ?? ["url": .string(url.absoluteString)])
         default:
             throw CallError.unsupported(Self.capability, method)
         }

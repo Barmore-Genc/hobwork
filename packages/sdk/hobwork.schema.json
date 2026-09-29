@@ -57,7 +57,7 @@
         "properties": {
           "homeassistant": { "type": "object" },
           "device": {
-            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this project sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this project wrote was scanned), health/samples (new Health samples). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
+            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this project sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this project wrote was scanned, or with url any scanned URL starting with it), health/samples (new Health samples). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
             "type": "object",
             "additionalProperties": false,
             "required": ["capability", "event"],
@@ -67,9 +67,16 @@
               "device": {
                 "description": "Only events from the device with this name, as ctx.device() takes it.",
                 "$ref": "#/definitions/name"
+              },
+              "url": {
+                "description": "nfc/scanned only: runs the handler for scanned URLs that start with this, such as \"https://example.com/spools/\", from tags Hobwork did not write too. Tags reach Hobwork through the app's Scan Tag button or the \"Send Tag to Hobwork\" Shortcuts action. Without it, only tags this project wrote.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
               }
             },
             "allOf": [
+              { "if": { "required": ["url"] }, "then": { "properties": { "capability": { "const": "nfc" } } } },
               { "if": { "properties": { "capability": { "const": "notifications" } } }, "then": { "properties": { "event": { "const": "action" } } } },
               { "if": { "properties": { "capability": { "const": "focus" } } }, "then": { "properties": { "event": { "const": "changed" } } } },
               { "if": { "properties": { "capability": { "const": "nfc" } } }, "then": { "properties": { "event": { "const": "scanned" } } } },

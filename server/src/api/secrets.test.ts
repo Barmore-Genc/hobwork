@@ -96,7 +96,7 @@ test('users assign and unassign secrets, or create and assign in one step', asyn
   expect(await (await call('GET', '/api/projects/filament/secrets', undefined, { cookie })).json()).toMatchObject([
     { envName: 'SPOOLMAN_TOKEN', secret: 'Spoolman API key' },
   ])
-  expect(secrets.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['api.spools.example'] } })
+  expect(secrets.forSandbox('alarms')).toEqual({ API_KEY: { value: 'v', hosts: ['api.spools.example'], headers: [] } })
 
   expect((await call('PUT', '/api/projects/alarms/secrets/OTHER', { secretId: id })).status).toBe(409)
   expect((await call('DELETE', '/api/projects/alarms/secrets/API_KEY')).status).toBe(204)
@@ -167,7 +167,7 @@ test('people approve or deny the hosts an agent asked for', async () => {
   const created = await call('POST', '/api/secrets', { name: 'Spools', value: 'v', assign: { project: 'filament', envName: 'SPOOLS' } })
   expect(created.status).toBe(201)
   expect(await created.json()).toMatchObject({ hosts: [], pendingHostRequest: null })
-  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [] } })
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [], headers: [] } })
 
   const first = secrets.requestHosts('Spools', ['old.example'], 'First try', agent)
   const request = secrets.requestHosts('Spools', ['API.Spools.example', '*.cdn.example'], 'Spoolman lives there', agent)
@@ -186,11 +186,21 @@ test('people approve or deny the hosts an agent asked for', async () => {
 
   const approved = await call('POST', `/api/secrets/host-requests/${request.id}/approve`)
   expect(await approved.json()).toMatchObject({ decision: 'approved', decidedBy: expect.any(String) })
-  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: ['api.spools.example', '*.cdn.example'] } })
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: ['api.spools.example', '*.cdn.example'], headers: [] } })
   expect((await call('POST', `/api/secrets/host-requests/${request.id}/deny`)).status).toBe(409)
 
   const denied = secrets.requestHosts('Spools', ['evil.example'], 'Trust me', agent)
   expect(((await (await call('POST', `/api/secrets/host-requests/${denied.id}/deny`)).json()) as HostRequest).decision).toBe('denied')
   expect(secrets.get('Spools')).toMatchObject({ hosts: ['api.spools.example', '*.cdn.example'], pendingHostRequest: null })
   expect((await call('GET', '/api/secrets/host-requests/999')).status).toBe(404)
+})
+
+test('people set the headers a secret is sent in', async () => {
+  const created = await call('POST', '/api/secrets', { name: 'Key', value: 'v', hosts: ['a.example'], headers: ['X-Api-Key'] })
+  expect(created.status).toBe(201)
+  const { id, headers } = (await created.json()) as SecretInfo
+  expect(headers).toEqual(['x-api-key'])
+  expect(((await (await call('PATCH', `/api/secrets/${id}`, { headers: [] })).json()) as SecretInfo).headers).toEqual([])
+  expect((await call('PATCH', `/api/secrets/${id}`, { headers: 'x-api-key' })).status).toBe(400)
+  expect((await call('PATCH', `/api/secrets/${id}`, { headers: ['host'] })).status).toBe(400)
 })

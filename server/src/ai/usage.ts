@@ -11,7 +11,8 @@ const KEEP_MS = 90 * DAY_MS
 export type AiSource = 'runtime' | 'preview' | 'workspace'
 export type RefusalKind = 'model' | 'rate' | 'spend'
 
-export type Usage = { promptTokens?: number; completionTokens?: number; cost?: number }
+// `model` is the one that answered, which fallbacks can make another than the requested.
+export type Usage = { promptTokens?: number; completionTokens?: number; cost?: number; model?: string }
 
 const iso = (ms: number) => new Date(ms).toISOString()
 

@@ -38,9 +38,8 @@ Sections are in the order to work on them.
 ### Home Assistant, AI and secrets
 
 - **HA events**: `fireEvent` is not limited by the services list, and events can trigger HA automations. Give hobs a list of event types they may fire, like the services list.
-- **AI endpoints**: refuse gateway paths it does not recognize, and estimate the cost from tokens when OpenRouter returns none.
-- **AI over https only**: the interceptor refuses plain http.
-- **Secret substitution**: only into named headers (`Authorization` and those a secret lists) over https.
+- **Secret refusals in the hob log**: a request refused because a secret is in the wrong header or goes over http writes a hob log line, like `egress-blocked`.
+- **AI gateway port**: refuse OpenRouter on ports other than 443.
 
 ### Resources
 

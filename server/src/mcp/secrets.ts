@@ -29,7 +29,7 @@ export function registerSecretTools(
     'list_secrets',
     {
       description:
-        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, and the hobs it is assigned to with the env name each hob uses. With a hob, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
+        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, the headers it may be sent in (headers lists them besides Authorization, which always works), and the hobs it is assigned to with the env name each hob uses. With a hob, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
       inputSchema: { hob: hob.optional().describe('Only the secrets assigned to this hob') },
       annotations: { readOnlyHint: true },
     },
@@ -38,7 +38,7 @@ export function registerSecretTools(
         requireProject(host, name)
         const assigned = store()
           .assigned(name)
-          .map(({ envName: env, secret, hosts }) => ({ envName: env, secret, hosts }))
+          .map(({ envName: env, secret, hosts, headers }) => ({ envName: env, secret, hosts, headers }))
         const text = assigned.length
           ? JSON.stringify(assigned, null, 2)
           : `${name} has no secrets assigned. Call list_secrets without a hob to see every secret, and assign one with assign_secret.`
@@ -46,9 +46,10 @@ export function registerSecretTools(
       }
       const library = store()
         .list()
-        .map(({ name: secret, hosts, pendingHostRequest, assignments }) => ({
+        .map(({ name: secret, hosts, headers, pendingHostRequest, assignments }) => ({
           name: secret,
           hosts,
+          headers,
           ...(pendingHostRequest ? { pendingHosts: pendingHostRequest.hosts } : {}),
           hobs: assignments
             .filter(({ project: p }) => allowsProject(agent.access, p))
@@ -65,7 +66,7 @@ export function registerSecretTools(
     'assign_secret',
     {
       description:
-        "Give a hob an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value in request headers to the secret's hosts), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the hob log. If the secret does not exist, ask the user to create it in Hobwork. If it has no hosts or lacks one, ask for them with request_secret_hosts.",
+        "Give a hob an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value over https, in the Authorization header and the headers the secret lists, when sent to the secret's hosts; never in the URL or body), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the hob log. If the secret does not exist, ask the user to create it in Hobwork. If it has no hosts or lacks one, ask for them with request_secret_hosts.",
       inputSchema: {
         hob,
         secret: z.string().describe('Secret name as list_secrets shows it, e.g. "Spoolman API key"'),

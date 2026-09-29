@@ -16,6 +16,7 @@ export const MAX_ENV_NAME_LENGTH = 64
 const MAX_LABEL_LENGTH = 80
 const MAX_VALUE_BYTES = 64 * 1024
 const MAX_HOSTS = 20
+const MAX_HEADERS = 10
 
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/
 const HOST_LABEL = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
@@ -39,6 +40,9 @@ const RESERVED_NAMES = new Set([
   'TZ',
   'USER',
 ])
+const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]+$/
+// Headers the HTTP client sets for the connection, or that name the destination.
+const RESERVED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'expect', 'te', 'trailer', 'content-length'])
 const RESERVED_PREFIXES = ['HOBWORK_', 'GONDOLIN_', 'NPM_CONFIG_']
 
 export class SecretError extends ProjectError {}
@@ -87,6 +91,8 @@ export type SecretInfo = {
   id: number
   name: string
   hosts: string[]
+  // Names of the headers, besides Authorization, that the value is filled into.
+  headers: string[]
   // The newest host request that waits for an answer.
   pendingHostRequest: { id: number; hosts: string[]; agent: string | null } | null
   createdAt: string
@@ -102,6 +108,7 @@ export type ProjectSecretInfo = {
   secretId: number
   secret: string
   hosts: string[]
+  headers: string[]
   updatedAt: string
   assignedAt: string
   assignedBy: ActorInfo
@@ -127,11 +134,13 @@ export type NewSecret = {
   name: string
   value: string
   hosts?: string[]
+  // Besides Authorization, which always works.
+  headers?: string[]
   // Assigns the new secret to a project in the same step.
   assign?: { project: string; envName: string }
 }
 
-export type SecretChange = { name?: string; value?: string; hosts?: string[] }
+export type SecretChange = { name?: string; value?: string; hosts?: string[]; headers?: string[] }
 
 // A secret's ID or its name.
 export type SecretRef = number | string
@@ -169,6 +178,20 @@ export function normalizeHosts(hosts: string[]): string[] {
   return [...new Set(normalized)]
 }
 
+// Names of headers besides Authorization that a secret may be filled into.
+export function normalizeHeaders(headers: string[]): string[] {
+  if (!Array.isArray(headers)) throw new SecretError('Headers must be a list of header names, like X-Api-Key')
+  const normalized = headers.map((header) => String(header).trim().toLowerCase())
+  for (const header of normalized) {
+    if (header.length > 100 || !HEADER_NAME.test(header) || RESERVED_HEADERS.has(header)) {
+      throw new SecretError(`"${header}" is not a header a secret can be sent in. Use a name like X-Api-Key`)
+    }
+  }
+  const unique = [...new Set(normalized)].filter((header) => header !== 'authorization')
+  if (unique.length > MAX_HEADERS) throw new SecretError(`A secret can be sent in at most ${MAX_HEADERS} headers besides Authorization`)
+  return unique
+}
+
 function validateValue(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) throw new SecretError('The secret value must not be empty')
   if (Buffer.byteLength(value) > MAX_VALUE_BYTES) throw new SecretError('The secret value is larger than 64 KB')
@@ -180,6 +203,7 @@ type Row = {
   name: string
   value: Uint8Array
   hosts: string[]
+  headers: string[]
   legacyAad: string | null
   createdAt: string
   updatedAt: string
@@ -199,6 +223,7 @@ function toRow(row: Record<string, unknown>): Row {
     name: String(row.name),
     value: row.value as Uint8Array,
     hosts: JSON.parse(String(row.hosts)) as string[],
+    headers: JSON.parse(String(row.headers)) as string[],
     legacyAad: nullableString(row.legacy_aad),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -219,7 +244,7 @@ function toAssignment(row: Record<string, unknown>): AssignmentRow {
   }
 }
 
-const SELECT = `SELECT s.id, s.name, s.value, s.hosts, s.legacy_aad, s.created_at, s.updated_at,
+const SELECT = `SELECT s.id, s.name, s.value, s.hosts, s.headers, s.legacy_aad, s.created_at, s.updated_at,
     cu.name AS created_by, uu.name AS updated_by
   FROM secrets s
   LEFT JOIN users cu ON cu.id = s.created_by_user_id
@@ -240,8 +265,14 @@ function actorLabel(actor: Actor): string {
   return 'Someone on the Hobwork host'
 }
 
-function sentTo(hosts: string[]): string {
-  return hosts.length ? `It is only sent to ${hosts.join(', ')}` : 'It is not sent anywhere until it has hosts'
+function headerList(headers: string[]): string {
+  return headers.length ? `the Authorization header and ${headers.join(', ')}` : 'the Authorization header only'
+}
+
+function sentTo(hosts: string[], headers: string[]): string {
+  return hosts.length
+    ? `It is only sent to ${hosts.join(', ')}${headers.length ? `, in ${headerList(headers)}` : ''}`
+    : 'It is not sent anywhere until it has hosts'
 }
 
 function logEntry(project: string, message: string): NewLogEntry {
@@ -382,6 +413,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       id: row.id,
       name: row.name,
       hosts: row.hosts,
+      headers: row.headers,
       pendingHostRequest: pendingHostRequest(row.id),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -397,6 +429,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       secretId: row.id,
       secret: row.name,
       hosts: row.hosts,
+      headers: row.headers,
       updatedAt: row.updatedAt,
       assignedAt: assignment.assignedAt,
       assignedBy: assignment.assignedBy,
@@ -445,27 +478,34 @@ export function createSecretStore(host: Host, key: Buffer) {
   function update(row: Row, change: SecretChange, actor: Actor): SecretInfo {
     const name = change.name === undefined ? row.name : normalizeName(change.name)
     const hosts = change.hosts === undefined ? row.hosts : normalizeHosts(change.hosts)
+    const headers = change.headers === undefined ? row.headers : normalizeHeaders(change.headers)
     if (change.value !== undefined) validateValue(change.value)
     if (nameTaken(name, row.id)) throw new SecretConflictError(`A secret called "${name}" already exists`)
     const valueChanged = change.value !== undefined
     const hostsChanged = hosts.join('\n') !== row.hosts.join('\n')
-    if (!valueChanged && !hostsChanged && name === row.name) return info(row)
+    const headersChanged = headers.join('\n') !== row.headers.join('\n')
+    if (!valueChanged && !hostsChanged && !headersChanged && name === row.name) return info(row)
     host.db
       .prepare(
-        `UPDATE secrets SET name = ?, value = ?, hosts = ?, legacy_aad = ?, updated_by_user_id = ?, updated_at = ${NOW}
+        `UPDATE secrets SET name = ?, value = ?, hosts = ?, headers = ?, legacy_aad = ?, updated_by_user_id = ?, updated_at = ${NOW}
          WHERE id = ?`,
       )
       .run(
         name,
         change.value === undefined ? row.value : encrypt(row.id, change.value),
         JSON.stringify(hosts),
+        JSON.stringify(headers),
         valueChanged ? null : row.legacyAad,
         userId(actor),
         row.id,
       )
     changed()
-    if (valueChanged || hostsChanged) {
-      const what = [valueChanged && 'new value', hostsChanged && (hosts.length ? `now only sent to ${hosts.join(', ')}` : 'no longer sent anywhere')]
+    if (valueChanged || hostsChanged || headersChanged) {
+      const what = [
+        valueChanged && 'new value',
+        hostsChanged && (hosts.length ? `now only sent to ${hosts.join(', ')}` : 'no longer sent anywhere'),
+        headersChanged && `now sent in ${headerList(headers)}`,
+      ]
         .filter(Boolean)
         .join(', ')
       appendLogs(
@@ -507,16 +547,17 @@ export function createSecretStore(host: Host, key: Buffer) {
       const name = normalizeName(input.name)
       validateValue(input.value)
       const hosts = normalizeHosts(input.hosts ?? [])
+      const headers = normalizeHeaders(input.headers ?? [])
       const target = input.assign && { ...input.assign, projectId: requireProject(host, input.assign.project).id }
       if (target) validateEnvName(target.envName)
       if (nameTaken(name)) throw new SecretConflictError(`A secret called "${name}" already exists. Pick another name`)
       const id = transaction(() => {
         const inserted = host.db
           .prepare(
-            `INSERT INTO secrets (name, value, hosts, created_by_user_id, updated_by_user_id)
-             VALUES (?, x'', ?, ?, ?) RETURNING id`,
+            `INSERT INTO secrets (name, value, hosts, headers, created_by_user_id, updated_by_user_id)
+             VALUES (?, x'', ?, ?, ?, ?) RETURNING id`,
           )
-          .get(name, JSON.stringify(hosts), userId(actor), userId(actor))
+          .get(name, JSON.stringify(hosts), JSON.stringify(headers), userId(actor), userId(actor))
         if (!inserted) throw new Error('Secret insert returned no row')
         const newId = Number(inserted.id)
         host.db.prepare('UPDATE secrets SET value = ? WHERE id = ?').run(encrypt(newId, input.value), newId)
@@ -528,7 +569,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         appendLogs(host, [
           logEntry(
             target.project,
-            `${actorLabel(actor)} added the secret "${name}" as ${target.envName}. ${sentTo(hosts)}`,
+            `${actorLabel(actor)} added the secret "${name}" as ${target.envName}. ${sentTo(hosts, headers)}`,
           ),
         ])
       }
@@ -608,7 +649,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       appendLogs(host, [
         logEntry(
           project,
-          `${actorLabel(actor)} added the secret "${row.name}" as ${envName}. ${sentTo(row.hosts)}`,
+          `${actorLabel(actor)} added the secret "${row.name}" as ${envName}. ${sentTo(row.hosts, row.headers)}`,
         ),
       ])
       return projectInfo(assigned(project).find(({ assignment }) => assignment.envName === envName)!)
@@ -630,7 +671,7 @@ export function createSecretStore(host: Host, key: Buffer) {
     // returns them.
     forSandbox(project: string): Record<string, Secret> {
       return Object.fromEntries(
-        assigned(project).map(({ assignment, row }) => [assignment.envName, { value: decrypt(row), hosts: row.hosts }]),
+        assigned(project).map(({ assignment, row }) => [assignment.envName, { value: decrypt(row), hosts: row.hosts, headers: row.headers }]),
       )
     },
 
@@ -642,7 +683,7 @@ export function createSecretStore(host: Host, key: Buffer) {
     fingerprint(project: string): string {
       const hash = createHash('sha256')
       for (const { assignment, row } of assigned(project)) {
-        hash.update(`${row.id}\0${assignment.envName}\0${row.hosts.join(',')}\0${row.updatedAt}\n`)
+        hash.update(`${row.id}\0${assignment.envName}\0${row.hosts.join(',')}\0${row.headers.join(',')}\0${row.updatedAt}\n`)
       }
       return hash.digest('hex')
     },

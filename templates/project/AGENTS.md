@@ -31,7 +31,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 
 ## Secrets
 
-The user creates secrets and their hosts in the Hobwork UI. Find one with `list_secrets` and `assign_secret` it under an env name; if none fits, ask the user to create it. If it lacks a host the code calls, use `request_secret_hosts` and show the user the link. `ctx.secrets.NAME` is a placeholder that Hobwork replaces only in request headers sent to the secret's hosts.
+The user creates secrets and their hosts in the Hobwork UI. Find one with `list_secrets` and `assign_secret` it under an env name; if none fits, ask the user to create it. If it lacks a host the code calls, use `request_secret_hosts` and show the user the link. `ctx.secrets.NAME` is a placeholder that Hobwork replaces only in the `Authorization` header (`Bearer`, or `Basic` for a password) and in the headers the secret lists (`list_secrets` shows them as `headers`), and only over https to the secret's hosts. It is never filled into a URL, query string or body, so `?api_key=${ctx.secrets.KEY}` sends the placeholder. Send the secret in a header instead. If the API needs a header the secret does not list, ask the user to add it to the secret in Hobwork. A placeholder in any other header, or over http, fails the request with a 403 (`hobwork_secret_not_allowed`).
 
 ## Home Assistant
 

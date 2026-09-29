@@ -72,7 +72,7 @@ Rules:
 - A hob calls no Home Assistant service until its list names it. Before a handler calls one, add its domain or service with update_ha_services and tell the user. get_hob shows the list.
 - A hob calls no Home Assistant service until its list names it. Before a handler calls one, add its domain or service with update_ha_services and tell the user. get_hob shows the list.
 - Only people can delete, rename or restore a hob, in the Hobwork web UI. There are no tools for it.
-- Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>.
+- Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>. Put it in the Authorization header, or in a header the secret lists (list_secrets shows headers); Hobwork fills it in nowhere else, and only over https. If the API needs another header, ask the user to add it to the secret in Hobwork.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
 
 const MAX_READ_LINES = 2000

@@ -247,6 +247,19 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     expect(result.stdout).not.toContain('super-secret-value')
   })
 
+  test('secrets are refused in other headers and over http', async () => {
+    const guarded = await start({
+      egress: ['api.example'],
+      secrets: { API_KEY: { value: 'super-secret-value', hosts: ['api.example'], headers: ['x-api-key'] } },
+    })
+    const other = await guarded.exec('curl -s -m 20 -H "X-Other: $API_KEY" https://api.example/').result
+    expect(other.stdout).toContain('hobwork_secret_not_allowed')
+    expect(other.stdout).toContain('Found it in the x-other header')
+    const plain = await guarded.exec('curl -s -m 20 -H "Authorization: Bearer $API_KEY" http://api.example/').result
+    expect(plain.stdout).toContain('Hobwork only sends API_KEY over https')
+    await guarded.stop()
+  })
+
   test('each sandbox gets its own internal handler', async () => {
     const other = await start({ internal: () => new Response('other') })
     const result = await other.exec('curl -sS http://hobwork.internal/').result

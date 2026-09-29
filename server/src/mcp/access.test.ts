@@ -66,7 +66,7 @@ test('project access hides other projects and refuses tools on them', async () =
   expect((await agent.call('create_branch', { hob: 'filament', branch: 'x' })).isError).toBeFalsy()
 
   secrets.create({ name: 'Weather', value: 'v', hosts: ['weather.example'], assign: { project: 'alarms', envName: 'WEATHER' } }, { kind: 'host' })
-  expect(JSON.parse(textOf(await agent.call('list_secrets')))).toEqual([{ name: 'Weather', hosts: ['weather.example'], hobs: [] }])
+  expect(JSON.parse(textOf(await agent.call('list_secrets')))).toEqual([{ name: 'Weather', hosts: ['weather.example'], headers: [], hobs: [] }])
   expect((await agent.call('list_secrets', { hob: 'alarms' })).isError).toBe(true)
   expect((await agent.call('assign_secret', { hob: 'alarms', secret: 'Weather', env_name: 'W' })).isError).toBe(true)
   expect((await agent.call('assign_secret', { hob: 'filament', secret: 'Weather', env_name: 'W' })).isError).toBeFalsy()

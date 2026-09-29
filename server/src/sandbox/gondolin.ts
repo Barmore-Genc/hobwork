@@ -69,14 +69,24 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     isIpAllowed: (info) => isPublicAddress(info.ip, { extraBlocked: hostNetworks() }),
     // Gondolin injects secrets after onRequest, so the internal handler and
     // the interceptor only see placeholders.
-    onRequest: requestHook({
-      internal,
-      intercept: options.intercept,
-      egress,
-      upstream: upstreamFetch((request) => fillSecrets(request)),
+    onRequest: async (request) => {
+      const blocked = new URL(request.url).hostname === INTERNAL_HOST ? undefined : misplacedSecret(request)
+      if (blocked) return Response.json({ error: { code: 'hobwork_secret_not_allowed', message: blocked } }, { status: 403 })
+      return hook?.(request)
+    },
+  })
+  const misplacedSecret = secretGuard(options.secrets ?? {}, hooks.env)
+  const fillSecrets = secretFiller(options.secrets ?? {}, hooks.env)
+  const hook = requestHook({
+    internal,
+    intercept: options.intercept,
+    egress,
+    upstream: upstreamFetch((request) => {
+      const blocked = misplacedSecret(request)
+      if (blocked) throw new Error(blocked)
+      return fillSecrets(request)
     }),
   })
-  const fillSecrets = secretFiller(options.secrets ?? {}, hooks.env)
   const isIpAllowed = hooks.httpHooks.isIpAllowed
   if (isIpAllowed && onBlocked) {
     hooks.httpHooks.isIpAllowed = async (info) => {
@@ -105,6 +115,39 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     throw err
   }
   return new GondolinSandbox(vm)
+}
+
+function basicCredentials(value: string): string {
+  const match = /^Basic\s+(\S+)\s*$/i.exec(value)
+  return match ? Buffer.from(match[1]!, 'base64').toString('utf8') : ''
+}
+
+// Secrets are only filled in over https, in the Authorization header and the
+// headers a secret lists. Gondolin would fill them into any header, and a
+// value sent in a header Hobwork does not know about can end up in places
+// like a server's access log. Returns why a request must not go out.
+export function secretGuard(
+  secrets: Record<string, Secret>,
+  placeholders: Record<string, string>,
+): (request: Request) => string | undefined {
+  return (request) => {
+    const secure = new URL(request.url).protocol === 'https:'
+    for (const [name, secret] of Object.entries(secrets)) {
+      const placeholder = placeholders[name]
+      if (!placeholder) continue
+      const allowed = new Set(['authorization', ...(secret.headers ?? []).map((header) => header.toLowerCase())])
+      for (const [header, value] of request.headers) {
+        if (!value.includes(placeholder) && !basicCredentials(value).includes(placeholder)) continue
+        if (!secure) return `Hobwork only sends ${name} over https. Use an https:// URL.`
+        if (!allowed.has(header.toLowerCase())) {
+          const names = ['Authorization', ...(secret.headers ?? [])]
+          const where = names.length === 1 ? 'the Authorization header' : `the ${names.join(', ')} headers`
+          return `Hobwork only sends ${name} in ${where}. Found it in the ${header} header. People can add headers to the secret in Hobwork.`
+        }
+      }
+    }
+    return undefined
+  }
 }
 
 // Fills in secrets for requests the interceptor sends itself, which skip

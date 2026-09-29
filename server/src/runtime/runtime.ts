@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type {
@@ -7,7 +8,7 @@ import type {
   SerializedRequest,
   SerializedResponse,
 } from '../../../packages/sdk/src/runner/protocol.ts'
-import { RUNNER_PORT } from '../../../packages/sdk/src/runner/protocol.ts'
+import { MAX_INVOKE_RESULT_BYTES, MAX_RESPONSE_BODY_BYTES, RUNNER_PORT, RUNNER_TOKEN_FILE } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
 import { publishChange } from '../changes.ts'
 import { dbResponse } from '../data/internal.ts'
@@ -57,6 +58,10 @@ const HOST_RUNNER_DIR = resolve(import.meta.dirname, '../../../packages/sdk/src/
 
 const DEFAULT_INVOCATION_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_READY_TIMEOUT_MS = 60 * 1000
+// Code that gets into a VM through one invocation must not see invocations
+// hours later, so a VM is replaced this long after it started however busy it
+// is. A cold start costs about a second.
+const DEFAULT_MAX_LIFETIME_MS = 60 * 60 * 1000
 const MAX_LINES_PER_INVOCATION = 1000
 const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
@@ -90,6 +95,7 @@ export type RuntimeOptions = {
   buildRetention?: Pick<BuildCleanupOptions, 'keepVersions' | 'minAgeMs'>
   invocationTimeoutMs?: number
   readyTimeoutMs?: number
+  maxLifetimeMs?: number
   memory?: string
 }
 
@@ -130,10 +136,12 @@ type Instance = {
   secretsFingerprint: string
   sandbox: Sandbox
   url: string
+  token: string
   inflight: Set<number>
   lines: Map<number, number>
   stopping: boolean
   idleTimer?: NodeJS.Timeout
+  lifetimeTimer?: NodeJS.Timeout
   onIdle: (() => void)[]
 }
 
@@ -165,6 +173,7 @@ function isPreview(branch: string | undefined): branch is string {
 export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   const invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS
   const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
+  const maxLifetimeMs = options.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS
   const policy = options.autoRevert ?? DEFAULT_AUTO_REVERT_POLICY
   const builder = createBuilder(host, options.startBuildVm)
   const projects = new Map<string, ProjectState>()
@@ -291,9 +300,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
 
   // Lines for an invocation of another project go to the project log without
   // one. Each invocation keeps at most MAX_LINES_PER_INVOCATION lines.
-  function invocationLines(project: string, inst: Instance | undefined) {
+  function invocationLines(project: string, branch: string | undefined, inst: Instance | undefined) {
+    // A preview's runner must not attach lines to main's invocations or another branch's.
     const owned = host.db.prepare(
-      'SELECT 1 FROM invocations i JOIN projects p ON p.id = i.project_id WHERE i.id = ? AND p.name = ?',
+      'SELECT 1 FROM invocations i JOIN projects p ON p.id = i.project_id WHERE i.id = ? AND p.name = ? AND i.branch IS ?',
     )
     const known = new Map<number, boolean>()
     const entries: NewLogEntry[] = []
@@ -302,7 +312,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       add(entry: NewLogEntry) {
         let invocationId = entry.invocationId
         if (invocationId !== undefined) {
-          if (!known.has(invocationId)) known.set(invocationId, owned.get(invocationId, project) !== undefined)
+          if (!known.has(invocationId)) known.set(invocationId, owned.get(invocationId, project, branch ?? null) !== undefined)
           if (!known.get(invocationId)) invocationId = undefined
         }
         if (invocationId !== undefined && inst) {
@@ -354,7 +364,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         ha: options.homeAssistant,
         access,
         log: ({ invocation, level, message }) => {
-          const lines = invocationLines(project, instance())
+          const lines = invocationLines(project, branch, instance())
           lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
           appendLogs(host, lines.entries)
         },
@@ -366,7 +376,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         project,
         access: branch === undefined ? 'full' : 'read',
         log: ({ invocation, level, message }) => {
-          const lines = invocationLines(project, instance())
+          const lines = invocationLines(project, branch, instance())
           lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
           appendLogs(host, lines.entries)
         },
@@ -378,7 +388,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     } catch {
       return Response.json({ error: 'Body must be JSON' }, { status: 400 })
     }
-    const lines = invocationLines(project, instance())
+    const lines = invocationLines(project, branch, instance())
     for (const line of batch.lines ?? []) {
       lines.add({
         project,
@@ -394,7 +404,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     return new Response(null, { status: 204 })
   }
 
-  async function waitReady(url: string, exited: Promise<unknown>, tail: string[]): Promise<void> {
+  async function waitReady(url: string, token: string, exited: Promise<unknown>, tail: string[]): Promise<void> {
     let done = false
     const exit = exited.then(() => {
       done = true
@@ -403,7 +413,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     while (!done) {
       if (Date.now() > deadline) throw new Error(`Runner was not ready after ${readyTimeoutMs / 1000}s`)
       try {
-        const res = await Promise.race([fetch(`${url}/ready`, { signal: AbortSignal.timeout(2000) }), exit])
+        const res = await Promise.race([fetch(`${url}/ready`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(2000) }), exit])
         if (res instanceof Response && res.ok) return
       } catch {
         // Not listening yet.
@@ -453,29 +463,37 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       label: deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`,
     })
     const tail: string[] = []
+    const token = randomBytes(32).toString('hex')
     try {
+      await sandbox.writeFile(RUNNER_TOKEN_FILE, token)
       const proc = sandbox.exec(`node ${RUNNER_DIR}/main.ts`, {
         env: {
           HOBWORK_APP_DIR: APP_DIR,
           HOBWORK_RUNNER_PORT: String(RUNNER_PORT),
+          HOBWORK_RUNNER_TOKEN_FILE: RUNNER_TOKEN_FILE,
           HOBWORK_HANDLERS: JSON.stringify(allHandlers(deployed.config)),
           HOBWORK_SECRETS: JSON.stringify(Object.keys(secrets)),
         },
         onOutput: outputLogger(project, deployed.branch, tail),
       })
       const url = await sandbox.ingress(RUNNER_PORT)
-      await waitReady(url, proc.result, tail)
+      await waitReady(url, token, proc.result, tail)
       inst = {
         deployed,
         secretsFingerprint: fingerprint,
         sandbox,
         url,
+        token,
         inflight: new Set(),
         lines: new Map(),
         stopping: false,
         onIdle: [],
       }
       const started = inst
+      started.lifetimeTimer = setTimeout(() => {
+        void retire(project, started, `reached its maximum lifetime of ${Math.round(maxLifetimeMs / 1000)}s`)
+      }, maxLifetimeMs)
+      started.lifetimeTimer.unref()
       void proc.result.then(
         (result) => {
           if (started.stopping) return
@@ -538,6 +556,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (inst.stopping) return
     inst.stopping = true
     clearTimeout(inst.idleTimer)
+    clearTimeout(inst.lifetimeTimer)
     const s = state(project, inst.deployed.branch)
     if (s.instance === inst) {
       s.instance = undefined
@@ -597,7 +616,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     try {
       res = await fetch(`${inst.url}/invoke`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${inst.token}` },
         body: JSON.stringify(message),
         signal: AbortSignal.timeout(invocationTimeoutMs),
       })
@@ -611,7 +630,25 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       throw err
     }
     if (!res.ok) throw new Error(`the runner answered HTTP ${res.status}: ${(await res.text()).trim()}`)
-    return (await res.json()) as InvokeResult
+    return JSON.parse(await readLimited(res)) as InvokeResult
+  }
+
+  async function readLimited(res: Response): Promise<string> {
+    const tooLarge = () => new Error(`the handler's response is larger than ${MAX_RESPONSE_BODY_BYTES / 1024 / 1024}MB`)
+    if (Number(res.headers.get('content-length')) > MAX_INVOKE_RESULT_BYTES) {
+      await res.body?.cancel()
+      throw tooLarge()
+    }
+    const chunks: Uint8Array[] = []
+    let size = 0
+    if (res.body) {
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        size += chunk.length
+        if (size > MAX_INVOKE_RESULT_BYTES) throw tooLarge()
+        chunks.push(chunk)
+      }
+    }
+    return Buffer.concat(chunks).toString('utf8')
   }
 
   async function run(project: string, deployed: Deployed, input: InvokeInput, handler: string): Promise<InvokeOutcome> {
@@ -626,6 +663,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     const started = performance.now()
     let inst: Instance | undefined
     let result: InvokeResult
+    let timedOut = false
     try {
       inst = await ensureInstance(project, deployed)
       inst.inflight.add(invocationId)
@@ -637,6 +675,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         params: input.params,
         payload: input.payload,
       })
+      timedOut = !result.ok && result.error.name === 'TimeoutError'
     } catch (err) {
       const unavailable = err instanceof RuntimeUnavailable
       result = {
@@ -652,6 +691,9 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         inst.lines.delete(invocationId)
         if (!inst.inflight.size) inst.onIdle.splice(0).forEach((resolve) => resolve())
         armIdle(project, inst)
+        // The handler may still be running, and code that outlives its
+        // invocation must not serve later ones.
+        if (timedOut) void retire(project, inst, 'an invocation timed out')
       }
     }
     const durationMs = performance.now() - started
@@ -776,6 +818,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         if (inst.stopping) return
         inst.stopping = true
         clearTimeout(inst.idleTimer)
+        clearTimeout(inst.lifetimeTimer)
         await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
       }),
     )

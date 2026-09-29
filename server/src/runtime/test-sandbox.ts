@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { ExecResult, Sandbox, SandboxFactory, SandboxOptions } from '../sandbox/sandbox.ts'
 
 // TEST ONLY. Stands in for a runtime VM: runs the real runner as a host
@@ -66,6 +68,8 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
     })
     const internalUrl = `http://127.0.0.1:${await listen(internal)}`
     const ports = new Map<number, number>()
+    // Stands in for the guest's file system, for the files the host writes.
+    const guestFs = mkdtempSync(join(tmpdir(), 'hobwork-fake-guest-'))
     const children = new Set<ChildProcess>()
 
     const sandbox: FakeSandbox = {
@@ -90,6 +94,9 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
               HOBWORK_APP_DIR: mountPath(options, execOptions.env?.HOBWORK_APP_DIR ?? '/app'),
               HOBWORK_INTERNAL_URL: internalUrl,
               HOBWORK_RUNNER_PORT: String(port),
+              ...(execOptions.env?.HOBWORK_RUNNER_TOKEN_FILE
+                ? { HOBWORK_RUNNER_TOKEN_FILE: join(guestFs, execOptions.env.HOBWORK_RUNNER_TOKEN_FILE) }
+                : {}),
             },
           })
           children.add(child)
@@ -123,8 +130,10 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
       async readFile() {
         throw new Error('not supported')
       },
-      async writeFile() {
-        throw new Error('not supported')
+      async writeFile(path, data) {
+        const target = join(guestFs, path)
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, data)
       },
       hostPid: () => null,
       async stop() {
@@ -132,6 +141,7 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
         for (const child of children) child.kill('SIGKILL')
         internal.closeAllConnections()
         await new Promise((resolve) => internal.close(resolve))
+        rmSync(guestFs, { recursive: true, force: true })
       },
       crash() {
         for (const child of children) child.kill('SIGKILL')

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { InvocationKind } from '../src/index.ts'
 import type { DbRequest, DeviceRequest, HaRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
+import { MAX_RESPONSE_BODY_BYTES } from '../src/runner/protocol.ts'
 import { startRunner, type Runner } from '../src/runner/runner.ts'
 
 let app: string
@@ -17,6 +18,8 @@ let haRequests: HaRequest[]
 let deviceRequests: DeviceRequest[]
 let runner: Runner | undefined
 let url: string
+
+const TOKEN = 'test-token'
 
 const HANDLERS: Record<string, string> = {
   'handlers/src/json.js': 'export default async (ctx) => ({ params: ctx.params, name: ctx.invocation.name })',
@@ -64,7 +67,7 @@ function write(files: Record<string, string>) {
 }
 
 async function start(handlers: string[] = []) {
-  runner = await startRunner({ appDir: app, internalUrl, handlers }, 0)
+  runner = await startRunner({ appDir: app, internalUrl, token: TOKEN, handlers }, 0)
   url = `http://127.0.0.1:${(runner.server.address() as AddressInfo).port}`
 }
 
@@ -72,7 +75,7 @@ let nextId = 1
 async function invoke(handler: string, extra: Partial<InvokeRequest> = {}, kind: InvocationKind = 'route'): Promise<InvokeResult & { id: number }> {
   const id = nextId++
   const message: InvokeRequest = { invocation: { id, kind, name: handler, manual: false }, handler, ...extra }
-  const res = await fetch(`${url}/invoke`, { method: 'POST', body: JSON.stringify(message) })
+  const res = await fetch(`${url}/invoke`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(message) })
   return { ...((await res.json()) as InvokeResult), id }
 }
 
@@ -141,7 +144,7 @@ afterEach(async () => {
 
 test('answers readiness checks', async () => {
   await start(['src/json.ts'])
-  expect((await fetch(`${url}/ready`)).status).toBe(200)
+  expect((await fetch(`${url}/ready`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(200)
 })
 
 test('sends a returned value as JSON', async () => {
@@ -200,7 +203,7 @@ test('reports a missing handler module as an invocation error', async () => {
 })
 
 test('handlers reach the host DB with ctx.db and see secret placeholders in ctx.secrets', async () => {
-  runner = await startRunner({ appDir: app, internalUrl, handlers: [], secrets: { API_KEY: 'GONDOLIN_SECRET_abc' } }, 0)
+  runner = await startRunner({ appDir: app, internalUrl, token: TOKEN, handlers: [], secrets: { API_KEY: 'GONDOLIN_SECRET_abc' } }, 0)
   url = `http://127.0.0.1:${(runner.server.address() as AddressInfo).port}`
   const result = await invoke('src/db.ts')
   expect(JSON.parse(body(result))).toEqual({
@@ -241,4 +244,26 @@ test('handlers reach devices with ctx.device and ctx.devices, and failures throw
     { action: 'call', device: 'nope', capability: 'notifications', method: 'send', args: { title: 'Hi' }, invocation: result.id },
     { action: 'list', invocation: result.id },
   ])
+})
+
+test('rejects requests without the token, including /ready', async () => {
+  await start()
+  const message = { invocation: { id: 1, kind: 'route', name: 'x', manual: false }, handler: 'src/json.ts' }
+  for (const headers of [{}, { authorization: 'Bearer wrong' }, { authorization: 'Bearer test-toke' }, { authorization: TOKEN }]) {
+    expect((await fetch(`${url}/invoke`, { method: 'POST', headers, body: JSON.stringify(message) })).status).toBe(401)
+    expect((await fetch(`${url}/ready`, { headers })).status).toBe(401)
+  }
+  expect((await fetch(`${url}/ready`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(200)
+})
+
+test('fails an invocation whose response body is too large', async () => {
+  write({
+    'handlers/src/big.js': `export default async () => new Response(new Uint8Array(${MAX_RESPONSE_BODY_BYTES + 1}))`,
+    'handlers/src/limit.js': `export default async () => new Response(new Uint8Array(${MAX_RESPONSE_BODY_BYTES}))`,
+  })
+  await start()
+  const big = await invoke('src/big.ts')
+  expect(big.ok).toBe(false)
+  if (!big.ok) expect(big.error.message).toBe('The response body is larger than 24MB')
+  expect((await invoke('src/limit.ts')).ok).toBe(true)
 })

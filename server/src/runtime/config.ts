@@ -19,6 +19,8 @@ export type ProjectConfig = {
 }
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000
+// setTimeout runs its callback immediately for delays above 2^31-1.
+export const MAX_IDLE_TIMEOUT_MS = 2 ** 31 - 1
 
 const UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }
 
@@ -38,7 +40,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     triggers: json.triggers ?? {},
     egress: json.egress ?? [],
     csp: json.csp ?? {},
-    idleTimeoutMs: json.idleTimeout ? parseDuration(json.idleTimeout) : DEFAULT_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }
 

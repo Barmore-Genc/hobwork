@@ -323,3 +323,27 @@ test('build cleanup keeps the builds previews run and removes them afterwards', 
   // Once the preview stops for being idle, its build goes.
   await vi.waitFor(() => expect(existsSync(`${projectBuildsDir(host, 'filament')}/${tree}`)).toBe(false), { timeout: 5000 })
 })
+
+test('log lines from a preview never attach to an invocation of main', async () => {
+  await start()
+  const mainRun = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  await seedBranch(
+    host,
+    'filament',
+    'add-spools',
+    files('branch', {
+      'handlers/spools.js': `export default async (ctx) => {
+        await fetch(process.env.HOBWORK_INTERNAL_URL + '/v1/logs', {
+          method: 'POST',
+          body: JSON.stringify({ lines: [{ invocation: ${mainRun.invocationId}, level: 'info', message: 'forged' }] }),
+        })
+        return 'ok'
+      }`,
+    }),
+  )
+  const preview = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true, branch: 'add-spools' })
+  const lines = queryLogs(host, { project: 'filament', limit: 100 }).filter((l) => l.message === 'forged')
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toMatchObject({ branch: 'add-spools', invocationId: null })
+  expect(preview.invocationId).not.toBe(mainRun.invocationId)
+})

@@ -9,6 +9,7 @@ import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
+import type { StorageUsage } from '../storage.ts'
 import { createTestHost } from '../test-host.ts'
 
 export type TestMcp = {
@@ -29,6 +30,7 @@ export async function startTestMcp(
     runtime?: (host: Host) => Runtime
     data?: (host: Host) => ProjectData
     secrets?: (host: Host) => SecretStore
+    storage?: (host: Host) => StorageUsage
     sshPort?: number
   } = {},
 ): Promise<TestMcp> {
@@ -36,7 +38,7 @@ export async function startTestMcp(
   const { token } = createAgentToken(host.db, 'claude')
   const runtime = options.runtime?.(host)
   const data = options.data?.(host)
-  const server = createApp(host, { homeAssistant: options.homeAssistant, runtime, data, secrets: options.secrets?.(host), sshPort: options.sshPort })
+  const server = createApp(host, { homeAssistant: options.homeAssistant, runtime, data, secrets: options.secrets?.(host), storage: options.storage?.(host), sshPort: options.sshPort })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`)
   const client = new Client({ name: 'test', version: '0.0.0' })

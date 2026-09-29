@@ -28,6 +28,20 @@ export type ProjectSummary = {
   status: ProjectStatus
   currentVersion: Version | null
   iconUrl: string
+  // Null until the host has measured the project.
+  storage?: StorageUse | null
+}
+
+// Bytes per part of a project.
+export type StorageUse = {
+  total: number
+  database: number
+  branchDatabases: number
+  workspaces: number
+  repo: number
+  builds: number
+  logs: number
+  measuredAt: string
 }
 
 export type InvocationKind = 'route' | 'webhook' | 'cron' | 'trigger'
@@ -65,6 +79,7 @@ export type ProjectDetail = {
   configError?: string
   egress: string[]
   database: DbStatus | null
+  storage?: StorageUse | null
   // The running version has a page to open.
   app: boolean
   // Where the project's app lives, on its own origin.

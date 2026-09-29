@@ -20,6 +20,7 @@ import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
+import type { StorageUsage } from '../storage.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
@@ -45,6 +46,7 @@ export type McpContext = {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  storage?: StorageUsage
   devices?: Devices
   appOrigin?: (target: AppTarget) => string | undefined
 }
@@ -121,6 +123,7 @@ export function createMcpServer({
   runtime,
   data,
   secrets,
+  storage,
   devices,
   appOrigin,
 }: McpContext): McpServer {
@@ -154,8 +157,20 @@ export function createMcpServer({
 
   server.registerTool(
     'list_projects',
-    { description: 'List all Hobwork projects.', annotations: { readOnlyHint: true } },
-    () => json(listProjects(host).map(({ name, defaultBranch, createdAt }) => ({ name, defaultBranch, createdAt }))),
+    {
+      description:
+        'List all Hobwork projects with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
+      annotations: { readOnlyHint: true },
+    },
+    () =>
+      json(
+        listProjects(host).map((p) => ({
+          name: p.name,
+          defaultBranch: p.defaultBranch,
+          createdAt: p.createdAt,
+          ...(storage ? { storage: storage.get(p) } : {}),
+        })),
+      ),
   )
 
   server.registerTool(
@@ -177,7 +192,7 @@ export function createMcpServer({
   server.registerTool(
     'get_project',
     {
-      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, its branches with their preview URLs and the state of each branch workspace.`,
+      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, the disk space it uses in bytes (project DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs and the state of each branch workspace.`,
       inputSchema: { project },
       annotations: { readOnlyHint: true },
     },
@@ -207,6 +222,7 @@ export function createMcpServer({
         egress: [...new Set([...configEgress, ...(secrets?.hosts(name) ?? [])])],
         secrets: secrets?.assigned(name).map((secret) => secret.envName) ?? [],
         ...(data ? { database: data.status(name) } : {}),
+        ...(storage ? { storage: storage.get(record) } : {}),
         branches: withAppUrls(name, await listBranches(host, name)),
         workspaces: workspaces
           .list(name)

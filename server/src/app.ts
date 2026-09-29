@@ -30,6 +30,7 @@ import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
+import type { StorageUsage } from './storage.ts'
 import { getProject } from './projects.ts'
 import { createStaticRoutes } from './static.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
@@ -59,6 +60,7 @@ export function createApp(
     runtime?: Runtime
     data?: ProjectData
     secrets?: SecretStore
+    storage?: StorageUsage
     backups?: Backups
     devices?: Devices
     sshPort?: number
@@ -94,6 +96,7 @@ export function createApp(
     runtime: options.runtime,
     data: options.data,
     secrets: options.secrets,
+    storage: options.storage,
     devices,
     appOrigin: origins.origin,
   })
@@ -114,6 +117,7 @@ export function createApp(
     runtime: options.runtime,
     data: options.data,
     secrets: options.secrets,
+    storage: options.storage,
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
   const handleDevices = createDeviceRoutes({

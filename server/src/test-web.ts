@@ -15,6 +15,7 @@ import type { Host } from './host.ts'
 import { requireProject } from './projects.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
+import type { StorageUsage } from './storage.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
 
 export const TEST_PUBLIC_URL = 'http://hobwork.test'
@@ -37,6 +38,7 @@ export async function startTestApp(
     delivery?: Delivery
     selfPublicUrl?: boolean
     secrets?: SecretStore
+    storage?: StorageUsage
     runtime?: Runtime
     data?: ProjectData
     backups?: Backups
@@ -53,6 +55,7 @@ export async function startTestApp(
     homeAssistant: options.homeAssistant,
     homeAssistantSettings: options.homeAssistantSettings,
     secrets: options.secrets,
+    storage: options.storage,
     runtime: options.runtime,
     data: options.data,
     backups: options.backups,

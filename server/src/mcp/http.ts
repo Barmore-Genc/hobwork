@@ -9,6 +9,7 @@ import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
+import type { StorageUsage } from '../storage.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { createMcpServer } from './server.ts'
 import type { SshAddress } from './ssh-keys.ts'
@@ -57,6 +58,7 @@ export function createMcpHandler(options: {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  storage?: StorageUsage
   devices?: Devices
   appOrigin?: (target: AppTarget) => string | undefined
 }) {
@@ -89,6 +91,7 @@ export function createMcpHandler(options: {
       runtime: options.runtime,
       data: options.data,
       secrets: options.secrets,
+      storage: options.storage,
       devices: options.devices,
       appOrigin: options.appOrigin,
     })

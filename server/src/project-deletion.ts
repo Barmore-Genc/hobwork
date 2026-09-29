@@ -47,6 +47,8 @@ export type TrashInfo = {
   nfcTags?: { id: string; createdAt: string }[]
   // Agent tokens and OAuth connections limited to a list of projects that included this one.
   access?: { tokens: number[]; grants: number[] }
+  // The project's own AI models and limits, as stored JSON.
+  ai?: { models: string | null; limits: string | null; updatedByUserId: number | null; updatedAt: string } | null
 }
 
 export type TrashEntry = {
@@ -148,7 +150,7 @@ async function deleteNow(
 function restorableRows(
   host: Host,
   projectId: number,
-): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access'> {
+): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access' | 'ai'> {
   const all = (sql: string) => host.db.prepare(sql).all(projectId)
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
@@ -185,6 +187,13 @@ function restorableRows(
       tokens: all('SELECT token_id FROM agent_token_projects WHERE project_id = ? ORDER BY token_id').map((row) => Number(row.token_id)),
       grants: all('SELECT grant_id FROM oauth_grant_projects WHERE project_id = ? ORDER BY grant_id').map((row) => Number(row.grant_id)),
     },
+    ai:
+      all('SELECT models, limits, updated_by_user_id, updated_at FROM project_ai_settings WHERE project_id = ?').map((row) => ({
+        models: row.models === null ? null : String(row.models),
+        limits: row.limits === null ? null : String(row.limits),
+        updatedByUserId: nullable(row.updated_by_user_id),
+        updatedAt: String(row.updated_at),
+      }))[0] ?? null,
   }
 }
 
@@ -259,9 +268,9 @@ export type ProjectRestoreDeps = {
 
 // Brings a deleted project back from the trash, under its old name or another
 // one: its repo, DB, versions, secret assignments whose secret still exists,
-// webhook tokens, NFC tags, and its place in the project lists of agent tokens
-// and OAuth connections that still exist. Run history, logs and branch
-// workspaces stay gone. It starts like after a host restart, building its
+// webhook tokens, NFC tags, its own AI models and limits, and its place in the
+// project lists of agent tokens and OAuth connections that still exist. Run
+// history, logs, AI usage records and branch workspaces stay gone. It starts like after a host restart, building its
 // deployed version when first needed.
 export async function restoreProject(
   deps: ProjectRestoreDeps,
@@ -369,6 +378,11 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
       'INSERT OR IGNORE INTO oauth_grant_projects (grant_id, project_id) SELECT id, ? FROM oauth_grants WHERE id = ?',
     )
     for (const id of info.access?.grants ?? []) grantAccess.run(projectId, id)
+    if (info.ai) {
+      db.prepare(
+        'INSERT INTO project_ai_settings (project_id, models, limits, updated_by_user_id, updated_at) VALUES (?, ?, ?, ?, ?)',
+      ).run(projectId, info.ai.models, info.ai.limits, existing('users', info.ai.updatedByUserId), info.ai.updatedAt)
+    }
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')

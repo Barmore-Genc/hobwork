@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken, verifyAgentToken } from './agents.ts'
+import { projectAiSettings, saveProjectAiSettings } from './ai/settings.ts'
 import { createProjectData, type ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import type { TriggerRegistry } from './homeassistant/triggers.ts'
@@ -326,6 +327,20 @@ test('restoring gives agent tokens limited to the project their access to it aga
   expect((await restoreRequest(entry!.id, { name: 'old-filament' })).status).toBe(200)
   expect(access(limited).projects).toEqual(['old-filament', 'sleep'])
   expect(access(other).projects).toEqual(['sleep'])
+})
+
+test('restoring brings back the project\'s own AI models and limits', async () => {
+  const limits = { throttle: true, requestsPerMinute: 5, requestsPerHour: null, costPerDay: 2, costPerMonth: null }
+  saveProjectAiSettings(host.db, projectId('filament'), { models: ['openai/*'], limits }, signedIn(host).user.id)
+  await deleteProject({ host, workspaces, delivery, runtime, data }, 'filament')
+  const [entry] = (await trashList()).projects
+
+  expect((await restoreRequest(entry!.id, { name: 'old-filament' })).status).toBe(200)
+  expect(projectAiSettings(host.db, projectId('old-filament'))).toMatchObject({
+    models: ['openai/*'],
+    limits,
+    updatedBy: expect.any(String),
+  })
 })
 
 test('restoring needs a signed-in person and an entry still in the trash', async () => {

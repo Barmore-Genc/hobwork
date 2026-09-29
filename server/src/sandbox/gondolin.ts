@@ -237,7 +237,12 @@ class GondolinSandbox implements Sandbox {
   }
 
   ingress(port: number): Promise<string> {
-    this.#ingressUrl ??= this.#vm.enableIngress({ listenPort: 0 }).then((access) => access.url)
+    // Gondolin answers 502 when the guest takes over 2s to send headers. The
+    // runner only answers once the handler finishes, and callers set their own
+    // timeouts, so Gondolin's are off.
+    this.#ingressUrl ??= this.#vm
+      .enableIngress({ listenPort: 0, upstreamHeaderTimeoutMs: 0, upstreamResponseTimeoutMs: 0 })
+      .then((access) => access.url)
     return this.#ingressUrl.then((url) => {
       this.#vm.setIngressRoutes([{ prefix: '/', port, stripPrefix: true }])
       return url

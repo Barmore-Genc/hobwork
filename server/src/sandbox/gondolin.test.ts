@@ -160,6 +160,24 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     await server.kill()
   })
 
+  test('ingress waits for a guest server that answers slowly', async () => {
+    const server = sandbox.exec(
+      'node -e "require(\'http\').createServer((q, s) => setTimeout(() => s.end(\'slow\'), 3000)).listen(8001, \'127.0.0.1\')"',
+    )
+    const url = await sandbox.ingress(8001)
+    let res: Response | undefined
+    for (let i = 0; i < 50 && !res; i++) {
+      res = await fetch(`${url}/`).catch(() => undefined)
+      if (res?.status === 502 && i < 49) {
+        res = undefined
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    expect(res?.status).toBe(200)
+    expect(await res?.text()).toBe('slow')
+    await server.kill()
+  })
+
   test('the internal host is answered by the host handler', async () => {
     internalRequests.length = 0
     const curl = await sandbox.exec(

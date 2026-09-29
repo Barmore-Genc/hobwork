@@ -15,6 +15,7 @@ import { imageDir, imageExists } from '../sandbox/image.ts'
 import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
+import { migrationVmBackend } from './migration-vm.ts'
 import { createProjectData, type ProjectData } from './project-data.ts'
 import { createWorkspaceEnvironment } from './workspace-environment.ts'
 
@@ -84,6 +85,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
       createSandbox: createGondolinSandbox,
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets }),
     }
+    data.useMigrationVm(migrationVmBackend(vmOptions))
     pipelineVms = pipelineVmBackend(vmOptions)
     workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
       startVm: workspaceVmBackend(

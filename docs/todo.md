@@ -22,7 +22,7 @@ Sections are in the order to work on them.
 ### Nothing on the host touches guest-writable files
 
 - **Workspace git in the VM**: `commit`, `diff` and `changes` run git inside the workspace VM, and a commit reaches the bare repo by pushing over git smart HTTP through `hobwork.internal` with the session token. The pre-receive hook already refuses `main`. Today a nested repo's config (`core.fsmonitor`, filter drivers) runs on the host during `git add` and `git status`; in the VM, submodule recursion keeps working and runs where workspace code already runs.
-- **Migrations in the VM**: migrations run in a VM against a copy of the hob DB, instead of `db.exec` on the host, where they can `ATTACH` other DBs and write files with `VACUUM INTO`. Covers workspace `/v1/db`, branch previews, the merge dry run and deploy. The host opens the returned DB with `O_NOFOLLOW`, requires a regular file under a size cap, runs `PRAGMA integrity_check` and swaps it in atomically.
+- **Migration disk quota**: a migration can fill the host disk through its `/migrate` mount; only the DB it returns is size-checked. Put a quota on the mount or check the dir's size while the VM runs.
 - **File tools in the VM**: `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files` and `search` run inside the workspace VM. The host's check-then-open on the checkout races with symlinks the guest swaps in. Needs the workspace VM running for reads, so it depends on the VM budget below.
 - **Build copy after the VM stops**: stop the pipeline VM before `saveBuild`, and copy with `O_NOFOLLOW`.
 

@@ -10,7 +10,7 @@ import { saveBuild } from '../runtime/builds.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { ExecWorkspaceVm } from '../workspaces.ts'
 import { extraDependencies } from '../platform.ts'
-import { checkPnpmWorkspace, describeAllowedBuildsChange, explainFrozenInstallFailure } from './pnpm-settings.ts'
+import { checkInstallConfig, type InstallConfig, describeAllowedBuildsChange, explainFrozenInstallFailure } from './pnpm-settings.ts'
 import { checkViteConfig, validateHobworkJson } from './validate.ts'
 
 // `iconsCommand` renders the project icon into dist/ after the build, given
@@ -71,7 +71,8 @@ export type Candidate = {
 }
 
 // The install of a hob's extras is the one that was tested, so a lockfile is required.
-export const FROZEN_INSTALL = 'pnpm install --frozen-lockfile'
+// --ignore-pnpmfile is a second line behind the validate step: a pnpmfile is code that runs during install and gets around allowBuilds.
+export const FROZEN_INSTALL = 'pnpm install --frozen-lockfile --ignore-pnpmfile'
 export const MISSING_LOCKFILE =
   'pnpm-lock.yaml is missing. Run pnpm install in the workspace, then commit pnpm-lock.yaml'
 
@@ -95,6 +96,16 @@ export async function readBlob(gitDir: string, commit: string, path: string): Pr
     if (err instanceof GitError) return undefined
     throw err
   }
+}
+
+export async function readInstallConfig(gitDir: string, commit: string): Promise<InstallConfig> {
+  const [workspace, npmrc, cjs, mjs] = await Promise.all([
+    readBlob(gitDir, commit, 'pnpm-workspace.yaml'),
+    readBlob(gitDir, commit, '.npmrc'),
+    readBlob(gitDir, commit, '.pnpmfile.cjs'),
+    readBlob(gitDir, commit, '.pnpmfile.mjs'),
+  ])
+  return { workspace, npmrc, hasPnpmfile: cjs !== undefined || mjs !== undefined }
 }
 
 export async function checkout(gitDir: string, commit: string, tmp: string): Promise<string> {
@@ -189,8 +200,9 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
       if (problems.length) return { status: 'failed', output: `hobwork.json is invalid:\n${problems.join('\n')}` }
       const viteProblem = checkViteConfig(raw, await readBlob(gitDir, commit, 'vite.config.ts'))
       if (viteProblem) return { status: 'failed', output: viteProblem }
-      const workspaceFile = await readBlob(gitDir, commit, 'pnpm-workspace.yaml')
-      const pnpmProblems = checkPnpmWorkspace(workspaceFile)
+      const installConfig = await readInstallConfig(gitDir, commit)
+      const workspaceFile = installConfig.workspace
+      const pnpmProblems = checkInstallConfig(installConfig)
       if (pnpmProblems.length) return { status: 'failed', output: pnpmProblems.join('\n') }
       // A candidate is a squashed commit on top of main, so its parent is the deployed version.
       const previous = await readBlob(gitDir, `${commit}^`, 'pnpm-workspace.yaml')

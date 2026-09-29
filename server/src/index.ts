@@ -12,7 +12,7 @@ import { createApns, loadApnsKey } from './devices/apns.ts'
 import { createDevices } from './devices/devices.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
-import { backfillHaServices } from './homeassistant/services.ts'
+import { backfillHaEvents, backfillHaServices } from './homeassistant/services.ts'
 import { createHomeAssistantSettings } from './homeassistant/settings.ts'
 import { createTriggerRegistry } from './homeassistant/triggers.ts'
 import { repoPath, type Host } from './host.ts'
@@ -108,6 +108,7 @@ const delivery = createDelivery(host, {
 })
 const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: createAppOrigins(config.appsUrl).origin })
 await backfillHaServices(host)
+await backfillHaEvents(host)
 homeAssistant.start()
 await runtime.start()
 const housekeeping = startHousekeeping(host, runtime)

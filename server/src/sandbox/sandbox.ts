@@ -24,6 +24,9 @@ export type Secret = {
 
 export type InternalHandler = (request: Request) => Response | Promise<Response>
 
+// A request Hobwork refused to send because a secret was in a header it may not go in, or the URL was http.
+export type SecretRefused = { hostname: string, message: string }
+
 export type EgressBlocked = { hostname: string, ip: string, port: number }
 
 // Sends a request on to where it was going, with secrets filled in like any
@@ -56,6 +59,8 @@ export type SandboxOptions = {
   internal?: InternalHandler
   intercept?: Interceptor
   onEgressBlocked?: (event: EgressBlocked) => void
+  // Called at most once a minute per host and reason.
+  onSecretRefused?: (event: SecretRefused) => void
   label?: string
 }
 

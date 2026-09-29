@@ -35,18 +35,18 @@ export function registerBranchHaTools(server: McpServer, { host, agent }: { host
     'update_ha_services',
     {
       description:
-        'Change which Home Assistant services a hob\'s deployed handlers may call. A hob calls none until its list names them. An entry is a domain ("light", all its services) or one service ("light.turn_on"). Other calls fail with code not_allowed and show up in the hob log. hassio.*, homeassistant.*, shell_command.* and recorder.purge* are never allowed. Use ha_list_services to find names, add only what the hob needs, and tell the user what you added. Applies to the next call. get_hob shows the current list.',
+        'Change which Home Assistant services a hob\'s deployed handlers may call and which events they may fire. A hob calls and fires none until its list names them. An entry is a domain ("light", all its services), one service ("light.turn_on") or an event type ("event:my_hob_changed", for ctx.ha.fireEvent; events can trigger the user\'s automations, so add only the ones the hob needs). Other calls fail with code not_allowed and show up in the hob log. hassio.*, homeassistant.*, shell_command.* and recorder.purge* services and Home Assistant\'s own events (state_changed, call_service, homeassistant_* and similar) are never allowed. Use ha_list_services to find names, add only what the hob needs, and tell the user what you added. Applies to the next call. get_hob shows the current list.',
       inputSchema: {
         hob: z.string().describe('Hob name, e.g. "filament-tracker"'),
-        add: z.array(z.string()).default([]).describe('Entries to allow, e.g. ["light", "tts.speak"]'),
+        add: z.array(z.string()).default([]).describe('Entries to allow, e.g. ["light", "tts.speak", "event:spool_empty"]'),
         remove: z.array(z.string()).default([]).describe('Entries to stop allowing'),
       },
     },
     ({ hob: project, add, remove }) => {
       const { id } = requireProject(host, project)
       try {
-        const removed = new Set(remove.map((entry) => entry.trim().toLowerCase()))
-        const next = [...getHaServices(host.db, id).filter((entry) => !removed.has(entry)), ...add]
+        const removed = new Set(remove.map((entry) => entry.trim()))
+        const next = [...getHaServices(host.db, id).filter((entry) => !removed.has(entry) && !removed.has(entry.toLowerCase())), ...add]
         const services = setHaServices(host, project, next, { kind: 'agent', name: agent.name })
         return { content: [{ type: 'text', text: `${project}: ${haServicesNote(services)}` }] }
       } catch (err) {

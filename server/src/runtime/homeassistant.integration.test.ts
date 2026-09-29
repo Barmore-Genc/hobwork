@@ -38,7 +38,7 @@ const NUMBER = 'input_number.test_number'
 
 async function release(project: string, files: Record<string, string>) {
   await createProject(host, project)
-  setHaServices(host, project, ['input_boolean', 'input_number', 'input_button'], { kind: 'user', name: 'Test' })
+  setHaServices(host, project, ['input_boolean', 'input_number', 'input_button', 'event:hobwork_handler_event'], { kind: 'user', name: 'Test' })
   const commit = await seedMain(host, project, {
     'package.json': fakePackageJson({ build: 'mkdir -p dist/handlers/src && cp *.js dist/handlers/src/' }),
     ...files,

@@ -24,6 +24,60 @@ const isEmpty = (value: unknown) =>
 // Returns the problems found, empty when the hob's pnpm-workspace.yaml keeps the
 // image's install protections.
 export function checkPnpmWorkspace(raw: string | undefined): string[] {
+  return checkInstallConfig({ workspace: raw })
+}
+
+export type InstallConfig = {
+  workspace?: string | undefined
+  npmrc?: string | undefined
+  // A pnpmfile at the hob's root (.pnpmfile.cjs or .pnpmfile.mjs) is code that runs during install.
+  hasPnpmfile?: boolean
+}
+
+const PNPMFILE_SETTINGS = ['pnpmfile', 'globalpnpmfile']
+
+function npmrcSettings(raw: string | undefined): Array<[string, string]> {
+  if (!raw) return []
+  const entries: Array<[string, string]> = []
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue
+    const eq = trimmed.indexOf('=')
+    const key = (eq === -1 ? trimmed : trimmed.slice(0, eq)).trim()
+    const value = eq === -1 ? '' : trimmed.slice(eq + 1).trim()
+    entries.push([key, value])
+  }
+  return entries
+}
+
+// Settings that would undo the image's install protections. The pipeline and
+// builds also run installs with --ignore-pnpmfile, so this is the readable
+// failure for the same thing.
+export function checkInstallConfig(files: InstallConfig): string[] {
+  const problems = checkWorkspaceSettings(files.workspace)
+  if (files.hasPnpmfile) {
+    problems.push('.pnpmfile.cjs and .pnpmfile.mjs are not allowed: a pnpmfile runs code during install. Remove the file')
+  }
+  for (const [key, value] of npmrcSettings(files.npmrc)) {
+    const name = normalize(key)
+    if (PNPMFILE_SETTINGS.includes(name)) {
+      problems.push(`.npmrc: ${key} is not allowed: a pnpmfile runs code during install. Remove the setting`)
+    } else if (name === 'registry' || name.endsWith('registry')) {
+      problems.push(`.npmrc: ${key} is not allowed: packages come from the registry the VM is configured with. Remove the setting`)
+    } else if (name.startsWith('minimumreleaseage')) {
+      const isAge = name === 'minimumreleaseage'
+      const ok = isAge ? Number(value) >= MIN_RELEASE_AGE_MINUTES : name === 'minimumreleaseageignoremissingtime' ? value !== 'true' : false
+      if (!ok) problems.push(`.npmrc: ${key} is not allowed. Remove the setting`)
+    } else if (name === 'dangerouslyallowallbuilds' && value !== 'false') {
+      problems.push('.npmrc: dangerously-allow-all-builds is not allowed. List the packages that need install scripts under allowBuilds')
+    } else if (name === 'scriptshell' || name === 'nodeoptions' || name === 'nodeversion') {
+      problems.push(`.npmrc: ${key} is not allowed. Remove the setting`)
+    }
+  }
+  return problems
+}
+
+function checkWorkspaceSettings(raw: string | undefined): string[] {
   let config: Record<string, unknown>
   try {
     config = settings(raw)
@@ -47,6 +101,14 @@ export function checkPnpmWorkspace(raw: string | undefined): string[] {
     problems.push(
       'pnpm-workspace.yaml: dangerouslyAllowAllBuilds is not allowed. List the packages that need install scripts under allowBuilds',
     )
+  }
+  for (const name of PNPMFILE_SETTINGS) {
+    if (!isEmpty(config[name])) {
+      problems.push(`pnpm-workspace.yaml: ${name === 'pnpmfile' ? 'pnpmfile' : 'globalPnpmfile'} is not allowed: a pnpmfile runs code during install. Remove the setting`)
+    }
+  }
+  if (!isEmpty(config.registry) || !isEmpty(config.registries)) {
+    problems.push('pnpm-workspace.yaml: registry and registries are not allowed. Remove the setting')
   }
   return problems
 }

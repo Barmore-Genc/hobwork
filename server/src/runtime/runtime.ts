@@ -474,6 +474,8 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
           `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or assign a secret that may be sent to it`,
           deployed.branch,
         ),
+      onSecretRefused: ({ hostname, message }) =>
+        event(project, 'warn', 'secret', `Refused an outgoing request to ${hostname}: ${message}`, deployed.branch),
       label: deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`,
     })
     const tail: string[] = []

@@ -232,6 +232,23 @@ test('refuses plain http to OpenRouter without sending it on', async () => {
   expect(projectUsage(host.db, projectId, clock).day.requests).toBe(0)
 })
 
+test('refuses OpenRouter on ports other than 443', async () => {
+  let forwarded = false
+  const upstream: Upstream = async () => {
+    forwarded = true
+    return completion(0.01)
+  }
+  for (const origin of ['https://openrouter.ai:8443', 'https://openrouter.ai:80']) {
+    const res = await gateway().handle(new Request(`${origin}/api/v1/models`), upstream)
+    expect(res.status).toBe(403)
+    const { error } = (await res.json()) as { error: { code: string } }
+    expect(error.code).toBe('hobwork_port_not_allowed')
+  }
+  const ok = await gateway().handle(new Request('https://openrouter.ai:443/api/v1/models'), async () => Response.json({ data: [] }))
+  expect(ok.status).toBe(200)
+  expect(forwarded).toBe(false)
+})
+
 test('only passes on the OpenRouter paths hobs use', async () => {
   let forwarded: string[] = []
   const upstream: Upstream = async (request) => {

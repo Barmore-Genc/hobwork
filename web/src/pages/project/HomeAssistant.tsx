@@ -42,33 +42,35 @@ function ServicesForm({ name, services, onSaved }: { name: string; services: str
   return (
     <section aria-labelledby="ha-services" className="mt-8">
       <h2 id="ha-services" className="text-xl font-semibold">
-        Services {name} may call
+        Services and events {name} may use
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        {name} can switch things in your home only through the Home Assistant services listed here. Anything else is
-        refused and shows up in the log. Agents can add services too, and the log says when they do.
+        {name} can switch things in your home only through the Home Assistant services listed here, and can send only
+        the events listed here, which can start your automations. Anything else is refused and shows up in the log.
+        Agents can add entries too, and the log says when they do.
       </p>
       <form onSubmit={save} className="mt-6 space-y-4 rounded-lg border border-border bg-surface p-5 sm:p-6">
         <div>
           <label htmlFor="ha-services-list" className="font-semibold">
-            Allowed services
+            Allowed services and events
           </label>
           <textarea
             id="ha-services-list"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={6}
-            placeholder={'light\ntts.speak'}
+            placeholder={'light\ntts.speak\nevent:spool_empty'}
             spellCheck={false}
             className={`${inputClass} mt-2 py-2 font-mono text-sm`}
           />
           <p className="mt-1 text-sm text-muted">
-            One per line. A domain like light allows all its services, and light.turn_on allows only that one. An empty
-            list allows none.
+            One per line. A domain like light allows all its services, and light.turn_on allows only that one. An
+            entry like event:spool_empty lets the hob send that event. An empty list allows none.
           </p>
           <p className="mt-1 text-sm text-muted">
             hassio, homeassistant, shell_command and recorder.purge can change or stop Home Assistant itself, so no hob
-            may call them.
+            may call them. Events Home Assistant uses itself, such as state_changed and homeassistant_start, cannot be
+            sent either.
           </p>
         </div>
         <Button type="submit" variant="primary" disabled={busy}>

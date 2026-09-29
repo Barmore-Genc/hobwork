@@ -17,7 +17,6 @@ Sections are in the order to work on them.
 
 ### Supply chain
 
-- **`.pnpmfile.cjs`**: a hob's pnpmfile is code that runs during install and gets around `allowBuilds`. The pipeline refuses hobs that have one, or runs installs with `--ignore-pnpmfile`.
 - **Install script changes in the UI**: a merge that changes `allowBuilds` gets a notice in its pipeline output. The web UI has no version diff to show it in; add one, or a flag on the version in `list_versions` and the versions list.
 
 ### Nothing on the host touches guest-writable files
@@ -37,9 +36,6 @@ Sections are in the order to work on them.
 
 ### Home Assistant, AI and secrets
 
-- **HA events**: `fireEvent` is not limited by the services list, and events can trigger HA automations. Give hobs a list of event types they may fire, like the services list.
-- **Secret refusals in the hob log**: a request refused because a secret is in the wrong header or goes over http writes a hob log line, like `egress-blocked`.
-- **AI gateway port**: refuse OpenRouter on ports other than 443.
 
 ### Resources
 

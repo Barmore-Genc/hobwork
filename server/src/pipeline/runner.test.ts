@@ -92,7 +92,7 @@ test('installs only when the project has dependencies outside the platform set',
   }
   const run = await runPipeline(host, { startVm: passing }, { project: 'filament', ...(await seed(withExtras)) })
   expect(run.steps.find((s) => s.name === 'install')?.status).toBe('passed')
-  expect(commands[0]).toBe('pnpm install --frozen-lockfile')
+  expect(commands[0]).toBe('pnpm install --frozen-lockfile --ignore-pnpmfile')
 
   expect(platformPackages().has('react')).toBe(true)
   expect(platformPackages().has('@hobwork/sdk')).toBe(true)

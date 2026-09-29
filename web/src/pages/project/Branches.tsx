@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api, ApiError, type Branch } from '../../api.ts'
 import { exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
-import { ConfirmDialog, Notice } from '../../ui.tsx'
+import { APP_FRAME_SANDBOX, ConfirmDialog, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { branchesChanged } from '../../live.ts'
 import { previewPath, projectPath } from './names.ts'
@@ -208,6 +208,7 @@ export function PreviewPage({ name, branch }: { name: string; branch: string }) 
       {found?.previewUrl && (
         <iframe
           src={found.previewUrl}
+          sandbox={APP_FRAME_SANDBOX}
           title={`Preview of ${branch}`}
           className="mt-6 block h-[calc(100dvh-15rem)] min-h-[28rem] w-full rounded-lg border border-border bg-bg"
         />

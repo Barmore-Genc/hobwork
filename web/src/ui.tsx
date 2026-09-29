@@ -139,3 +139,6 @@ export function PageHeading({ children, aside }: { children: ReactNode; aside?: 
     </div>
   )
 }
+
+// No allow-top-navigation: a compromised hob UI must not redirect the Hobwork page.
+export const APP_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads'

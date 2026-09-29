@@ -5,6 +5,7 @@ import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
 import { buildDir, projectBuildsDir } from '../runtime/builds.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
+import { queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
 import { FAKE_PROJECT, fakePackageJson, seedMain } from '../test-project.ts'
 import type { ExecResult } from '../workspaces.ts'
@@ -242,4 +243,14 @@ test('copies the build only after the VM has stopped', async () => {
   expect(run.status).toBe('passed')
   const [tree] = readdirSync(projectBuildsDir(host, 'filament')).filter((name) => !name.startsWith('.'))
   expect(existsSync(join(buildDir(host, 'filament', tree ?? ''), 'written-while-stopping.txt'))).toBe(true)
+})
+
+test('streams step output to the log store line by line', async () => {
+  const startVm = recordingVm((command) => ({ exitCode: 0, stdout: `first ${command}\nsecond\n`, stderr: '' }))
+  await runPipeline(host, { startVm }, { project: 'filament', ...(await seed()) })
+  const lines = queryLogs(host, { project: 'filament', source: 'pipeline', limit: 100 }).map((entry) => entry.message)
+  expect(lines).toContain('run 1 lint: $ pnpm run lint')
+  expect(lines).toContain('run 1 lint: first pnpm run lint')
+  expect(lines).toContain('run 1 lint: second')
+  expect(lines.some((line) => line.startsWith('Pipeline run 1: lint passed in'))).toBe(true)
 })

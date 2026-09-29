@@ -22,7 +22,9 @@ import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
 import { createRuntime } from './runtime/runtime.ts'
+import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
+import { createVmScheduler } from './sandbox/scheduler.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
@@ -58,10 +60,14 @@ const homeAssistant = createHomeAssistant({
 })
 
 const image = imageDir()
+const vmScheduler = createVmScheduler({
+  ...config.vmBudget,
+  reclaim: async ({ project, branch }) => (branch === undefined ? false : workspaces.stopIfIdle(project, branch)),
+})
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? {
       image,
-      createSandbox: createGondolinSandbox,
+      createSandbox: budgetedSandboxFactory(createGondolinSandbox, vmScheduler),
       log: (message) => console.warn(message),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
     }

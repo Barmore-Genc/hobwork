@@ -134,7 +134,7 @@ export function createBuilder(host: Host, startVm: StartPipelineVm | undefined) 
       const hasExtras = extraDependencies(pkg).length > 0
       if (hasExtras && (await readBlob(gitDir, commit, 'pnpm-lock.yaml')) === undefined) throw new BuildError(MISSING_LOCKFILE)
       const dir = await checkout(gitDir, commit, tmp)
-      vm = await startVm({ dir })
+      vm = await startVm({ dir, project, kind: 'build' })
       const commands = [...(hasExtras ? [FROZEN_INSTALL] : []), 'pnpm run build']
       for (const command of commands) {
         const result = await vm.exec(command, { cwd: '.', timeoutMs: BUILD_TIMEOUT_MS })

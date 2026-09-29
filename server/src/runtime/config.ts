@@ -3,6 +3,7 @@ import { git, GitError } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { TriggerEntry } from '../homeassistant/triggers.ts'
 import { ProjectError } from '../projects.ts'
+import type { ResourceRequest } from '../sandbox/budget.ts'
 import type { CspSources } from './csp.ts'
 import type { InvocationKind } from './logs.ts'
 
@@ -16,6 +17,7 @@ export type ProjectConfig = {
   egress: string[]
   csp: CspSources
   idleTimeoutMs: number
+  resources: ResourceRequest
 }
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000
@@ -40,6 +42,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     triggers: json.triggers ?? {},
     egress: json.egress ?? [],
     csp: json.csp ?? {},
+    resources: json.resources ?? {},
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }

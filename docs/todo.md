@@ -39,8 +39,6 @@ Sections are in the order to work on them.
 
 ### Resources
 
-- **Pipeline output in the log store**: pipeline step output streams to the log store line by line, instead of a 2,000-character summary per step. Memory is already bounded (head and tail).
-- **VM resources and budget**: `hobwork.json` can ask for less memory and fewer vCPUs per VM kind, never more than the defaults. Starting a VM reserves its resources from a global memory and vCPU budget. When the budget is full, requests wait in per-hob queues with an equal share per active hob, borrowing idle capacity; idle workspace VMs over their share stop first. The main runtime goes first, then builds and previews, then workspaces. Waits end with a "host busy" error.
 
 ### Guest privilege
 
@@ -106,6 +104,8 @@ Open questions:
 
 ### Smaller items
 
+- Migration VMs reserve from the VM budget as pipeline VMs of no hob; pass the hob so fair shares count them.
+- A VM that exits on its own keeps its budget reservation until `stop()` runs; release it from an exit event in the Gondolin wrapper.
 - Read-only tools read from git instead of opening a workspace.
 
 ## Warm VM pool

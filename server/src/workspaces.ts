@@ -118,6 +118,8 @@ function toWorkspace(host: Host, row: Record<string, unknown>): Workspace {
 const SELECT = `SELECT w.id, p.name AS project, w.branch, w.status, w.created_at, w.last_used_at
   FROM workspaces w JOIN projects p ON p.id = w.project_id`
 
+const RECLAIM_MIN_IDLE_MS = 30_000
+
 export type WorkspaceManagerOptions<Vm extends WorkspaceVm> = {
   startVm?: StartWorkspaceVm<Vm>
   // VMs not used for this long are stopped. Unset means never.
@@ -273,6 +275,19 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
         }).catch((err: unknown) => console.error(`Stopping idle workspace ${project}/${branch} failed`, err)),
       ),
     )
+  }
+
+  // Stops the VM when the VM budget needs the room, unless a command runs in it
+  // or it was used a moment ago (a VM that has just started is not idle).
+  function stopIfIdle(project: string, branch: string): Promise<boolean> {
+    return serialized(project, branch, async () => {
+      const workspace = get(project, branch)
+      const vm = workspace && vms.get(workspace.id)
+      if (!workspace || !vm || vm.busy?.()) return false
+      if (Date.now() - Date.parse(workspace.lastUsedAt) < RECLAIM_MIN_IDLE_MS) return false
+      await stopUnlocked(project, branch)
+      return true
+    })
   }
 
   function scheduleIdleCheck(): void {
@@ -468,6 +483,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     start,
     stop,
     stopIdle,
+    stopIfIdle,
     stopAll,
     remove,
     deleteBranch,

@@ -5,6 +5,7 @@ import { publishChange } from '../changes.ts'
 import { git, GitError } from '../git.ts'
 import type { Host } from '../host.ts'
 import { HeadTailOutput, truncateMiddle } from '../mcp/output.ts'
+import { createPipelineLog } from './output-log.ts'
 import { requireProject } from '../projects.ts'
 import { saveBuild } from '../runtime/builds.ts'
 import { appendLog } from '../runtime/logs.ts'
@@ -20,7 +21,12 @@ export type PipelineVm = ExecWorkspaceVm & { iconsCommand?: string }
 // Seam for the sandbox layer: start a fresh VM with `dir` (a clean checkout of
 // the candidate) mounted read-write. Exec `cwd` is relative to `dir`. The VM is
 // stopped when the run ends and never reused.
-export type StartPipelineVm = (options: { dir: string }) => Promise<PipelineVm>
+export type StartPipelineVm = (options: {
+  dir: string
+  // For the host's VM budget. Builds outside a pipeline run say so.
+  project?: string
+  kind?: 'pipeline' | 'build'
+}) => Promise<PipelineVm>
 
 export type StepOutcome = { status: 'passed' | 'failed' | 'skipped'; output: string }
 
@@ -77,8 +83,6 @@ export const MISSING_LOCKFILE =
   'pnpm-lock.yaml is missing. Run pnpm install in the workspace, then commit pnpm-lock.yaml'
 
 const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000
-// Full step output stays in pipeline_status. The log store gets enough to see what happened.
-const PIPELINE_LOG_CHARS = 2_000
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
@@ -117,7 +121,12 @@ export async function checkout(gitDir: string, commit: string, tmp: string): Pro
   return dir
 }
 
-async function exec(vm: PipelineVm, command: string, timeoutMs: number): Promise<StepOutcome> {
+async function exec(
+  vm: PipelineVm,
+  command: string,
+  timeoutMs: number,
+  onOutput: (stream: 'stdout' | 'stderr', text: string) => void,
+): Promise<StepOutcome> {
   const timeout = AbortSignal.timeout(timeoutMs)
   const streamed = new HeadTailOutput()
   const timedOut = new Promise<'timeout'>((resolve) => {
@@ -128,8 +137,9 @@ async function exec(vm: PipelineVm, command: string, timeoutMs: number): Promise
       cwd: '.',
       timeoutMs,
       signal: timeout,
-      onOutput: (_, chunk) => {
+      onOutput: (stream, chunk) => {
         streamed.push(chunk)
+        onOutput(stream, chunk)
       },
     }),
     timedOut,
@@ -165,6 +175,10 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     'UPDATE pipeline_steps SET status = ?, output = ?, duration_ms = ? WHERE run_id = ? AND name = ?',
   )
 
+  const outputLog = createPipelineLog(host, { project: candidate.project, branch: candidate.branch, id: runId })
+  let stepLog = outputLog.step('validate')
+  let streamedOutput = false
+
   function logStep(id: number, name: PipelineStepName, outcome: StepOutcome, durationMs: number) {
     const where = candidate.branch ? ` (${candidate.branch})` : ''
     appendLog(host, {
@@ -172,9 +186,7 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
       source: 'pipeline',
       event: 'pipeline',
       level: outcome.status === 'failed' ? 'error' : 'info',
-      message: `Pipeline run ${id}${where}: ${name} ${outcome.status} in ${(durationMs / 1000).toFixed(1)}s${
-        outcome.output ? `\n${truncateMiddle(outcome.output, PIPELINE_LOG_CHARS)}` : ''
-      }`,
+      message: `Pipeline run ${id}${where}: ${name} ${outcome.status} in ${(durationMs / 1000).toFixed(1)}s`,
     })
   }
 
@@ -183,8 +195,10 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
   let checkedOut: Promise<string> | undefined
   const dir = () => (checkedOut ??= checkout(gitDir, commit, tmp))
   async function inVm(command: string): Promise<StepOutcome> {
-    vm ??= await options.startVm({ dir: await dir() })
-    return exec(vm, command, timeoutMs)
+    vm ??= await options.startVm({ dir: await dir(), project: candidate.project, kind: 'pipeline' })
+    stepLog.text(`$ ${command}`)
+    streamedOutput = true
+    return exec(vm, command, timeoutMs, stepLog.output)
   }
   async function stopVm() {
     const running = vm
@@ -254,6 +268,8 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
         continue
       }
       updateStep.run('running', '', null, runId, name)
+      stepLog = outputLog.step(name)
+      streamedOutput = false
       const started = performance.now()
       let outcome: StepOutcome
       try {
@@ -262,6 +278,13 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
         outcome = { status: 'failed', output: `Step could not run: ${(err as Error).message}` }
       }
       const durationMs = Math.round(performance.now() - started)
+      stepLog.end()
+      if (!streamedOutput) {
+        stepLog.text(outcome.output)
+      } else if (outcome.status === 'failed') {
+        // The exit code or timeout notice is not part of the VM's output.
+        stepLog.text(outcome.output.trimEnd().split('\n').at(-1) ?? '')
+      }
       updateStep.run(outcome.status, truncateMiddle(outcome.output), durationMs, runId, name)
       logStep(runId, name, outcome, durationMs)
       if (outcome.status === 'failed') failedStep = name

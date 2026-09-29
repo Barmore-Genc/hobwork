@@ -4,8 +4,19 @@ import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import { HeadTailOutput } from './mcp/output.ts'
 import { MIN_RELEASE_AGE_MINUTES } from './pipeline/pnpm-settings.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
+import { DEFAULT_RESOURCES, memorySize, resolveResources, type ResourceKind, type ResourceRequest } from './sandbox/budget.ts'
 import { extraDependencies } from './platform.ts'
-import type { EgressBlocked, SecretRefused, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
+import type {
+  EgressBlocked,
+  Interceptor,
+  InternalHandler,
+  Sandbox,
+  SandboxFactory,
+  SandboxOptions,
+  SecretRefused,
+  Secret,
+  VmKind,
+} from './sandbox/sandbox.ts'
 import type {
   ExecOptions,
   ExecResult,
@@ -36,7 +47,7 @@ const INSTALL_CLI = [
 // everything else on hobwork.internal goes to the CLI API.
 export const ENVIRONMENT_PATHS = new Set(['/v1/db', '/v1/ha', '/v1/devices'])
 
-const VM_RESOURCES = { memory: '2G', cpus: 4, diskSize: '4G' }
+const DISK_SIZE = '4G'
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
 
 // What a workspace VM gets from the rest of the host: secrets, their hosts,
@@ -91,6 +102,14 @@ export async function hobworkEgress(dir: string): Promise<string[]> {
   return Array.isArray(egress) ? egress.filter((host): host is string => typeof host === 'string') : []
 }
 
+// What the hob asks for, capped at the defaults. Invalid files ask for nothing.
+async function hobworkResources(dir: string, kind: ResourceKind) {
+  const config = await readJson(join(dir, 'hobwork.json'), parseHobworkJson)
+  const requested = (config as { resources?: ResourceRequest } | undefined)?.resources
+  const ask = typeof requested === 'object' && requested !== null ? requested : undefined
+  return resolveResources(kind, ask, DEFAULT_RESOURCES[kind])
+}
+
 export async function hasExtraDependencies(dir: string): Promise<boolean> {
   const pkg = await readJson(join(dir, 'package.json'))
   return typeof pkg === 'object' && pkg !== null && extraDependencies(pkg).length > 0
@@ -103,11 +122,15 @@ function sandboxOptions(
   dir: string,
   egress: string[],
   label: string,
+  vm: { kind: VmKind; project: string; branch?: string; resources: { memoryMb: number; cpus: number } },
   environment?: VmEnvironment,
 ): SandboxOptions {
   return {
     image: options.image,
-    ...VM_RESOURCES,
+    budget: { kind: vm.kind, project: vm.project, branch: vm.branch },
+    memory: memorySize(vm.resources.memoryMb),
+    cpus: vm.resources.cpus,
+    diskSize: DISK_SIZE,
     mounts: { [GUEST_DIR]: { hostPath: dir, vmDisk: ['node_modules'] } },
     // Without a TTY, pnpm refuses to recreate node_modules unless it runs in CI mode.
     // An environment setting beats a hob's pnpm-workspace.yaml, and unlike a
@@ -184,7 +207,15 @@ export function workspaceVmBackend(
     const environment = await environments?.start(workspace)
     // The registry is always reachable so agents can add and install extras.
     const egress = [...new Set([NPM_REGISTRY, ...(await hobworkEgress(workspace.dir)), ...(environment?.egress ?? [])])]
-    const base = sandboxOptions(options, workspace.dir, egress, label, environment)
+    const resources = await hobworkResources(workspace.dir, 'workspace')
+    const base = sandboxOptions(
+      options,
+      workspace.dir,
+      egress,
+      label,
+      { kind: 'workspace', project: workspace.project, branch: workspace.branch, resources },
+      environment,
+    )
     const cliApi = internal?.(workspace)
     const environmentApi = environment?.internal
     let sandbox: Sandbox
@@ -247,8 +278,9 @@ export function workspaceVmBackend(
 export function pipelineVmBackend(options: GuestVmOptions): { start: StartPipelineVm; stopAll(): Promise<void> } {
   const running = new Set<Sandbox>()
   return {
-    async start({ dir }) {
-      const base = sandboxOptions(options, dir, [NPM_REGISTRY], 'pipeline')
+    async start({ dir, project = '(host)', kind = 'pipeline' }) {
+      const resources = await hobworkResources(dir, 'pipeline')
+      const base = sandboxOptions(options, dir, [NPM_REGISTRY], kind, { kind, project, resources })
       const sandbox = await options.createSandbox({
         ...base,
         mounts: { ...base.mounts, [ICONS_DIR]: { hostPath: HOST_ICONS_DIR, readonly: true } },

@@ -6,7 +6,7 @@ export const MAX_LINE_CHARS = 8192
 export function createLineSplitter(emit: (line: string) => void, max: number = MAX_LINE_CHARS) {
   let partial = ''
   let discarding = false
-  return (text: string) => {
+  const push = (text: string) => {
     let start = 0
     while (start <= text.length) {
       const newline = text.indexOf('\n', start)
@@ -26,4 +26,11 @@ export function createLineSplitter(emit: (line: string) => void, max: number = M
       start = newline + 1
     }
   }
+  // Emits the last line when the stream ends without a newline.
+  const flush = () => {
+    if (!discarding && partial) emit(partial)
+    partial = ''
+    discarding = false
+  }
+  return Object.assign(push, { flush })
 }

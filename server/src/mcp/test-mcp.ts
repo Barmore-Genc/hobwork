@@ -16,6 +16,7 @@ export type TestMcp = {
   host: Host
   client: Client
   token: string
+  url: URL
   call(name: string, args?: Record<string, unknown>, options?: { timeout?: number }): Promise<CallToolResult>
   close(): Promise<void>
 }
@@ -49,6 +50,7 @@ export async function startTestMcp(
     host,
     client,
     token,
+    url,
     async call(name, args = {}, callOptions = {}) {
       return (await client.callTool({ name, arguments: args }, undefined, callOptions)) as CallToolResult
     },

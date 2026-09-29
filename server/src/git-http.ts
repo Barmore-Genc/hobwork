@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
-import { verifyAgentToken, type Agent } from './agents.ts'
+import { allowsProject } from './access.ts'
+import { verifyAgentToken, type AuthenticatedAgent } from './agents.ts'
 import { gitEnv } from './git.ts'
 import { reposDir, type Host } from './host.ts'
 import { getProject } from './projects.ts'
@@ -9,7 +10,7 @@ export const GIT_PREFIX = '/git/'
 
 const GIT_PATH = /^\/git\/([a-z0-9-]+)\.git(\/[A-Za-z0-9._/-]*)$/
 
-function authenticate(host: Host, req: IncomingMessage): Agent | undefined {
+function authenticate(host: Host, req: IncomingMessage): AuthenticatedAgent | undefined {
   const header = req.headers.authorization
   if (!header?.startsWith('Basic ')) return undefined
   const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8')
@@ -35,6 +36,9 @@ export function handleGit(host: Host, req: IncomingMessage, res: ServerResponse,
     })
   }
   if (!getProject(host, project)) return plain(res, 404, `Project "${project}" does not exist`)
+  if (!allowsProject(agent.access, project)) return plain(res, 403, `This key has no access to ${project}`)
+  const push = rest === '/git-receive-pack' || new URLSearchParams(query).get('service') === 'git-receive-pack'
+  if (push && agent.access.readOnly) return plain(res, 403, 'This key can only read, so it cannot push')
 
   const header = (name: string) => {
     const value = req.headers[name]

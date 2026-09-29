@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
+import { allowsProject } from '../access.ts'
 import type { AuthenticatedAgent } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -24,6 +25,7 @@ import type { StorageUsage } from '../storage.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
+import { limitTools } from './access.ts'
 import { runBash } from './bash.ts'
 import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
@@ -128,6 +130,7 @@ export function createMcpServer({
   appOrigin,
 }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
+  limitTools(server, agent.access)
 
   // main is never written through a workspace, so its checkout is refreshed to
   // the deployed commit on every read.
@@ -159,17 +162,19 @@ export function createMcpServer({
     'list_projects',
     {
       description:
-        'List all Hobwork projects with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
+        'List the Hobwork projects you have access to, with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
       annotations: { readOnlyHint: true },
     },
     () =>
       json(
-        listProjects(host).map((p) => ({
-          name: p.name,
-          defaultBranch: p.defaultBranch,
-          createdAt: p.createdAt,
-          ...(storage ? { storage: storage.get(p) } : {}),
-        })),
+        listProjects(host)
+          .filter(({ name }) => allowsProject(agent.access, name))
+          .map((p) => ({
+            name: p.name,
+            defaultBranch: p.defaultBranch,
+            createdAt: p.createdAt,
+            ...(storage ? { storage: storage.get(p) } : {}),
+          })),
       ),
   )
 

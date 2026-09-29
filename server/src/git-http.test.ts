@@ -100,6 +100,24 @@ test('rejects requests without credentials', async () => {
   expect(res.headers.get('www-authenticate')).toContain('Basic')
 })
 
+test('a limited token reads only its projects and a read-only one cannot push', async () => {
+  await createProject(host, 'garden')
+  const readOnly = createAgentToken(host.db, 'reader', { readOnly: true, projects: ['filament'] }).token
+  const basic = (password: string) => ({ authorization: `Basic ${Buffer.from(`agent:${password}`).toString('base64')}` })
+  const refs = (project: string, service: string) =>
+    fetch(`${base}/git/${project}.git/info/refs?service=${service}`, { headers: basic(readOnly) })
+  expect((await refs('filament', 'git-upload-pack')).status).toBe(200)
+  expect((await refs('garden', 'git-upload-pack')).status).toBe(403)
+  const push = await refs('filament', 'git-receive-pack')
+  expect(push.status).toBe(403)
+  expect(await push.text()).toContain('cannot push')
+  const pack = await fetch(`${base}/git/filament.git/git-receive-pack`, { method: 'POST', headers: basic(readOnly) })
+  expect(pack.status).toBe(403)
+
+  const writer = createAgentToken(host.db, 'writer', { readOnly: false, projects: ['filament'] }).token
+  expect((await fetch(`${base}/git/filament.git/info/refs?service=git-receive-pack`, { headers: basic(writer) })).status).toBe(200)
+})
+
 test('returns 404 for unknown projects and malformed paths', async () => {
   const auth = { authorization: `Basic ${Buffer.from(`agent:${token}`).toString('base64')}` }
   expect((await fetch(`${base}/git/missing.git/info/refs?service=git-upload-pack`, { headers: auth })).status).toBe(404)

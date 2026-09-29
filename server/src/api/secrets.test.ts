@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, expect, test } from 'vitest'
+import { FULL_ACCESS } from '../access.ts'
 import { createAgentToken, ensureAgent } from '../agents.ts'
 import { registerClient } from '../oauth/clients.ts'
 import { approveRequest, exchangeCode, getRequest, saveRequest } from '../oauth/grants.ts'
@@ -46,7 +47,7 @@ function oauthAccessToken(): string {
     { clientId: client.id, redirectUri, state: null, codeChallenge: s256(verifier), resource: `${TEST_PUBLIC_URL}/mcp`, scope: null },
     now,
   )
-  const approved = approveRequest(host.db, { request: getRequest(host.db, id, now)!, client, agentName: 'Claude', userId, now })
+  const approved = approveRequest(host.db, { request: getRequest(host.db, id, now)!, client, agentName: 'Claude', access: FULL_ACCESS, userId, now })
   return exchangeCode(host.db, { client, code: approved!.code, redirectUri, verifier, resource: undefined, now }).access_token
 }
 

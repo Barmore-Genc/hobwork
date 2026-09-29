@@ -88,7 +88,12 @@ function mcpRequest(token?: string) {
 
 // What the browser does: follow /oauth/authorize to the consent page, then
 // approve or deny as the signed-in user. Returns where the browser ends up.
-async function consent(authorizationUrl: string, answer: 'approve' | 'deny' = 'approve', agentName?: string) {
+async function consent(
+  authorizationUrl: string,
+  answer: 'approve' | 'deny' = 'approve',
+  agentName?: string,
+  access?: { readOnly: boolean; projects: string[] | null },
+) {
   const res = await fetch(authorizationUrl, { redirect: 'manual' })
   expect(res.status).toBe(303)
   const location = new URL(res.headers.get('location')!, app.base)
@@ -99,7 +104,7 @@ async function consent(authorizationUrl: string, answer: 'approve' | 'deny' = 'a
   const answered = await fetch(`${app.base}/api/oauth/requests/${id}/${answer}`, {
     method: 'POST',
     headers: writeHeaders(cookie, app.base),
-    body: JSON.stringify({ agentName: agentName ?? info.agentName }),
+    body: JSON.stringify({ agentName: agentName ?? info.agentName, access }),
   })
   expect(answered.status).toBe(200)
   return { info, redirectTo: new URL((await jsonOf(answered)).redirectTo) }
@@ -201,9 +206,12 @@ function authorizeUrl(clientId: string, params: Record<string, string> = {}) {
   return { url: url.href, verifier }
 }
 
-async function tokensFor(clientId: string): Promise<{ access_token: string; refresh_token: string }> {
+async function tokensFor(
+  clientId: string,
+  access?: { readOnly: boolean; projects: string[] | null },
+): Promise<{ access_token: string; refresh_token: string }> {
   const { url, verifier } = authorizeUrl(clientId)
-  const { redirectTo } = await consent(url)
+  const { redirectTo } = await consent(url, 'approve', undefined, access)
   const res = await form('/oauth/token', {
     grant_type: 'authorization_code',
     client_id: clientId,
@@ -597,4 +605,97 @@ test('helpers', () => {
   }
   expect(isPublicAddress('160.79.104.10')).toBe(true)
   expect(isPublicAddress('2606:4700::1')).toBe(true)
+})
+
+function mcpClient(token: string) {
+  const client = new Client({ name: 'test', version: '0.0.0' })
+  const transport = new StreamableHTTPClientTransport(new URL(mcpUrl()), {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+  })
+  return { client, connect: () => client.connect(transport) }
+}
+
+test('the consent page limits a connection to some projects and to reading', async () => {
+  for (const name of ['filament', 'garden', 'sleep']) host.db.prepare('INSERT INTO projects (name) VALUES (?)').run(name)
+  const { client_id } = await registeredClient()
+  const { access_token } = await tokensFor(client_id, { readOnly: true, projects: ['garden', 'filament'] })
+  const { client, connect } = mcpClient(access_token)
+  await connect()
+  const names = (await client.listTools()).tools.map((tool) => tool.name)
+  expect(names).toContain('read_file')
+  expect(names).not.toContain('write_file')
+  expect(names).not.toContain('create_project')
+  const listed = await client.callTool({ name: 'list_projects', arguments: {} })
+  expect(JSON.parse((listed.content as { text: string }[])[0]!.text).map((p: { name: string }) => p.name)).toEqual([
+    'filament',
+    'garden',
+  ])
+  const other = await client.callTool({ name: 'list_versions', arguments: { project: 'sleep' } })
+  expect(other.isError).toBe(true)
+  expect(JSON.stringify(other.content)).toContain('no access to the project \\"sleep\\"')
+  await client.close()
+
+  const [agent] = await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))
+  expect(agent.connections[0].access).toEqual({ readOnly: true, projects: ['filament', 'garden'] })
+})
+
+test('approving with an unknown project or no project is refused', async () => {
+  const { client_id } = await registeredClient()
+  for (const [projects, error] of [
+    [['nope'], 'Project "nope" does not exist'],
+    [[], 'Choose at least one project'],
+  ] as const) {
+    const res = await fetch(authorizeUrl(client_id).url, { redirect: 'manual' })
+    const id = new URL(res.headers.get('location')!, app.base).searchParams.get('request')
+    const answered = await fetch(`${app.base}/api/oauth/requests/${id}/approve`, {
+      method: 'POST',
+      headers: writeHeaders(cookie, app.base),
+      body: JSON.stringify({ agentName: 'Limited', access: { readOnly: false, projects } }),
+    })
+    expect(answered.status).toBe(400)
+    expect((await jsonOf(answered)).error).toBe(error)
+  }
+  expect(host.db.prepare('SELECT count(*) AS n FROM oauth_grants').get()?.n).toBe(0)
+})
+
+test('registration is rate limited per address and unused clients are capped', async () => {
+  const register = () =>
+    fetch(`${app.base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://app.example/callback'], token_endpoint_auth_method: 'none' }),
+    })
+  for (let i = 0; i < 30; i++) expect((await register()).status).toBe(201)
+  const limited = await register()
+  expect(limited.status).toBe(429)
+  expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0)
+  expect((await jsonOf(limited)).error).toBe('temporarily_unavailable')
+
+  now += 60 * 60 * 1000
+  const insert = host.db.prepare(
+    `INSERT INTO oauth_clients (id, name, redirect_uris, auth_method, created_at) VALUES (?, 'x', '[]', 'none', ?)`,
+  )
+  for (let i = 0; i < 200 - 30; i++) insert.run(`hwc_filler${i}`, new Date(now).toISOString())
+  const full = await register()
+  expect(full.status).toBe(429)
+  expect((await jsonOf(full)).error_description).toContain('Too many apps')
+  now += 25 * 60 * 60 * 1000
+  expect((await register()).status).toBe(201)
+})
+
+test('authorization requests are rate limited per address and pending ones are capped', async () => {
+  const { client_id } = await registeredClient()
+  const location = async () =>
+    new URL((await fetch(authorizeUrl(client_id).url, { redirect: 'manual' })).headers.get('location')!, app.base)
+  for (let i = 0; i < 60; i++) expect((await location()).searchParams.get('request')).toBeTruthy()
+  expect((await location()).search).toBe('?error=too_many_requests')
+
+  now += 10 * 60 * 1000
+  const insert = host.db.prepare(
+    `INSERT INTO oauth_requests (id, client_id, redirect_uri, code_challenge, resource, expires_at) VALUES (?, 'x', 'x', 'x', 'x', ?)`,
+  )
+  for (let i = 0; i < 200 - 60; i++) insert.run(`filler${i}`, new Date(now + 60_000).toISOString())
+  expect((await location()).search).toBe('?error=too_many_requests')
+  now += 16 * 60 * 1000
+  expect((await location()).searchParams.get('request')).toBeTruthy()
 })

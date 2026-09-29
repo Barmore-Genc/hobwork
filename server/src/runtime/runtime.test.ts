@@ -173,6 +173,22 @@ test('serves routes over HTTP for agents and records the invocation', async () =
   expect(sandboxes.created[0]?.mounts?.['/app']?.readonly).toBe(true)
 })
 
+test('a limited agent token calls routes only on its projects, and a read-only one only with GET', async () => {
+  start()
+  await deploy()
+  const base = await listenApp()
+  const call = (token: string, method = 'GET') =>
+    fetch(`${base}/p/filament/api/${method === 'GET' ? 'spools' : 'fail'}`, { method, headers: { authorization: `Bearer ${token}` } })
+  const reader = createAgentToken(host.db, 'reader', { readOnly: true, projects: ['filament'] }).token
+  expect((await call(reader)).status).toBe(200)
+  expect((await call(reader, 'POST')).status).toBe(403)
+  host.db.prepare("INSERT INTO projects (name) VALUES ('garden')").run()
+  const elsewhere = createAgentToken(host.db, 'gardener', { readOnly: false, projects: ['garden'] }).token
+  expect((await call(elsewhere)).status).toBe(403)
+  const writer = createAgentToken(host.db, 'writer', { readOnly: false, projects: ['filament'] }).token
+  expect((await call(writer, 'POST')).status).toBe(500)
+})
+
 test('records a thrown error with its stack trace and console output', async () => {
   start()
   await deploy()

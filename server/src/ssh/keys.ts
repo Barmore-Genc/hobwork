@@ -1,7 +1,8 @@
 import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import ssh2, { type ParsedKey } from 'ssh2'
-import { getAgent, type Agent, type Credential } from '../agents.ts'
+import { FULL_ACCESS, loadAccess } from '../access.ts'
+import { getAgent, type AuthenticatedAgent, type Credential } from '../agents.ts'
 
 // Where a key was added. null for keys added before this was recorded.
 export type SshKeySource =
@@ -196,16 +197,30 @@ export function revokeSshKey(db: DatabaseSync, id: number, agentId?: number): bo
   return Number(result.changes) > 0
 }
 
-// The agent a public key (SSH wire format) belongs to, with the key to verify signatures.
-export function findSshKey(db: DatabaseSync, keyData: Buffer): { id: number; agent: Agent; key: ParsedKey } | undefined {
+// The agent a public key (SSH wire format) belongs to, with the key to verify
+// signatures. A key an agent added has the access of the token or connection
+// it used, so a limited credential cannot give itself wider access over SSH.
+export function findSshKey(
+  db: DatabaseSync,
+  keyData: Buffer,
+): { id: number; agent: AuthenticatedAgent; key: ParsedKey } | undefined {
   const row = db
-    .prepare('SELECT id, agent_id, algorithm, key_data FROM agent_ssh_keys WHERE key_data = ? AND revoked_at IS NULL')
+    .prepare(
+      `SELECT id, agent_id, algorithm, key_data, added_by_token_id, added_by_grant_id
+       FROM agent_ssh_keys WHERE key_data = ? AND revoked_at IS NULL`,
+    )
     .get(keyData.toString('base64'))
   if (!row) return undefined
   const agent = getAgent(db, Number(row.agent_id))
   const key = ssh2.utils.parseKey(`${String(row.algorithm)} ${String(row.key_data)}`)
   if (!agent || key instanceof Error || Array.isArray(key)) return undefined
-  return { id: Number(row.id), agent, key }
+  const access =
+    row.added_by_token_id !== null
+      ? loadAccess(db, 'token', Number(row.added_by_token_id))
+      : row.added_by_grant_id !== null
+        ? loadAccess(db, 'grant', Number(row.added_by_grant_id))
+        : FULL_ACCESS
+  return { id: Number(row.id), agent: { ...agent, access }, key }
 }
 
 export function markSshKeyUsed(db: DatabaseSync, id: number): void {

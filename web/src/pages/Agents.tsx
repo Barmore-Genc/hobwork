@@ -1,5 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { api, ApiError, type Agent, type AgentToken, type Connection, type CreatedToken, type SshKey } from '../api.ts'
+import { accessReady, accessText, FULL_ACCESS } from '../access.ts'
+import { AccessPicker } from '../AccessPicker.tsx'
+import { api, ApiError, type Access, type Agent, type AgentToken, type Connection, type CreatedToken, type SshKey } from '../api.ts'
 import { exactTime, shortDate, timeAgo } from '../format.ts'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
@@ -106,6 +108,7 @@ function KeyRow({ token, onRevoke }: { token: AgentToken; onRevoke: (token: Agen
         <p className={revoked ? 'line-through' : ''}>
           Key created <span title={exactTime(token.createdAt)}>{shortDate(token.createdAt)}</span>
         </p>
+        <p className="text-sm text-muted">{accessText(token.access)}</p>
         <p className="text-sm text-muted">
           {revoked ? (
             <>Revoked {timeAgo(token.revokedAt!)}</>
@@ -134,6 +137,7 @@ function ConnectionRow({ connection, onRevoke }: { connection: Connection; onRev
           Signed in through {connection.clientName}
           {connection.connectedBy && <> by {connection.connectedBy}</>}
         </p>
+        <p className="text-sm text-muted">{accessText(connection.access)}</p>
         <p className="text-sm text-muted">
           <span title={exactTime(connection.createdAt)}>Connected {shortDate(connection.createdAt)}</span>
           {' · '}
@@ -270,6 +274,52 @@ function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => 
   )
 }
 
+function NewKeyForm({
+  agent,
+  onCreate,
+  onCancel,
+}: {
+  agent: Agent
+  onCreate: (access: Access) => Promise<void>
+  onCancel: () => void
+}) {
+  const [access, setAccess] = useState<Access>(FULL_ACCESS)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function create(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await onCreate(access)
+    } catch (err) {
+      setError(message(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={create} className="mt-4 rounded-lg border border-border bg-surface p-4 sm:p-5">
+      <p className="mb-3 font-semibold">New key for {agent.name}</p>
+      <AccessPicker access={access} onChange={setAccess} />
+      {error && (
+        <div className="mt-3">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap justify-end gap-3">
+        <Button variant="quiet" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" disabled={busy || !accessReady(access)}>
+          {busy ? 'Creating…' : 'Create key'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
 function accessSummary(agent: Agent): string {
   const keys = agent.tokens.filter((t) => t.revokedAt === null).length
   const apps = agent.connections.filter((c) => c.revokedAt === null).length
@@ -288,6 +338,7 @@ type Removal = { title: string; confirmLabel: string; body: ReactNode; run: () =
 export function AgentsPage() {
   const { data: agents, error, reload } = useLoad(api.agents)
   const [name, setName] = useState('')
+  const [access, setAccess] = useState<Access>(FULL_ACCESS)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [created, setCreated] = useState<CreatedToken | null>(null)
@@ -295,6 +346,7 @@ export function AgentsPage() {
   const [removeBusy, setRemoveBusy] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
   const [addingSshKey, setAddingSshKey] = useState<number | null>(null)
+  const [addingKey, setAddingKey] = useState<number | null>(null)
   const [revokedShown, setRevokedShown] = useState<Set<number>>(new Set())
 
   function toggleRevoked(agentId: number) {
@@ -310,8 +362,9 @@ export function AgentsPage() {
     setCreating(true)
     setCreateError(null)
     try {
-      setCreated(await api.createAgent(name))
+      setCreated(await api.createAgent(name, access))
       setName('')
+      setAccess(FULL_ACCESS)
       reload()
     } catch (err) {
       setCreateError(message(err))
@@ -320,14 +373,11 @@ export function AgentsPage() {
     }
   }
 
-  async function newKey(agentId: number) {
-    try {
-      setCreated(await api.createToken(agentId))
-      reload()
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    } catch (err) {
-      setCreateError(message(err))
-    }
+  async function newKey(agentId: number, keyAccess: Access) {
+    setCreated(await api.createToken(agentId, keyAccess))
+    setAddingKey(null)
+    reload()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function confirm(next: Removal) {
@@ -379,8 +429,8 @@ export function AgentsPage() {
       <PageHeading>Agent access</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
         Agents such as Claude build and change projects. They sign in through your browser, or use a key if they cannot.
-        An SSH key lets an agent open a shell in a project workspace. Access works for every project, so revoke what
-        you no longer use.
+        An SSH key lets an agent open a shell in a project workspace. Each key and sign-in can be limited to reading or
+        to some projects. Revoke what you no longer use.
       </p>
 
       <div className="mt-10 space-y-10">
@@ -406,9 +456,12 @@ export function AgentsPage() {
                 required
                 className="min-h-10 flex-1 rounded-md border border-border bg-surface-raised px-3 text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
               />
-              <Button type="submit" variant="primary" disabled={creating || !name.trim()}>
+              <Button type="submit" variant="primary" disabled={creating || !name.trim() || !accessReady(access)}>
                 {creating ? 'Creating…' : 'Create key'}
               </Button>
+            </div>
+            <div className="mt-4">
+              <AccessPicker access={access} onChange={setAccess} />
             </div>
             {createError && (
               <div className="mt-4">
@@ -441,12 +494,21 @@ export function AgentsPage() {
                       <p className="text-sm text-muted">{accessSummary(agent)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button onClick={() => newKey(agent.id)}>New key</Button>
+                      <Button onClick={() => setAddingKey(agent.id)} disabled={addingKey === agent.id}>
+                        New key
+                      </Button>
                       <Button onClick={() => setAddingSshKey(agent.id)} disabled={addingSshKey === agent.id}>
                         Add SSH key
                       </Button>
                     </div>
                   </div>
+                  {addingKey === agent.id && (
+                    <NewKeyForm
+                      agent={agent}
+                      onCreate={(keyAccess) => newKey(agent.id, keyAccess)}
+                      onCancel={() => setAddingKey(null)}
+                    />
+                  )}
                   {addingSshKey === agent.id && (
                     <AddSshKey
                       agent={agent}

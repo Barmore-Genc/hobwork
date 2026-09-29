@@ -22,6 +22,7 @@ export function getUser(db: DatabaseSync, id: number): User | undefined {
 }
 
 export function isAllowed(db: DatabaseSync, allowlist: Allowlist, user: User): boolean {
+  if (allowlist.everyone) return true
   if (user.email && allowlist.emails.includes(user.email.toLowerCase())) return true
   if (allowlist.subjects.length === 0) return false
   return db
@@ -32,6 +33,7 @@ export function isAllowed(db: DatabaseSync, allowlist: Allowlist, user: User): b
 
 function identityAllowed(allowlist: Allowlist, identity: OidcIdentity): boolean {
   return (
+    allowlist.everyone === true ||
     allowlist.subjects.includes(identity.subject) ||
     (identity.email !== null && allowlist.emails.includes(identity.email.toLowerCase()))
   )
@@ -99,7 +101,7 @@ function linkIdentityByEmail(db: DatabaseSync, identity: OidcIdentity): { user_i
 // For people without an identity provider: the sign-in-link command vouches
 // for the email address, which must be on the allowlist.
 export function findOrCreateEmailUser(db: DatabaseSync, allowlist: Allowlist, email: string, name?: string): User | undefined {
-  if (!allowlist.emails.includes(email.toLowerCase())) return undefined
+  if (!allowlist.everyone && !allowlist.emails.includes(email.toLowerCase())) return undefined
   const existing = findUserByEmail(db, email)
   if (existing) return existing
   const row = db

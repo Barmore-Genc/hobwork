@@ -17,7 +17,8 @@ export type OidcConfig = {
 }
 
 // Who may sign in: verified email addresses and OIDC subjects.
-export type Allowlist = { emails: string[]; subjects: string[] }
+// `everyone` leaves the decision to the identity provider, e.g. a Pocket ID client limited to a group.
+export type Allowlist = { emails: string[]; subjects: string[]; everyone?: boolean }
 
 export type Config = {
   dataDir: string
@@ -129,6 +130,10 @@ function loadAllowlist(env: NodeJS.ProcessEnv): Allowlist {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
+  if (entries.includes('*')) {
+    if (entries.length > 1) throw new Error('HOBWORK_ALLOWED_USERS is either * or a list of emails and sub:<subject> entries')
+    return { emails: [], subjects: [], everyone: true }
+  }
   return {
     emails: entries.filter((e) => !e.startsWith('sub:')).map((e) => e.toLowerCase()),
     subjects: entries.filter((e) => e.startsWith('sub:')).map((e) => e.slice('sub:'.length)),

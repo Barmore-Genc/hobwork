@@ -98,7 +98,7 @@ homeAssistant.start()
 await runtime.start()
 const housekeeping = startHousekeeping(host, runtime)
 
-if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
+if (!config.allowlist.everyone && !config.allowlist.emails.length && !config.allowlist.subjects.length) {
   console.warn('HOBWORK_ALLOWED_USERS is empty, so nobody can sign in to the web UI.')
 } else if (!config.oidc) {
   console.warn(

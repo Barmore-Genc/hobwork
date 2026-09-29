@@ -63,3 +63,12 @@ A macOS version of the Apple app, with pairing, the web UI in a web view, the de
 ## Shared UI components
 
 There is no component library in core; project UIs use the theme's Tailwind utilities. If agents keep rewriting the same components across projects, ship them in the platform set.
+
+## No tracking data from the Apple apps
+
+The apps send only what a person explicitly chose to share. No location, no device identifiers (`identifierForVendor`, the advertising ID), no Wi-Fi or network names, and nothing else that could look like tracking. A check of the iOS app found none of these, but two things to fix:
+
+- Health samples carry `source` (`sourceRevision.source.name`), which is the name of the device or app that recorded them, such as "Kaan's Apple Watch". Drop it from the app, the SDK type (`HealthSample` in `packages/sdk/src/devices.ts`) and the tests.
+- `NSHealthUpdateUsageDescription` is set although the app never writes to Health (`requestAuthorization(toShare: [])`). Remove it.
+
+Write the rule down in `docs/architecture.md` and `apple/README.md` so new capabilities follow it.

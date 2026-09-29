@@ -48,7 +48,7 @@ Sections are in the order to work on them.
 
 ### Home Assistant, AI and secrets
 
-- **HA service calls**: a per-hob setting for which HA domains and services handlers may call, changeable in the UI and over MCP. Supervisor and core admin services (`hassio.*`, `homeassistant.*`, `recorder.purge`) stay blocked on the host.
+- **HA service calls**: a per-hob list of the HA domains and services handlers may call, changeable in the UI and over MCP. Empty by default, so a hob calls no services until its list names them. Hobs deployed before this get a list of the domains they already call. Supervisor and core admin services (`hassio.*`, `homeassistant.*`, `recorder.purge`) stay blocked on the host.
 - **AI endpoints**: refuse gateway paths it does not recognize, and estimate the cost from tokens when OpenRouter returns none.
 - **AI over https only**: the interceptor refuses plain http.
 - **Secret substitution**: only into named headers (`Authorization` and those a secret lists) over https.

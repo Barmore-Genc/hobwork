@@ -69,7 +69,8 @@ function HomeAssistantSwitch({
           <p className="text-muted">
             {branch.homeAssistant ? (
               <>
-                Allowed by {branch.homeAssistant.by},{' '}
+                Allowed by {branch.homeAssistant.byAgent && 'agent '}
+                {branch.homeAssistant.by},{' '}
                 <time dateTime={branch.homeAssistant.grantedAt} title={exactTime(branch.homeAssistant.grantedAt)}>
                   {timeAgo(branch.homeAssistant.grantedAt)}
                 </time>

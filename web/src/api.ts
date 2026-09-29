@@ -129,7 +129,7 @@ export type Branch = {
   head: { sha: string; subject: string; updatedAt: string }
   previewUrl: string | null
   running: boolean
-  homeAssistant: { by: string; grantedAt: string } | null
+  homeAssistant: { by: string; byAgent: boolean; grantedAt: string } | null
   recentRuns: Invocation[]
 }
 

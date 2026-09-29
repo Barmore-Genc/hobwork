@@ -190,7 +190,7 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers an
     const warning = queryLogs(host, { project: 'preview', invocationId: denied.id, limit: 10 }).find((l) => l.level === 'warn')
     expect(warning?.message).toContain('Home Assistant: denied input_boolean.toggle')
 
-    grantBranchHa(host, 'preview', 'try-lights', signedIn(host).user.id)
+    grantBranchHa(host, 'preview', 'try-lights', { userId: signedIn(host).user.id })
     expect((await toggle()).body).toEqual({ before, toggled: true })
     const after = (await ha.getState(SWITCH))?.state
     expect(after).toBe(before === 'on' ? 'off' : 'on')

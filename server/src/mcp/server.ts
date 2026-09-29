@@ -23,6 +23,7 @@ import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProje
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { runBash } from './bash.ts'
+import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
 import { registerDeviceTools } from './devices.ts'
 import { registerHomeAssistantTools } from './homeassistant.ts'
@@ -466,7 +467,10 @@ export function createMcpServer({
   )
 
   registerDeliveryTools(server, { host, delivery, agent })
-  if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
+  if (homeAssistant) {
+    registerHomeAssistantTools(server, homeAssistant)
+    registerBranchHaTools(server, { host, agent })
+  }
   registerRuntimeTools(server, { host, runtime })
   registerSecretTools(server, { host, secrets, agent, publicUrl })
   registerSshKeyTools(server, { host, agent, ssh })

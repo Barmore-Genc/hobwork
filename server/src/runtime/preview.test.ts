@@ -253,7 +253,7 @@ test('branch handlers call Home Assistant services only while a person allows it
   expect((await fetch(`${app.base}${path}`, { method: 'PUT', headers: { cookie } })).status).toBe(403)
   const granted = await fetch(`${app.base}${path}`, { method: 'PUT', headers: writeHeaders(cookie) })
   expect(granted.status).toBe(200)
-  expect(await granted.json()).toEqual({ by: 'Kaan', grantedAt: expect.any(String) })
+  expect(await granted.json()).toEqual({ by: 'Kaan', byAgent: false, grantedAt: expect.any(String) })
   expect((await lights()).body).toEqual({ state: 'off', called: true })
   expect(fake.received.filter((m) => m.type === 'call_service')).toHaveLength(1)
 
@@ -263,7 +263,7 @@ test('branch handlers call Home Assistant services only while a person allows it
       name: 'add-spools',
       previewUrl: PREVIEW,
       running: true,
-      homeAssistant: { by: 'Kaan', grantedAt: expect.any(String) },
+      homeAssistant: { by: 'Kaan', byAgent: false, grantedAt: expect.any(String) },
       recentRuns: [expect.objectContaining({ name: 'POST /lights', branch: 'add-spools' }), expect.anything()],
     }),
   ])

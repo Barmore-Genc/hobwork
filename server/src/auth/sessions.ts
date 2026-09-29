@@ -21,11 +21,18 @@ export function createSession(db: DatabaseSync, userId: number, now = Date.now()
   return token
 }
 
-export function findSession(db: DatabaseSync, token: string, now = Date.now()): User | undefined {
+export type SessionRecord = { id: number; user: User; expiresAt: string }
+
+export function findSessionRecord(db: DatabaseSync, token: string, now = Date.now()): SessionRecord | undefined {
   const row = db
-    .prepare('SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > ?')
+    .prepare('SELECT id, user_id, expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?')
     .get(hashToken(token), new Date(now).toISOString())
-  return row ? getUser(db, Number(row.user_id)) : undefined
+  const user = row && getUser(db, Number(row.user_id))
+  return user && { id: Number(row.id), user, expiresAt: String(row.expires_at) }
+}
+
+export function findSession(db: DatabaseSync, token: string, now = Date.now()): User | undefined {
+  return findSessionRecord(db, token, now)?.user
 }
 
 export function deleteSession(db: DatabaseSync, token: string): void {

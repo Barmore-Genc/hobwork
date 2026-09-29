@@ -15,8 +15,15 @@ const STATIC_API_KEY = 'hobwork-dev-static-api-key'
 
 const CLIENT_ID = 'hobwork-dev'
 const CLIENT_SECRET = 'hobwork-dev-client-secret'
-// Vite dev server first (pnpm dev), then a host serving the built UI.
-const CALLBACK_URLS = ['http://localhost:5173/auth/callback', 'http://localhost:7420/auth/callback']
+// Vite dev server first (pnpm dev), then a host serving the built UI. Hobwork
+// runs on hobwork.localhost so project apps on *.apps.hobwork.localhost are
+// the same site and can sign in inside its iframe.
+const CALLBACK_URLS = [
+  'http://hobwork.localhost:5173/auth/callback',
+  'http://hobwork.localhost:7420/auth/callback',
+  'http://localhost:5173/auth/callback',
+  'http://localhost:7420/auth/callback',
+]
 const USER = {
   username: 'household',
   email: 'household@hobwork.test',
@@ -102,7 +109,8 @@ async function up() {
       `HOBWORK_OIDC_CLIENT_ID=${CLIENT_ID}`,
       `HOBWORK_OIDC_CLIENT_SECRET=${CLIENT_SECRET}`,
       `HOBWORK_ALLOWED_USERS=${USER.email}`,
-      'HOBWORK_PUBLIC_URL=http://localhost:5173',
+      'HOBWORK_PUBLIC_URL=http://hobwork.localhost:5173',
+      'HOBWORK_APPS_URL=http://apps.hobwork.localhost:7420',
       '',
     ].join('\n'),
   )

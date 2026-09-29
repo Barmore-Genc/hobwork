@@ -283,8 +283,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
   // Applies the branch's migrations that its DB has not seen. When a migration
   // it already applied was edited (normal while developing), the DB starts over
   // from a fresh copy of production.
-  async function syncBranch(project: string, branch: string, filesDir: string): Promise<void> {
-    const migrations = readMigrationsFromDir(filesDir)
+  async function syncBranch(project: string, branch: string, migrations: Migration[]): Promise<void> {
     const path = branchDbPath(project, branch)
     const apply = () => {
       const db = openProjectDb(path)
@@ -316,11 +315,18 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       return onBranch(project, branch, () => copyProduction(project, branch))
     },
 
-    // Runs a query on the branch DB after applying the branch's pending migrations.
-    executeOnBranch(project: string, branch: string, filesDir: string, request: DbRequest): Promise<DbResponse> {
+    // Runs a query on the branch DB after applying the branch's pending
+    // migrations: those in the workspace checkout at `source`, or those of a
+    // commit for a branch preview.
+    executeOnBranch(
+      project: string,
+      branch: string,
+      source: string | (() => Promise<Migration[]>),
+      request: DbRequest,
+    ): Promise<DbResponse> {
       return onBranch(project, branch, async () => {
         try {
-          await syncBranch(project, branch, filesDir)
+          await syncBranch(project, branch, typeof source === 'string' ? readMigrationsFromDir(source) : await source())
         } catch (err) {
           return { ok: false, error: { message: `The branch DB could not be migrated: ${(err as Error).message}`, code: 'migration' } }
         }

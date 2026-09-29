@@ -19,7 +19,9 @@ function RunDetail({ project, id }: { project: string; id: number }) {
     ['Took', run.durationMs === null ? 'Still running' : duration(run.durationMs)],
     ['Started by', `${KIND_LABELS[run.kind]}${run.manual ? ', by an agent' : ''}`],
     ...(run.httpStatus === null ? [] : [['Answered', String(run.httpStatus)] as [string, string]]),
-    ['Version', run.version === null ? 'Unknown' : String(run.version)],
+    run.branch !== null
+      ? ['Version', `Preview of ${run.branch}`]
+      : ['Version', run.version === null ? 'Unknown' : String(run.version)],
   ]
 
   return (

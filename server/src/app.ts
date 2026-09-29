@@ -4,13 +4,15 @@ import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
+import { createAppHttp } from './apps/http.ts'
+import { createAppOrigins, parseLabel } from './apps/origins.ts'
 import { createAuth } from './auth/auth.ts'
 import { createOidcLogin } from './auth/oidc.ts'
 import { createPasskeys } from './auth/passkeys.ts'
 import { createAuthRoutes } from './auth/routes.ts'
 import type { Backups } from './backup/backups.ts'
 import { createBackupRoutes } from './backup/routes.ts'
-import type { Allowlist, OidcConfig } from './config.ts'
+import { defaultAppsUrl, type Allowlist, type OidcConfig } from './config.ts'
 import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
@@ -24,11 +26,14 @@ import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
+import { getProject } from './projects.ts'
 import { createStaticRoutes } from './static.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
 export type WebOptions = {
   publicUrl: string
+  // Defaults to apps.<public host>.
+  appsUrl?: string
   allowlist: Allowlist
   oidc?: OidcConfig
   webDist?: string
@@ -86,11 +91,13 @@ export function createApp(
     passkeys: createPasskeys({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist, auth, now: web.now }),
     oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
   })
+  const origins = createAppOrigins(web.appsUrl ?? defaultAppsUrl(web.publicUrl))
   const handleApi = createApiRoutes({
     host,
     auth,
     delivery,
     publicUrl: web.publicUrl,
+    appOrigin: origins.origin,
     runtime: options.runtime,
     data: options.data,
     secrets: options.secrets,
@@ -106,17 +113,31 @@ export function createApp(
       runtime: options.runtime,
     }),
   ])
+  const apps = createAppHttp({
+    host,
+    auth,
+    allowlist: web.allowlist,
+    origins,
+    publicUrl: web.publicUrl,
+    runtime: options.runtime,
+    serveTheme: createStaticRoutes({}),
+  })
   const handleRuntime =
     options.runtime &&
-    createRuntimeHttp(
-      host,
-      options.runtime,
-      (req) => authenticate(req) !== undefined || auth.sessionUser(req) !== undefined,
-      (req) => auth.sessionUser(req) !== undefined,
-    )
+    createRuntimeHttp(host, options.runtime, {
+      authorizeRoute: (req) => authenticate(req) !== undefined,
+      appOrigin: (project) => origins.origin({ project }),
+      resolvePreview: async (label) => {
+        const { project, branchLabel } = parseLabel(label)
+        if (branchLabel === undefined || !getProject(host, project)) return undefined
+        const branch = await origins.resolveBranch(host, project, branchLabel)
+        return branch === undefined ? undefined : { project, branch }
+      },
+    })
   const handleStatic = createStaticRoutes({ webDist: web.webDist })
 
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    if (apps.isAppRequest(req)) return apps.handle(req, res)
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
 
     if (pathname.startsWith(GIT_PREFIX)) {
@@ -131,6 +152,7 @@ export function createApp(
     }
     try {
       if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
+      if (await apps.handleHandoff(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
       if (await handleBackups(req, res, pathname)) return
       if (await handleUserApi(req, res, pathname, new URLSearchParams(search))) return

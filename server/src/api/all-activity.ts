@@ -20,6 +20,7 @@ const MAX_ATTENTION = 99
 export type ProblemEvent = {
   id: number
   project: string
+  branch: string | null
   invocationId: number | null
   level: LogLevel
   event: LifecycleEvent
@@ -50,7 +51,7 @@ function problemEvents(host: Host, filter: { project?: string; since?: string; b
   }
   return host.db
     .prepare(
-      `SELECT l.id, p.name AS project, l.invocation_id, l.level, l.event, l.message, l.time
+      `SELECT l.id, p.name AS project, l.branch, l.invocation_id, l.level, l.event, l.message, l.time
        FROM logs l JOIN projects p ON p.id = l.project_id
        WHERE ${where.join(' AND ')} ORDER BY l.time DESC, l.id DESC LIMIT ?`,
     )
@@ -58,6 +59,7 @@ function problemEvents(host: Host, filter: { project?: string; since?: string; b
     .map((row) => ({
       id: Number(row.id),
       project: String(row.project),
+      branch: row.branch === null ? null : String(row.branch),
       invocationId: row.invocation_id === null ? null : Number(row.invocation_id),
       level: String(row.level) as LogLevel,
       event: String(row.event) as LifecycleEvent,

@@ -2,11 +2,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
 import { getProject, ProjectError } from '../projects.ts'
-import { BuildError } from './builds.ts'
-import { serveProjectUi } from './project-ui.ts'
 import { matchRoute } from './routes.ts'
 import type { Runtime } from './runtime.ts'
-import { HOOKS_PREFIX, verifyWebhookToken } from './webhooks.ts'
+import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from './webhooks.ts'
 
 export const PROJECT_PREFIX = '/p/'
 
@@ -16,15 +14,11 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024
 const PRIVATE_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization'])
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-length', 'upgrade'])
 
-// Decides who may call a project's routes: agents with a bearer token and
-// signed-in users (project UIs), whose state-changing requests must pass the
-// CSRF check (header x-hobwork-csrf: 1).
+// Decides who may call a project's routes on the Hobwork origin: agents with a
+// bearer token. People call them from the project UI on its app origin.
 export type RouteAuthorizer = (req: IncomingMessage, project: string) => boolean
 
-// Decides who may load a project's UI: signed-in users only.
-export type UiAuthorizer = (req: IncomingMessage) => boolean
-
-class HttpError extends Error {
+export class HttpError extends Error {
   status: number
   constructor(status: number, message: string) {
     super(message)
@@ -32,8 +26,8 @@ class HttpError extends Error {
   }
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
-  res.writeHead(status, { 'content-type': 'application/json', ...headers })
+export function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
   res.end(JSON.stringify(body))
 }
 
@@ -60,129 +54,134 @@ async function serialize(req: IncomingMessage, url: string): Promise<SerializedR
   return { method: req.method ?? 'GET', url, headers, ...(body.length ? { body: body.toString('base64') } : {}) }
 }
 
+async function invokeAndRespond(
+  res: ServerResponse,
+  runtime: Runtime,
+  project: string,
+  input: Parameters<Runtime['invoke']>[1],
+  extraHeaders: Record<string, string> = {},
+): Promise<void> {
+  const outcome = await runtime.invoke(project, input)
+  if (!outcome.ok) {
+    const unavailable = outcome.error.name === 'RuntimeUnavailable'
+    return sendJson(
+      res,
+      unavailable ? 503 : 500,
+      { error: unavailable ? outcome.error.message : 'The handler failed', invocation: outcome.invocationId },
+      { ...extraHeaders, 'x-hobwork-invocation': String(outcome.invocationId) },
+    )
+  }
+  const { status, headers, body } = outcome.response
+  const out: Record<string, string | string[]> = { ...extraHeaders }
+  for (const [name, value] of headers) {
+    if (HOP_BY_HOP.has(name)) continue
+    const existing = out[name]
+    out[name] = existing === undefined ? value : [...(Array.isArray(existing) ? existing : [existing]), value]
+  }
+  out['x-hobwork-invocation'] = String(outcome.invocationId)
+  res.writeHead(status, out)
+  res.end(Buffer.from(body, 'base64'))
+}
+
+// Answers a request for one of the project's routes. `path` is the part after
+// /api, without the query string; `url` is what the handler sees.
+export async function serveRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: Runtime,
+  options: { project: string; branch?: string; path: string; url: string; headers?: Record<string, string> },
+): Promise<void> {
+  const { project, branch, path, url, headers } = options
+  const { routes } = await runtime.route(project, branch)
+  const match = matchRoute(routes, req.method ?? 'GET', path)
+  if (!match) return sendJson(res, 404, { error: `No route for ${req.method} ${path}` }, headers)
+  if ('methodNotAllowed' in match) {
+    return sendJson(res, 405, { error: 'Method not allowed' }, { ...headers, allow: match.methodNotAllowed.join(', ') })
+  }
+  const request = await serialize(req, url)
+  await invokeAndRespond(
+    res,
+    runtime,
+    project,
+    { kind: 'route', name: match.route.key, manual: false, branch, request, params: match.params },
+    headers,
+  )
+}
+
+export function sendRuntimeError(res: ServerResponse, err: unknown) {
+  if (res.headersSent) return void res.destroy()
+  if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message })
+  if (err instanceof ProjectError) return sendJson(res, 404, { error: err.message })
+  console.error('Runtime HTTP request failed', err)
+  sendJson(res, 500, { error: 'Internal server error' })
+}
+
 function segmentsOf(pathname: string, prefix: string): string[] {
   return pathname.slice(prefix.length).split('/')
 }
 
-function wantsHtml(req: IncomingMessage): boolean {
-  return (req.headers.accept ?? '').includes('text/html')
-}
-
-// Serves project UIs (/p/<project>/...), their routes (/p/<project>/api/...)
-// and webhooks (/hooks/<project>/<name>/<token>). Returns false for other paths.
+// Serves project routes for agents (/p/<project>/api/...) and webhooks
+// (/hooks/<project>/<name>/<token>), and sends old project UI links
+// (/p/<project>/...) to the project's app origin. Returns false for other paths.
 export function createRuntimeHttp(
   host: Host,
   runtime: Runtime,
-  authorizeRoute: RouteAuthorizer,
-  authorizeUi: UiAuthorizer = () => false,
+  options: {
+    authorizeRoute: RouteAuthorizer
+    appOrigin: (project: string) => string | undefined
+    // The branch whose preview label (<branch label>--<project>) this is.
+    resolvePreview: (label: string) => Promise<{ project: string; branch: string } | undefined>
+  },
 ) {
-  async function handleUi(req: IncomingMessage, res: ServerResponse, project: string, rest: string, search: string) {
-    const base = `${PROJECT_PREFIX}${project}/`
-    if (!authorizeUi(req)) {
-      if (wantsHtml(req) && (req.method === 'GET' || req.method === 'HEAD')) {
-        const returnTo = `${base}${rest}${search}`
-        res.writeHead(302, { location: `/login?returnTo=${encodeURIComponent(returnTo)}`, 'cache-control': 'no-store' })
-        return void res.end()
-      }
-      return sendJson(res, 401, { error: 'Sign in to continue' })
-    }
-    let build: string
-    try {
-      build = await runtime.build(project)
-    } catch (err) {
-      if (!(err instanceof BuildError)) throw err
-      console.error(`Building the UI of ${project} failed`, err)
-      res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
-      return void res.end(`${project} could not be prepared. Try again in a moment.\n`)
-    }
-    serveProjectUi(req, res, { project, base, rest, build })
-  }
-
-  async function invokeAndRespond(
-    res: ServerResponse,
-    project: string,
-    input: Parameters<Runtime['invoke']>[1],
-  ): Promise<void> {
-    const outcome = await runtime.invoke(project, input)
-    if (!outcome.ok) {
-      const unavailable = outcome.error.name === 'RuntimeUnavailable'
-      return sendJson(
-        res,
-        unavailable ? 503 : 500,
-        { error: unavailable ? outcome.error.message : 'The handler failed', invocation: outcome.invocationId },
-        { 'x-hobwork-invocation': String(outcome.invocationId) },
-      )
-    }
-    const { status, headers, body } = outcome.response
-    const out: Record<string, string | string[]> = {}
-    for (const [name, value] of headers) {
-      if (HOP_BY_HOP.has(name)) continue
-      const existing = out[name]
-      out[name] = existing === undefined ? value : [...(Array.isArray(existing) ? existing : [existing]), value]
-    }
-    out['x-hobwork-invocation'] = String(outcome.invocationId)
-    res.writeHead(status, out)
-    res.end(Buffer.from(body, 'base64'))
-  }
-
-  async function handleRoute(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
+  async function handleProject(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
     const [project = '', api, ...rest] = segmentsOf(pathname, PROJECT_PREFIX)
     if (!getProject(host, project)) return sendJson(res, 404, { error: 'not found' })
-    if (api === undefined) {
-      res.writeHead(308, { location: `${PROJECT_PREFIX}${project}/${search}` })
+    if (api !== 'api') {
+      const origin = options.appOrigin(project)
+      if (!origin || (req.method !== 'GET' && req.method !== 'HEAD')) return sendJson(res, 404, { error: 'not found' })
+      res.writeHead(302, { location: `${origin}/${[api ?? '', ...rest].join('/')}${search}`, 'cache-control': 'no-store' })
       return void res.end()
     }
-    if (api !== 'api') return handleUi(req, res, project, [api, ...rest].join('/'), search)
-    if (!authorizeRoute(req, project)) {
-      return sendJson(res, 401, { error: 'Sign in, or send an agent token as "Authorization: Bearer <token>"' }, {
+    if (!options.authorizeRoute(req, project)) {
+      return sendJson(res, 401, { error: 'Send an agent token as "Authorization: Bearer <token>"' }, {
         'www-authenticate': 'Bearer realm="Hobwork"',
       })
     }
-    const { routes } = await runtime.route(project)
-    const match = matchRoute(routes, req.method ?? 'GET', `/${rest.join('/')}`)
-    if (!match) return sendJson(res, 404, { error: `No route for ${req.method} /${rest.join('/')}` })
-    if ('methodNotAllowed' in match) {
-      return sendJson(res, 405, { error: 'Method not allowed' }, { allow: match.methodNotAllowed.join(', ') })
-    }
-    const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${pathname}${search}`)
-    await invokeAndRespond(res, project, {
-      kind: 'route',
-      name: match.route.key,
-      manual: false,
-      request,
-      params: match.params,
-    })
+    const url = `http://${req.headers.host ?? 'localhost'}${pathname}${search}`
+    await serveRoute(req, res, runtime, { project, path: `/${rest.join('/')}`, url })
   }
 
+  // /hooks/<project>/<name>/<token> calls the deployed version,
+  // /hooks/<branch label>--<project>/<name>/<token> a branch preview.
   async function handleWebhook(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
-    const [project = '', name = '', token = '', ...rest] = segmentsOf(pathname, HOOKS_PREFIX)
-    // Unknown project, webhook and token all look the same to the caller.
+    const [target = '', name = '', token = '', ...rest] = segmentsOf(pathname, HOOKS_PREFIX)
+    const preview = target.includes('--') ? await options.resolvePreview(target) : undefined
+    const project = preview?.project ?? target
+    const branch = preview?.branch
+    // Unknown project, branch, webhook and token all look the same to the caller.
     if (
       rest.length ||
+      (target.includes('--') && !preview) ||
       !getProject(host, project) ||
-      !verifyWebhookToken(host, project, name, token) ||
-      !(await runtime.webhookExists(project, name))
+      !(branch === undefined
+        ? verifyWebhookToken(host, project, name, token)
+        : verifyBranchWebhookToken(host, project, branch, name, token)) ||
+      !(await runtime.webhookExists(project, name, branch))
     ) {
       return sendJson(res, 404, { error: 'not found' })
     }
-    const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${HOOKS_PREFIX}${project}/${name}${search}`)
-    await invokeAndRespond(res, project, { kind: 'webhook', name, manual: false, request })
+    const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${HOOKS_PREFIX}${target}/${name}${search}`)
+    await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request })
   }
 
   return (req: IncomingMessage, res: ServerResponse, pathname: string, search: string): boolean => {
     const handler = pathname.startsWith(PROJECT_PREFIX)
-      ? handleRoute
+      ? handleProject
       : pathname.startsWith(HOOKS_PREFIX)
         ? handleWebhook
         : undefined
     if (!handler) return false
-    handler(req, res, pathname, search).catch((err: unknown) => {
-      if (res.headersSent) return void res.destroy()
-      if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message })
-      if (err instanceof ProjectError) return sendJson(res, 404, { error: err.message })
-      console.error('Runtime HTTP request failed', err)
-      sendJson(res, 500, { error: 'Internal server error' })
-    })
+    handler(req, res, pathname, search).catch((err: unknown) => sendRuntimeError(res, err))
     return true
   }
 }

@@ -27,7 +27,7 @@ test.each(['filament', 'sleep-alarms', 'ha2', '3d-printer'])('accepts name %s', 
   expect(() => validateProjectName(name)).not.toThrow()
 })
 
-test.each(['', 'Filament', 'sleep_alarms', '-a', 'a-', 'a--b', 'a.b', 'a/b', 'x'.repeat(65)])(
+test.each(['', 'Filament', 'sleep_alarms', '-a', 'a-', 'a--b', 'a.b', 'a/b', 'x'.repeat(41)])(
   'rejects name %j',
   (name) => {
     expect(() => validateProjectName(name)).toThrow('Invalid project name')

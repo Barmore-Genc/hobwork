@@ -41,6 +41,8 @@ test('serves the built web UI with a fallback for client-side routes', async () 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8')
     expect(res.headers.get('cache-control')).toBe('no-cache')
+    // Project apps are same-site, so they must not be able to frame Hobwork.
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
     expect(await res.text()).toContain('<title>Hobwork</title>')
   }
   const asset = await fetch(`${app.base}/assets/index-abc123.js`)

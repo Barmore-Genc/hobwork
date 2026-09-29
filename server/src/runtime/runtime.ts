@@ -8,15 +8,19 @@ import type {
   SerializedResponse,
 } from '../../../packages/sdk/src/runner/protocol.ts'
 import { RUNNER_PORT } from '../../../packages/sdk/src/runner/protocol.ts'
+import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
 import { dbResponse } from '../data/internal.ts'
+import { readMigrationsFromGit } from '../data/migrations.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Deployment } from '../delivery.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
-import { haResponse } from '../homeassistant/internal.ts'
+import { getBranchHaApproval } from '../homeassistant/approvals.ts'
+import { haResponse, type HaAccess } from '../homeassistant/internal.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
-import { listProjects, ProjectError } from '../projects.ts'
+import { DEFAULT_BRANCH, listProjects, ProjectError } from '../projects.ts'
+import { branchHead } from '../repo.ts'
 import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
 import { listVersions } from '../versions.ts'
@@ -53,6 +57,8 @@ const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 const OUTPUT_TAIL_LINES = 30
 const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha'])
+// Previews are for trying a branch out, so their VMs go away sooner.
+const PREVIEW_IDLE_TIMEOUT_MS = 15 * 60 * 1000
 
 export type RuntimeOptions = {
   // Without it, invocations fail with an explanation; logs, crons and deploy
@@ -82,6 +88,8 @@ export type InvokeInput = {
   kind: InvocationKind
   name: string
   manual: boolean
+  // Runs the branch's latest commit as a preview instead of the deployed version.
+  branch?: string
   request?: SerializedRequest
   params?: Record<string, string>
   payload?: unknown
@@ -93,14 +101,18 @@ export type InvokeOutcome = {
   durationMs: number
 } & ({ ok: true; response: SerializedResponse } | { ok: false; error: { name: string; message: string; stack?: string } })
 
+// What runs for a project: the deployed version on main, or a branch preview
+// (version null, the branch's latest commit).
 type Deployed = {
   version: number | null
   commit: string
+  branch?: string
   config: ProjectConfig
   routes: Route[]
-  reason: Deployment['reason'] | 'current'
+  reason: Deployment['reason'] | 'current' | 'preview'
   health?: DeployHealth
   reverting?: boolean
+  migrations?: Promise<Migration[]>
 }
 
 type Instance = {
@@ -117,6 +129,8 @@ type Instance = {
 }
 
 type ProjectState = {
+  project: string
+  branch?: string
   deployed?: Deployed
   loading?: Promise<Deployed>
   instance?: Instance
@@ -127,6 +141,16 @@ class RuntimeUnavailable extends Error {}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function describe(deployed: Deployed): string {
+  return deployed.branch === undefined
+    ? `version ${deployed.version}`
+    : `preview of ${deployed.branch} at ${deployed.commit.slice(0, 7)}`
+}
+
+function isPreview(branch: string | undefined): branch is string {
+  return branch !== undefined && branch !== DEFAULT_BRANCH
 }
 
 export function createRuntime(host: Host, options: RuntimeOptions = {}) {
@@ -144,15 +168,22 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   })
   let pruneTimer: NodeJS.Timeout | undefined
 
-  function state(project: string): ProjectState {
-    let s = projects.get(project)
-    if (!s) projects.set(project, (s = {}))
+  // Main's state is keyed by the project name, previews by project and branch.
+  function state(project: string, branch?: string): ProjectState {
+    const key = branch === undefined ? project : `${project}\0${branch}`
+    let s = projects.get(key)
+    if (!s) projects.set(key, (s = { project, branch }))
     return s
   }
 
-  function event(project: string, level: LogLevel, kind: LifecycleEvent, message: string) {
+  // The deployed version's state and those of the project's previews.
+  function statesOf(project: string): [string, ProjectState][] {
+    return [...projects].filter(([, s]) => s.project === project)
+  }
+
+  function event(project: string, level: LogLevel, kind: LifecycleEvent, message: string, branch?: string) {
     try {
-      appendLog(host, { project, source: 'runtime', level, event: kind, message })
+      appendLog(host, { project, branch, source: 'runtime', level, event: kind, message })
     } catch (err) {
       console.error(`Could not record a runtime event for ${project}: ${message}`, err)
     }
@@ -183,6 +214,32 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     return s.loading
   }
 
+  // A preview runs the branch's latest commit. A new commit replaces the
+  // preview's VM on the next invocation, like a deploy.
+  async function branchDeployment(project: string, branch: string): Promise<Deployed> {
+    if (removing.has(project)) throw new ProjectError(`${project} is being deleted`)
+    const commit = await branchHead(host, project, branch)
+    if (!commit) throw new ProjectError(`Branch "${branch}" does not exist in ${project}`)
+    const s = state(project, branch)
+    if (s.deployed?.commit === commit) return s.deployed
+    if (!s.loading) {
+      s.loading = (async () => {
+        const config = await readProjectConfig(host, project, commit)
+        const deployed: Deployed = { version: null, commit, branch, config, routes: parseRoutes(config.routes), reason: 'preview' }
+        s.deployed = deployed
+        return deployed
+      })().finally(() => {
+        s.loading = undefined
+      })
+    }
+    const deployed = await s.loading
+    return deployed.commit === commit ? deployed : branchDeployment(project, branch)
+  }
+
+  function deployedFor(project: string, branch: string | undefined): Promise<Deployed> {
+    return isPreview(branch) ? branchDeployment(project, branch) : deployment(project)
+  }
+
   async function applyEntryPoints(project: string, deployed: Deployed) {
     for (const problem of scheduler.set(project, deployed.config.crons)) {
       event(project, 'error', 'deploy', `Not scheduled: ${problem}`)
@@ -198,14 +255,14 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     }
   }
 
-  function outputLogger(project: string, tail: string[]) {
+  function outputLogger(project: string, branch: string | undefined, tail: string[]) {
     const partial = { stdout: '', stderr: '' }
     return (chunk: { stream: 'stdout' | 'stderr'; text: string }) => {
       const lines = (partial[chunk.stream] + chunk.text).split('\n')
       partial[chunk.stream] = lines.pop() ?? ''
       const entries: NewLogEntry[] = lines
         .filter((line) => line.trim())
-        .map((message) => ({ project, source: 'runtime', level: chunk.stream === 'stderr' ? 'error' : 'info', message }))
+        .map((message) => ({ project, branch, source: 'runtime', level: chunk.stream === 'stderr' ? 'error' : 'info', message }))
       for (const entry of entries) {
         tail.push(entry.message)
         if (tail.length > OUTPUT_TAIL_LINES) tail.shift()
@@ -254,7 +311,13 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     }
   }
 
-  async function handleInternal(project: string, instance: () => Instance | undefined, request: Request): Promise<Response> {
+  async function handleInternal(
+    project: string,
+    deployed: Deployed,
+    instance: () => Instance | undefined,
+    request: Request,
+  ): Promise<Response> {
+    const { branch } = deployed
     const url = new URL(request.url)
     const route = `${request.method} ${url.pathname}`
     if (!INTERNAL_ROUTES.has(route)) {
@@ -265,15 +328,20 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (route === 'POST /v1/db') {
       const data = options.data
       if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
-      return dbResponse(body, (request) => data.execute({ project }, request))
+      if (branch === undefined) return dbResponse(body, (request) => data.execute({ project }, request))
+      deployed.migrations ??= readMigrationsFromGit(repoPath(host, project), deployed.commit)
+      const migrations = deployed.migrations
+      return dbResponse(body, (request) => data.executeOnBranch(project, branch, () => migrations, request))
     }
     if (route === 'POST /v1/ha') {
+      const access: HaAccess =
+        branch === undefined ? 'full' : { branch, allowed: () => getBranchHaApproval(host, project, branch) !== undefined }
       return haResponse(body, {
         ha: options.homeAssistant,
-        access: 'full',
+        access,
         log: ({ invocation, level, message }) => {
           const lines = invocationLines(project, instance())
-          lines.add({ project, invocationId: invocation, source: 'runtime', level, message })
+          lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
           appendLogs(host, lines.entries)
         },
       })
@@ -288,6 +356,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     for (const line of batch.lines ?? []) {
       lines.add({
         project,
+        branch,
         invocationId: typeof line.invocation === 'number' ? line.invocation : undefined,
         source: 'handler',
         level: ['debug', 'info', 'warn', 'error'].includes(line.level) ? line.level : 'info',
@@ -342,15 +411,16 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       env: { NODE_ENV: 'production' },
       egress,
       secrets,
-      internal: (request) => handleInternal(project, () => inst, request),
+      internal: (request) => handleInternal(project, deployed, () => inst, request),
       onEgressBlocked: ({ hostname, ip, port }) =>
         event(
           project,
           'warn',
           'egress-blocked',
           `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or assign a secret that may be sent to it`,
+          deployed.branch,
         ),
-      label: `runtime ${project} v${deployed.version}`,
+      label: deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`,
     })
     const tail: string[] = []
     try {
@@ -361,7 +431,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
           HOBWORK_HANDLERS: JSON.stringify(allHandlers(deployed.config)),
           HOBWORK_SECRETS: JSON.stringify(Object.keys(secrets)),
         },
-        onOutput: outputLogger(project, tail),
+        onOutput: outputLogger(project, deployed.branch, tail),
       })
       const url = await sandbox.ingress(RUNNER_PORT)
       await waitReady(url, proc.result, tail)
@@ -380,7 +450,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         (result) => {
           if (started.stopping) return
           const reason = result.signal ? `signal ${result.signal}` : `exit code ${result.exitCode}`
-          event(project, 'error', 'crash', `Runtime of version ${deployed.version} crashed: runner ended with ${reason}`)
+          event(project, 'error', 'crash', `Runtime of ${describe(deployed)} crashed: runner ended with ${reason}`, deployed.branch)
           void retire(project, started, 'crashed')
         },
         () => {},
@@ -393,7 +463,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   }
 
   function ensureInstance(project: string, deployed: Deployed): Promise<Instance> {
-    const s = state(project)
+    const s = state(project, deployed.branch)
     const fingerprint = secretsFingerprint(project)
     const current = s.instance
     if (current && current.deployed === deployed && current.secretsFingerprint === fingerprint && !current.stopping) {
@@ -409,9 +479,15 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       }
       const old = s.instance
       s.instance = inst
-      event(project, 'info', 'start', `Runtime of version ${deployed.version} started in ${Math.round(performance.now() - started)}ms`)
+      event(
+        project,
+        'info',
+        'start',
+        `Runtime of ${describe(deployed)} started in ${Math.round(performance.now() - started)}ms`,
+        deployed.branch,
+      )
       if (old) {
-        const reason = old.deployed === deployed ? 'secrets changed' : `replaced by version ${deployed.version}`
+        const reason = old.deployed === deployed ? 'secrets changed' : `replaced by ${describe(deployed)}`
         void retire(project, old, reason)
       }
       armIdle(project, inst)
@@ -431,7 +507,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (inst.stopping) return
     inst.stopping = true
     clearTimeout(inst.idleTimer)
-    const s = state(project)
+    const s = state(project, inst.deployed.branch)
     if (s.instance === inst) s.instance = undefined
     if (inst.inflight.size) {
       await new Promise<void>((resolve) => {
@@ -443,13 +519,16 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       })
     }
     await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
-    event(project, 'info', 'stop', `Runtime of version ${inst.deployed.version} stopped: ${reason}`)
+    event(project, 'info', 'stop', `Runtime of ${describe(inst.deployed)} stopped: ${reason}`, inst.deployed.branch)
+    // Preview builds are never among the kept versions, so they go once no VM uses them.
+    if (inst.deployed.branch !== undefined && !removing.has(project)) await removeOldBuilds(project)
   }
 
   function armIdle(project: string, inst: Instance) {
     clearTimeout(inst.idleTimer)
     if (inst.stopping || inst.inflight.size) return
-    const timeout = inst.deployed.config.idleTimeoutMs
+    const { config, branch } = inst.deployed
+    const timeout = branch === undefined ? config.idleTimeoutMs : Math.min(config.idleTimeoutMs, PREVIEW_IDLE_TIMEOUT_MS)
     inst.idleTimer = setTimeout(() => {
       if (!inst.inflight.size) void retire(project, inst, `idle for ${Math.round(timeout / 1000)}s`)
     }, timeout)
@@ -504,6 +583,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     const invocationId = startInvocation(host, {
       project,
       version: deployed.version,
+      branch: deployed.branch,
       kind: input.kind,
       name: input.name,
       manual: input.manual,
@@ -550,6 +630,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (!result.ok) {
       appendLog(host, {
         project,
+        branch: deployed.branch,
         invocationId,
         source: 'runtime',
         level: 'error',
@@ -564,12 +645,12 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   }
 
   async function invoke(project: string, input: InvokeInput): Promise<InvokeOutcome> {
-    const deployed = await deployment(project)
+    const deployed = await deployedFor(project, input.branch)
     const entry = entriesOf(deployed.config, input.kind)[input.name]
     if (!entry) {
       const names = Object.keys(entriesOf(deployed.config, input.kind))
       throw new ProjectError(
-        `${project} version ${deployed.version} has no ${input.kind} "${input.name}". ${
+        `${project} ${describe(deployed)} has no ${input.kind} "${input.name}". ${
           names.length ? `Its ${input.kind}s: ${names.join(', ')}` : `It has no ${input.kind}s`
         }`,
       )
@@ -622,12 +703,13 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     await removeOldBuilds(project)
   }
 
-  // Commits whose builds a VM runs or is starting with.
+  // Commits whose builds a VM runs or is starting with, previews included.
   function inUseCommits(project: string): string[] {
-    const s = projects.get(project)
-    if (!s) return []
-    return [s.deployed?.commit, s.instance?.deployed.commit, s.starting?.deployed.commit].filter(
-      (commit): commit is string => commit !== undefined,
+    return statesOf(project).flatMap(([, s]) =>
+      // A preview without a VM starts from its branch again, building it if needed.
+      [s.branch === undefined ? s.deployed?.commit : undefined, s.instance?.deployed.commit, s.starting?.deployed.commit].filter(
+        (commit): commit is string => commit !== undefined,
+      ),
     )
   }
 
@@ -645,11 +727,13 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     removing.add(project)
     scheduler.remove(project)
     await options.triggers?.removeProject(project)
-    const s = projects.get(project)
-    projects.delete(project)
-    if (!s) return
-    const starting = s.starting?.promise.catch(() => undefined)
-    const instances = [s.instance, await starting].filter((inst): inst is Instance => inst !== undefined)
+    const states = statesOf(project)
+    for (const [key] of states) projects.delete(key)
+    const instances = (
+      await Promise.all(states.map(async ([, s]) => [s.instance, await s.starting?.promise.catch(() => undefined)]))
+    )
+      .flat()
+      .filter((inst): inst is Instance => inst !== undefined)
     await Promise.all(
       [...new Set(instances)].map(async (inst) => {
         if (inst.stopping) return
@@ -658,6 +742,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
       }),
     )
+    for (const [, s] of states) if (s.branch !== undefined) await options.data?.closeBranch(project, s.branch)
   }
 
   // Registers the crons and triggers of the project's current version.
@@ -672,12 +757,12 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     remove,
     // Called once the project is gone, so its name can be used again.
     forget(project: string): void {
-      projects.delete(project)
+      for (const [key] of statesOf(project)) projects.delete(key)
       removing.delete(project)
     },
     removeOldBuilds,
-    async route(project: string): Promise<{ routes: Route[]; version: number | null }> {
-      const deployed = await deployment(project)
+    async route(project: string, branch?: string): Promise<{ routes: Route[]; version: number | null }> {
+      const deployed = await deployedFor(project, branch)
       return { routes: deployed.routes, version: deployed.version }
     },
     // What the deployed version declares in hobwork.json.
@@ -685,9 +770,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       const deployed = await deployment(project)
       return { config: deployed.config, version: deployed.version }
     },
-    // The deployed version's build, built first when it has none yet.
-    async build(project: string): Promise<string> {
-      return builder.ensure(project, (await deployment(project)).commit)
+    // The deployed version's build, or the branch's for a preview, built
+    // first when it has none yet.
+    async build(project: string, branch?: string): Promise<string> {
+      return builder.ensure(project, (await deployedFor(project, branch)).commit)
     },
     // The deployed version's build if it is stored, without building it.
     async storedBuild(project: string): Promise<string | undefined> {
@@ -695,8 +781,8 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       const dir = buildDir(host, project, await treeOf(repoPath(host, project), commit))
       return existsSync(dir) ? dir : undefined
     },
-    async webhookExists(project: string, name: string): Promise<boolean> {
-      return name in (await deployment(project)).config.webhooks
+    async webhookExists(project: string, name: string, branch?: string): Promise<boolean> {
+      return name in (await deployedFor(project, branch)).config.webhooks
     },
     crons(project: string): ScheduledCron[] {
       return scheduler.list(project)
@@ -704,6 +790,11 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     status(project: string): { version: number | null; running: boolean } {
       const s = projects.get(project)
       return { version: s?.deployed?.version ?? null, running: Boolean(s?.instance && !s.instance.stopping) }
+    },
+    // Whether a branch preview's VM runs, and which commit it runs.
+    previewStatus(project: string, branch: string): { commit: string | null; running: boolean } {
+      const s = projects.get(`${project}\0${branch}`)
+      return { commit: s?.deployed?.commit ?? null, running: Boolean(s?.instance && !s.instance.stopping) }
     },
     get canRun(): boolean {
       return Boolean(options.createSandbox && options.image)
@@ -721,7 +812,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       clearInterval(pruneTimer)
       scheduler.stop()
       await Promise.all(
-        [...projects].flatMap(([project, s]) => (s.instance ? [retire(project, s.instance, 'host shutting down')] : [])),
+        [...projects.values()].flatMap((s) => (s.instance ? [retire(s.project, s.instance, 'host shutting down')] : [])),
       )
     },
   }

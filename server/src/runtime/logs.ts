@@ -26,6 +26,8 @@ export type InvocationRecord = {
   id: number
   project: string
   version: number | null
+  // Set for a branch preview; null for the deployed version on main.
+  branch: string | null
   kind: InvocationKind
   name: string
   manual: boolean
@@ -40,6 +42,7 @@ export type InvocationRecord = {
 export type LogEntry = {
   id: number
   project: string
+  branch: string | null
   invocationId: number | null
   source: LogSource
   level: LogLevel
@@ -50,6 +53,8 @@ export type LogEntry = {
 
 export type NewLogEntry = {
   project: string
+  // For lines from a branch preview.
+  branch?: string
   invocationId?: number
   source: LogSource
   level: LogLevel
@@ -74,11 +79,25 @@ function projectId(host: Host, project: string): number {
 
 export function startInvocation(
   host: Host,
-  invocation: { project: string; version: number | null; kind: InvocationKind; name: string; manual: boolean },
+  invocation: {
+    project: string
+    version: number | null
+    branch?: string
+    kind: InvocationKind
+    name: string
+    manual: boolean
+  },
 ): number {
   const row = host.db
-    .prepare('INSERT INTO invocations (project_id, version, kind, name, manual) VALUES (?, ?, ?, ?, ?) RETURNING id')
-    .get(projectId(host, invocation.project), invocation.version, invocation.kind, invocation.name, invocation.manual ? 1 : 0)
+    .prepare('INSERT INTO invocations (project_id, version, branch, kind, name, manual) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
+    .get(
+      projectId(host, invocation.project),
+      invocation.version,
+      invocation.branch ?? null,
+      invocation.kind,
+      invocation.name,
+      invocation.manual ? 1 : 0,
+    )
   if (!row) throw new Error('Invocation insert returned no row')
   return Number(row.id)
 }
@@ -111,14 +130,14 @@ export function failInterruptedInvocations(host: Host): void {
     .run()
 }
 
-const SELECT_INVOCATION = `SELECT i.id, p.name AS project, i.version, i.kind, i.name, i.manual, i.status, i.http_status,
+const SELECT_INVOCATION = `SELECT i.id, p.name AS project, i.version, i.branch, i.kind, i.name, i.manual, i.status, i.http_status,
     i.error, i.stack, i.started_at, i.duration_ms
   FROM invocations i JOIN projects p ON p.id = i.project_id`
 
 function conditions(sql?: string, value?: string) {
   const where: string[] = []
-  const params: (string | number)[] = []
-  const add = (condition: string, ...values: (string | number)[]) => {
+  const params: (string | number | null)[] = []
+  const add = (condition: string, ...values: (string | number | null)[]) => {
     where.push(condition)
     params.push(...values)
   }
@@ -139,6 +158,7 @@ function toInvocation(row: Record<string, unknown>): InvocationRecord {
     id: Number(row.id),
     project: String(row.project),
     version: nullableNumber(row.version),
+    branch: nullableString(row.branch),
     kind: String(row.kind) as InvocationKind,
     name: String(row.name),
     manual: row.manual === 1,
@@ -159,6 +179,8 @@ export function getInvocation(host: Host, id: number): InvocationRecord | undefi
 export type InvocationFilter = {
   // All projects when left out.
   project?: string
+  // A branch name, or null for main only. Undefined means all.
+  branch?: string | null
   kind?: InvocationKind
   name?: string
   status?: InvocationStatus
@@ -173,6 +195,7 @@ export type InvocationFilter = {
 // Newest first.
 export function listInvocations(host: Host, filter: InvocationFilter): InvocationRecord[] {
   const { where, params, add } = conditions(filter.project === undefined ? undefined : 'p.name = ?', filter.project)
+  if (filter.branch !== undefined) add('i.branch IS ?', filter.branch)
   if (filter.kind) add('i.kind = ?', filter.kind)
   if (filter.name) add('i.name = ?', filter.name)
   if (filter.status) add('i.status = ?', filter.status)
@@ -189,8 +212,8 @@ export function listInvocations(host: Host, filter: InvocationFilter): Invocatio
 export function appendLogs(host: Host, entries: NewLogEntry[]): void {
   if (!entries.length) return
   const insert = host.db.prepare(
-    `INSERT INTO logs (project_id, invocation_id, source, level, event, message, time)
-     VALUES (?, ?, ?, ?, ?, ?, coalesce(?, ${NOW}))`,
+    `INSERT INTO logs (project_id, branch, invocation_id, source, level, event, message, time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, ${NOW}))`,
   )
   const ids = new Map<string, number>()
   const projects = new Set<string>()
@@ -201,6 +224,7 @@ export function appendLogs(host: Host, entries: NewLogEntry[]): void {
       if (id === undefined) ids.set(entry.project, (id = projectId(host, entry.project)))
       insert.run(
         id,
+        entry.branch ?? null,
         entry.invocationId ?? null,
         entry.source,
         entry.level,
@@ -236,13 +260,14 @@ export type LogFilter = {
   limit: number
 }
 
-const SELECT_LOG = `SELECT l.id, p.name AS project, l.invocation_id, l.source, l.level, l.event, l.message, l.time
+const SELECT_LOG = `SELECT l.id, p.name AS project, l.branch, l.invocation_id, l.source, l.level, l.event, l.message, l.time
   FROM logs l JOIN projects p ON p.id = l.project_id`
 
 function toLog(row: Record<string, unknown>): LogEntry {
   return {
     id: Number(row.id),
     project: String(row.project),
+    branch: nullableString(row.branch),
     invocationId: nullableNumber(row.invocation_id),
     source: String(row.source) as LogSource,
     level: String(row.level) as LogLevel,
@@ -308,13 +333,13 @@ export function pruneLogs(host: Host): void {
   for (const row of host.db.prepare('SELECT id FROM projects').all()) trim.run(Number(row.id), MAX_LOG_ROWS_PER_PROJECT)
 }
 
-// The newest invocation of every entry point, keyed by `${kind} ${name}`.
+// The newest invocation on main of every entry point, keyed by `${kind} ${name}`.
 export function latestInvocations(host: Host, project: string): Map<string, InvocationRecord> {
   const rows = host.db
     .prepare(
       `${SELECT_INVOCATION} WHERE i.id IN (
          SELECT max(i2.id) FROM invocations i2 JOIN projects p2 ON p2.id = i2.project_id
-         WHERE p2.name = ? GROUP BY i2.kind, i2.name
+         WHERE p2.name = ? AND i2.branch IS NULL GROUP BY i2.kind, i2.name
        )`,
     )
     .all(project)

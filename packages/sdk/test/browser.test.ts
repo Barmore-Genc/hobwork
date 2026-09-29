@@ -11,16 +11,16 @@ function stubFetch(response: Response) {
   return fetch
 }
 
-test('routes resolve under api/ relative to the project root', () => {
-  expect(routeUrl('spools/42')).toBe('api/spools/42')
-  expect(routeUrl('/spools?full=1')).toBe('api/spools?full=1')
+test('routes resolve under /api/ on the app origin', () => {
+  expect(routeUrl('spools/42')).toBe('/api/spools/42')
+  expect(routeUrl('/spools?full=1')).toBe('/api/spools?full=1')
 })
 
 test('every call sends the session and the CSRF header', async () => {
   const fetch = stubFetch(new Response(null, { status: 204 }))
   await callRoute('spools', { method: 'DELETE', headers: { accept: 'text/plain' } })
   const [url, init] = fetch.mock.calls[0]!
-  expect(url).toBe('api/spools')
+  expect(url).toBe('/api/spools')
   expect(init.credentials).toBe('same-origin')
   const headers = new Headers(init.headers)
   expect(headers.get('x-hobwork-csrf')).toBe('1')
@@ -48,5 +48,5 @@ test('error statuses throw a RouteError with the message from the body', async (
   expect(err).toMatchObject({ status: 500, message: 'The handler failed', body: { invocation: 12 } })
 
   stubFetch(new Response('nope', { status: 404 }))
-  await expect(api.get('missing')).rejects.toThrow('GET api/missing answered 404')
+  await expect(api.get('missing')).rejects.toThrow('GET /api/missing answered 404')
 })

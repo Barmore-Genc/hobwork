@@ -42,13 +42,14 @@ export function LogLines({
             {clockTime(line.time)}
           </time>
           <div className="min-w-0">
-            {(line.event || (runLinks && line.invocationId !== null)) && (
+            {(line.event || line.branch || (runLinks && line.invocationId !== null)) && (
               <p className="mb-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.8rem]">
                 {line.event && (
                   <span className="rounded-sm bg-surface px-1.5 font-semibold text-fg ring-1 ring-border">
                     {EVENT_LABELS[line.event] ?? line.event}
                   </span>
                 )}
+                {line.branch && <span className="text-muted">Preview of {line.branch}</span>}
                 {runLinks && line.invocationId !== null && (
                   <Link
                     to={projectPath(project, `/activity/${line.invocationId}`)}

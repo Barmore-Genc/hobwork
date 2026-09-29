@@ -3,12 +3,14 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { grantBranchHa, revokeBranchHa } from '../homeassistant/approvals.ts'
 import { createHomeAssistant, type HomeAssistant } from '../homeassistant/client.ts'
+import { signedIn } from '../test-web.ts'
 import { createTriggerRegistry } from '../homeassistant/triggers.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, requireProject } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
-import { fakePackageJson, seedMain } from '../test-project.ts'
+import { fakePackageJson, seedBranch, seedMain } from '../test-project.ts'
 import { recordVersion } from '../versions.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
 import { listInvocations, queryLogs } from './logs.ts'
@@ -151,5 +153,53 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers an
     } finally {
       await unsubscribe()
     }
+  })
+
+  test('a branch preview reads states, and calls services only after a person allows it', async () => {
+    await release('preview', {
+      'hobwork.json': JSON.stringify({}),
+      'noop.js': 'export default async () => {}',
+    })
+    const branchFiles = {
+      'package.json': fakePackageJson({ build: 'mkdir -p dist/handlers/src && cp *.js dist/handlers/src/' }),
+      'hobwork.json': JSON.stringify({
+        routes: { 'POST /toggle': { handler: 'src/toggle.ts' } },
+        triggers: { switched: { homeassistant: { trigger: 'state', entity_id: SWITCH }, handler: 'src/toggle.ts' } },
+      }),
+      'toggle.js': `export default async (ctx) => {
+        const before = (await ctx.ha.getState('${SWITCH}')).state
+        try {
+          await ctx.ha.callService('input_boolean', 'toggle', undefined, { entity_id: '${SWITCH}' })
+          return { before, toggled: true }
+        } catch (err) {
+          return { before, toggled: false, code: err.code }
+        }
+      }`,
+    }
+    await seedBranch(host, 'preview', 'try-lights', branchFiles)
+    const toggle = async () => {
+      const outcome = await runtime.invoke('preview', { kind: 'route', name: 'POST /toggle', manual: true, branch: 'try-lights' })
+      if (!outcome.ok) throw new Error(outcome.error.message)
+      return { id: outcome.invocationId, body: JSON.parse(Buffer.from(outcome.response.body, 'base64').toString()) }
+    }
+
+    const before = (await ha.getState(SWITCH))?.state
+    const denied = await toggle()
+    expect(denied.body).toEqual({ before, toggled: false, code: 'not_approved' })
+    expect((await ha.getState(SWITCH))?.state).toBe(before)
+    const warning = queryLogs(host, { project: 'preview', invocationId: denied.id, limit: 10 }).find((l) => l.level === 'warn')
+    expect(warning?.message).toContain('Home Assistant: denied input_boolean.toggle')
+
+    grantBranchHa(host, 'preview', 'try-lights', signedIn(host).user.id)
+    expect((await toggle()).body).toEqual({ before, toggled: true })
+    const after = (await ha.getState(SWITCH))?.state
+    expect(after).toBe(before === 'on' ? 'off' : 'on')
+
+    // The branch's trigger is not subscribed: the toggle above started nothing.
+    await new Promise((r) => setTimeout(r, 1000))
+    expect(listInvocations(host, { project: 'preview', kind: 'trigger', limit: 5 })).toEqual([])
+
+    revokeBranchHa(host, 'preview', 'try-lights')
+    expect((await toggle()).body).toMatchObject({ toggled: false, code: 'not_approved' })
   })
 })

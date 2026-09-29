@@ -3,7 +3,7 @@ import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, requireProject } from '../projects.ts'
 import { createRuntime, type Runtime } from '../runtime/runtime.ts'
 import { fakeRuntimeSandboxes } from '../runtime/test-sandbox.ts'
-import { fakePackageJson, seedMain } from '../test-project.ts'
+import { fakePackageJson, seedBranch, seedMain } from '../test-project.ts'
 import { recordVersion } from '../versions.ts'
 import { startTestMcp, textOf, type TestMcp } from './test-mcp.ts'
 
@@ -111,4 +111,39 @@ test('tail_logs returns lines logged while it waits', async () => {
 test('rotate_webhook_token returns a working URL path', async () => {
   const text = await ok('rotate_webhook_token', { project: 'filament', webhook: 'scanned' })
   expect(text).toMatch(/\/hooks\/filament\/scanned\/[\w-]{43}/)
+})
+
+test('invoke runs a branch preview, and branch webhooks get their own URL', async () => {
+  await seedBranch(mcp.host, 'filament', 'add-spools', {
+    'package.json': fakePackageJson({ build: 'mkdir -p dist/handlers/src && cp handlers/*.js dist/handlers/src/' }),
+    'hobwork.json': JSON.stringify({
+      routes: { 'GET /spools/:id': { handler: 'src/spool.ts' } },
+      crons: { cleanup: { schedule: '0 3 * * *', handler: 'src/cleanup.ts' } },
+      webhooks: { scanned: { handler: 'src/scanned.ts' } },
+    }),
+    'handlers/spool.js': `export default async (ctx) => ({ branch: ctx.params.id, url: ctx.request.url })`,
+    'handlers/cleanup.js': `export default async () => { console.log('cleaned on the branch') }`,
+    'handlers/scanned.js': `export default async (ctx) => ({ url: ctx.request.url })`,
+  })
+  const route = await ok('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'add-spools' })
+  expect(route).toMatch(/^Invocation \d+ \(route "GET \/spools\/:id", branch add-spools\): ok/)
+  expect(route).toContain('"branch":"5"')
+  const cron = await ok('invoke', { project: 'filament', kind: 'cron', name: 'cleanup', branch: 'add-spools' })
+  expect(cron).toContain('cleaned on the branch')
+  const hook = await ok('invoke', { project: 'filament', kind: 'webhook', name: 'scanned', branch: 'add-spools' })
+  expect(hook).toContain('/hooks/add-spools--filament/scanned')
+
+  const list = await ok('list_invocations', { project: 'filament', branch: 'add-spools' })
+  expect(list).toContain('cron "cleanup" branch add-spools (manual) ok')
+  expect(list).not.toContain(' v2 ')
+  expect(await ok('list_invocations', { project: 'filament', branch: 'main' })).toBe('No invocations match')
+  const logs = await ok('get_logs', { project: 'filament', source: 'handler' })
+  expect(logs).toContain('branch add-spools')
+
+  const missing = await mcp.call('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'nope' })
+  expect(missing.isError).toBe(true)
+  expect(textOf(missing)).toContain('Branch "nope" does not exist')
+
+  const rotated = await ok('rotate_webhook_token', { project: 'filament', webhook: 'scanned', branch: 'add-spools' })
+  expect(rotated).toMatch(/\/hooks\/add-spools--filament\/scanned\/[\w-]{43}/)
 })

@@ -3,6 +3,7 @@ import { api, ApiError, type Invocation, type InvocationKind, type InvocationSta
 import { duration, exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
 import { Button, Notice } from '../../ui.tsx'
+import { useLoad } from '../../useLoad.ts'
 import { projectPath, KIND_LABELS } from './names.ts'
 import { ProjectLayout } from './ProjectLayout.tsx'
 import { RunStatus } from './runs.tsx'
@@ -14,10 +15,12 @@ const PERIODS = [
   { value: '168', label: 'Last 7 days' },
 ]
 
-type Filter = { kind: InvocationKind | ''; status: InvocationStatus | ''; hours: string }
+// branch: '' for everything, 'main' for the live version, or a branch name.
+type Filter = { kind: InvocationKind | ''; status: InvocationStatus | ''; hours: string; branch: string }
 
 function toQuery(filter: Filter, before?: number) {
   return {
+    branch: filter.branch || undefined,
     kind: filter.kind || undefined,
     status: filter.status || undefined,
     since: filter.hours ? new Date(Date.now() - Number(filter.hours) * 3600_000).toISOString() : undefined,
@@ -50,6 +53,7 @@ export function RunRow({ project, run, showProject = false }: { project: string;
                 <span className="font-semibold text-fg">{project}</span>
               </>
             )}
+            {run.branch !== null && `, preview of ${run.branch}`}
             {run.manual && ', started by an agent'}
             {run.httpStatus !== null && `, answered ${run.httpStatus}`}
           </p>
@@ -71,7 +75,13 @@ export function RunRow({ project, run, showProject = false }: { project: string;
 }
 
 function Runs({ project }: { project: string }) {
-  const [filter, setFilter] = useState<Filter>({ kind: '', status: '', hours: '' })
+  const [filter, setFilter] = useState<Filter>(() => ({
+    kind: '',
+    status: '',
+    hours: '',
+    branch: new URLSearchParams(window.location.search).get('branch') ?? '',
+  }))
+  const { data: branches } = useLoad(() => api.branches(project), project)
   const [runs, setRuns] = useState<Invocation[] | null>(null)
   const [more, setMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -112,7 +122,8 @@ function Runs({ project }: { project: string }) {
     }
   }
 
-  const filtered = filter.kind !== '' || filter.status !== '' || filter.hours !== ''
+  const filtered = filter.kind !== '' || filter.status !== '' || filter.hours !== '' || filter.branch !== ''
+  const branchNames = [...new Set([...(branches ?? []).map((b) => b.name), ...(filter.branch && filter.branch !== 'main' ? [filter.branch] : [])])]
 
   return (
     <section className="mt-8" aria-label="Runs">
@@ -120,6 +131,27 @@ function Runs({ project }: { project: string }) {
         Every time the project runs, because of a schedule, a request, a webhook or something at home.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
+        {branchNames.length > 0 && (
+          <>
+            <label className="sr-only" htmlFor="run-branch">
+              Version
+            </label>
+            <select
+              id="run-branch"
+              className={selectClass}
+              value={filter.branch}
+              onChange={(e) => changeFilter({ branch: e.target.value })}
+            >
+              <option value="">Live and previews</option>
+              <option value="main">Live version</option>
+              {branchNames.map((name) => (
+                <option key={name} value={name}>
+                  Preview of {name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <label className="sr-only" htmlFor="run-kind">
           What started it
         </label>

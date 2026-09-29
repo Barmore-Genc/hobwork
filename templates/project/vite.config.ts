@@ -16,7 +16,7 @@ function handlerEntries(): Record<string, string> {
 }
 
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [react(), tailwindcss()],
   // `vite build` builds the dashboard (client) and the handlers.
   builder: {},

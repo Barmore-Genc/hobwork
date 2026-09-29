@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
+import type { AppTarget } from '../apps/origins.ts'
+import { branchRoutes } from './branches.ts'
 import type { Auth } from '../auth/auth.ts'
 import type { User } from '../auth/users.ts'
 import type { Delivery } from '../delivery.ts'
@@ -55,7 +57,7 @@ export const INVOCATION_KINDS: InvocationKind[] = ['route', 'webhook', 'cron', '
 export const INVOCATION_STATUSES: InvocationStatus[] = ['running', 'ok', 'error']
 const LOG_VIEWS = ['all', 'events', 'problems'] as const
 
-type Route = {
+export type ApiRoute = {
   method: string
   pattern: RegExp
   handle: (ctx: {
@@ -139,6 +141,7 @@ export function createApiRoutes(options: {
   auth: Auth
   delivery: Delivery
   publicUrl: string
+  appOrigin?: (target: AppTarget) => string | undefined
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
@@ -199,6 +202,7 @@ export function createApiRoutes(options: {
       egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort(),
       database: options.data?.status(project.name) ?? null,
       app: config ? await hasApp(project.name) : false,
+      appUrl: options.appOrigin?.({ project: project.name }) ?? null,
     }
   }
 
@@ -252,7 +256,8 @@ export function createApiRoutes(options: {
     return { status, current }
   }
 
-  const routes: Route[] = [
+  const routes: ApiRoute[] = [
+    ...branchRoutes({ host, runtime, appOrigin: options.appOrigin }),
     {
       method: 'GET',
       pattern: /^\/api\/projects$/,
@@ -293,8 +298,11 @@ export function createApiRoutes(options: {
       handle: ({ res, params, query }) => {
         const project = requireProjectByName(host, params[0]!)
         const limit = pageSize(query, INVOCATION_PAGE, MAX_INVOCATION_PAGE)
+        const branch = query.get('branch')
         const rows = listInvocations(host, {
           project: project.name,
+          // main is the deployed version; any other name is a branch preview.
+          branch: branch ? (branch === project.defaultBranch ? null : branch) : undefined,
           kind: queryEnum(query, 'kind', INVOCATION_KINDS),
           status: queryEnum(query, 'status', INVOCATION_STATUSES),
           since: queryTime(query, 'since'),
@@ -536,7 +544,7 @@ export function createApiRoutes(options: {
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, query: URLSearchParams): Promise<boolean> => {
     let params: string[] | undefined
     const allowed: string[] = []
-    let route: Route | undefined
+    let route: ApiRoute | undefined
     for (const candidate of routes) {
       const match = candidate.pattern.exec(pathname)
       if (!match) continue

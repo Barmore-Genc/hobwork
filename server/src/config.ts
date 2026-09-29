@@ -26,6 +26,9 @@ export type Config = {
   // it is https, the OIDC redirect URI is built from it, and state-changing
   // requests must come from it.
   publicUrl: string
+  // Origin under whose host every project UI gets its own origin:
+  // <project>.<apps host> and <branch>--<project>.<apps host>.
+  appsUrl: string
   oidc?: OidcConfig
   allowlist: Allowlist
   webDist: string
@@ -73,6 +76,29 @@ function loadPublicUrl(env: NodeJS.ProcessEnv, port: number): string {
   return url.origin
 }
 
+// Project UIs live one level below the apps host, so the Hobwork host must
+// share their registrable domain for SameSite=Lax cookies to work in the
+// Hobwork UI's iframe.
+export function defaultAppsUrl(publicUrl: string): string {
+  const url = new URL(publicUrl)
+  url.hostname = `apps.${url.hostname}`
+  return url.origin
+}
+
+function loadAppsUrl(env: NodeJS.ProcessEnv, publicUrl: string): string {
+  const value = env.HOBWORK_APPS_URL
+  if (!value) return defaultAppsUrl(publicUrl)
+  const url = httpUrl('HOBWORK_APPS_URL', value, 'https://apps.hobwork.example.com')
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`HOBWORK_APPS_URL must be an origin without a path, like https://apps.hobwork.example.com, got "${value}"`)
+  }
+  if (!url.hostname.includes('.') || /^[\d.]+$|^\[/.test(url.hostname)) {
+    throw new Error(`HOBWORK_APPS_URL needs a domain name that project names can go in front of, got "${value}"`)
+  }
+  if (url.origin === publicUrl) throw new Error('HOBWORK_APPS_URL must differ from HOBWORK_PUBLIC_URL')
+  return url.origin
+}
+
 function loadOidc(env: NodeJS.ProcessEnv): OidcConfig | undefined {
   const issuer = env.HOBWORK_OIDC_ISSUER
   const clientId = env.HOBWORK_OIDC_CLIENT_ID
@@ -114,11 +140,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       `HOBWORK_WORKSPACE_IDLE_MINUTES must be a positive number, got "${env.HOBWORK_WORKSPACE_IDLE_MINUTES}"`,
     )
   }
+  const publicUrl = loadPublicUrl(env, port)
   return {
     dataDir: resolve(repoRoot, env.HOBWORK_DATA_DIR ?? 'data'),
     port,
     host: env.HOBWORK_HOST ?? '127.0.0.1',
-    publicUrl: loadPublicUrl(env, port),
+    publicUrl,
+    appsUrl: loadAppsUrl(env, publicUrl),
     oidc: loadOidc(env),
     allowlist: loadAllowlist(env),
     webDist: resolve(repoRoot, 'web/dist'),

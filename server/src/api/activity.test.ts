@@ -218,7 +218,6 @@ test('a project without a UI build has no app', async () => {
   await release(projectFiles('mkdir -p dist/handlers'))
   await runtime.build('filament')
   expect(((await (await get('/api/projects/filament')).json()) as any).app).toBe(false)
-  expect((await get('/p/filament/')).status).toBe(404)
 })
 
 test('rotating a webhook token shows its URL once', async () => {
@@ -233,55 +232,4 @@ test('rotating a webhook token shows its URL once', async () => {
   expect(detail.entryPoints.webhooks[0].tokenCreatedAt).toEqual(expect.any(String))
   expect(JSON.stringify(detail)).not.toContain(url.split('/').pop())
   expect((await rotate('nope')).status).toBe(404)
-})
-
-test('project UIs need a signed-in user', async () => {
-  await release(projectFiles())
-  const { token } = createAgentToken(host.db, 'claude')
-  const html = await get('/p/filament/spools/7?tab=1', { accept: 'text/html' })
-  expect(html.status).toBe(302)
-  expect(html.headers.get('location')).toBe(`/login?returnTo=${encodeURIComponent('/p/filament/spools/7?tab=1')}`)
-  expect((await get('/p/filament/assets/index-abc123.js', {})).status).toBe(401)
-  expect((await get('/p/filament/', { authorization: `Bearer ${token}` })).status).toBe(401)
-  expect((await get('/p/filament/', { cookie: 'hobwork_session=forged' })).status).toBe(401)
-  expect((await get('/p/nope/', { cookie })).status).toBe(404)
-})
-
-test('project UIs are served from the deployed build with a fallback for client-side routes', async () => {
-  await release(projectFiles())
-  expect((await get('/p/filament')).headers.get('location')).toBe('/p/filament/')
-
-  const index = await get('/p/filament/')
-  expect(index.status).toBe(200)
-  expect(index.headers.get('content-type')).toBe('text/html; charset=utf-8')
-  expect(index.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
-  const page = await index.text()
-  expect(page).toContain('<head><base href="/p/filament/"><title>Spools</title>')
-
-  expect(await (await get('/p/filament/spools/7')).text()).toBe(page)
-  const asset = await get('/p/filament/assets/index-abc123.js')
-  expect(asset.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
-  expect(asset.headers.get('cache-control')).toContain('immutable')
-  expect(await asset.text()).toBe('console.log(1)')
-  expect(await (await get('/p/filament/favicon.svg')).text()).toBe('<svg/>')
-  expect((await get('/p/filament/assets/missing.js')).status).toBe(404)
-  expect((await fetch(`${app.base}/p/filament/`, { method: 'POST', headers: writeHeaders(cookie) })).status).toBe(405)
-})
-
-test('project UIs never serve files outside the UI', async () => {
-  await release(projectFiles())
-  for (const path of [
-    '/p/filament/handlers/src/spools.js',
-    '/p/filament/%68andlers/src/spools.js',
-    '/p/filament/assets/..%2fhandlers/src/spools.js',
-    '/p/filament/..%2f..%2f..%2fhobwork.db',
-    '/p/filament/%2e%2e/%2e%2e/secret.key',
-    '/p/filament/%00.js',
-  ]) {
-    const res = await get(path)
-    expect(res.status, path).toBe(404)
-    expect(await res.text(), path).not.toContain('export default')
-  }
-  // Without an extension these look like client-side routes and get the page.
-  expect(await (await get('/p/filament/handlers')).text()).toContain('<base href="/p/filament/">')
 })

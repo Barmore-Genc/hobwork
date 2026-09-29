@@ -60,6 +60,12 @@ export async function branchExists(host: Host, project: string, branch: string):
   return (await resolveRef(repoFor(host, project), `refs/heads/${branch}`)) !== undefined
 }
 
+// The commit a branch points at, if the branch exists.
+export async function branchHead(host: Host, project: string, branch: string): Promise<string | undefined> {
+  validateBranchName(branch)
+  return resolveRef(repoFor(host, project), `refs/heads/${branch}`)
+}
+
 export async function listBranches(host: Host, project: string): Promise<Branch[]> {
   const out = await git([
     '--git-dir',

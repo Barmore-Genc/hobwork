@@ -69,3 +69,18 @@ test('workspace idle timeout', () => {
   expect(loadConfig({ HOBWORK_WORKSPACE_IDLE_MINUTES: '0.5' }).workspaceIdleTimeoutMs).toBe(30_000)
   expect(() => loadConfig({ HOBWORK_WORKSPACE_IDLE_MINUTES: '0' })).toThrow('HOBWORK_WORKSPACE_IDLE_MINUTES')
 })
+
+test('apps URL defaults to apps.<public host> and must be an origin with a domain', () => {
+  expect(loadConfig({ HOBWORK_PUBLIC_URL: 'https://hob.example.com' }).appsUrl).toBe('https://apps.hob.example.com')
+  expect(loadConfig({ HOBWORK_PUBLIC_URL: 'http://hobwork.localhost:5173' }).appsUrl).toBe('http://apps.hobwork.localhost:5173')
+  expect(
+    loadConfig({ HOBWORK_PUBLIC_URL: 'http://hobwork.localhost:5173', HOBWORK_APPS_URL: 'http://apps.hobwork.localhost:7420/' })
+      .appsUrl,
+  ).toBe('http://apps.hobwork.localhost:7420')
+  expect(() => loadConfig({ HOBWORK_APPS_URL: 'https://apps.example.com/x' })).toThrow('origin')
+  expect(() => loadConfig({ HOBWORK_APPS_URL: 'http://127.0.0.1:7420' })).toThrow('domain name')
+  expect(() => loadConfig({ HOBWORK_APPS_URL: 'http://localhost:7420' })).toThrow('domain name')
+  expect(() => loadConfig({ HOBWORK_PUBLIC_URL: 'https://a.example.com', HOBWORK_APPS_URL: 'https://a.example.com' })).toThrow(
+    'must differ',
+  )
+})

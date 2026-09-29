@@ -9,6 +9,10 @@ export const THEME_PREFIX = '/theme/'
 const FONT_PACKAGES = ['@fontsource-variable/bricolage-grotesque', '@fontsource-variable/atkinson-hyperlegible-next']
 const FONT_FILE = /^[a-z0-9-]+\.woff2$/
 
+// Project apps are on sibling origins of the same site, so the web UI must not
+// be framed by them.
+const WEB_UI_HEADERS = { 'content-security-policy': "frame-ancestors 'self'" }
+
 export const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -104,7 +108,7 @@ export function createStaticRoutes(options: { webDist?: string }) {
     if (path && stats) {
       // Vite puts a content hash in every file name under assets/.
       const immutable = pathname.startsWith('/assets/')
-      sendFile(req, res, path, stats, immutable ? 'public, max-age=31536000, immutable' : 'no-cache')
+      sendFile(req, res, path, stats, immutable ? 'public, max-age=31536000, immutable' : 'no-cache', WEB_UI_HEADERS)
       return true
     }
     if (extname(pathname) !== '') return false
@@ -115,7 +119,7 @@ export function createStaticRoutes(options: { webDist?: string }) {
       res.end('The web UI is not built. Run "pnpm -C web build", or use the Vite dev server with "pnpm dev".\n')
       return true
     }
-    sendFile(req, res, index, indexStats, 'no-cache')
+    sendFile(req, res, index, indexStats, 'no-cache', WEB_UI_HEADERS)
     return true
   }
 }

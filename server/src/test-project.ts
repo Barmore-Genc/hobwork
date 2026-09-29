@@ -24,11 +24,20 @@ export const FAKE_PROJECT: Files = {
 }
 
 // Replaces main's tree with `files`, the way only host code can.
-export async function seedMain(host: Host, project: string, files: Files = FAKE_PROJECT): Promise<string> {
+export function seedMain(host: Host, project: string, files: Files = FAKE_PROJECT): Promise<string> {
+  return seedBranch(host, project, DEFAULT_BRANCH, files)
+}
+
+// Commits `files` as the whole tree of `branch`, which starts from main if it
+// does not exist yet.
+export async function seedBranch(host: Host, project: string, branch: string, files: Files): Promise<string> {
   const tmp = mkdtempSync(join(tmpdir(), 'hobwork-seed-'))
   try {
     const work = join(tmp, 'work')
     await git(['clone', '--quiet', '--branch', DEFAULT_BRANCH, repoPath(host, project), work])
+    await git(['checkout', '--quiet', '-B', branch, `origin/${branch}`], { cwd: work }).catch(() =>
+      git(['checkout', '--quiet', '-B', branch], { cwd: work }),
+    )
     await git(['rm', '--quiet', '-r', '.'], { cwd: work })
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(dirname(join(work, path)), { recursive: true })
@@ -36,7 +45,7 @@ export async function seedMain(host: Host, project: string, files: Files = FAKE_
     }
     await git(['add', '--all'], { cwd: work })
     await git(['commit', '--quiet', '-m', 'Seed fake project'], { cwd: work, env: HOBWORK_IDENTITY })
-    await git(['push', '--quiet', 'origin', DEFAULT_BRANCH], { cwd: work, env: ALLOW_MAIN_ENV })
+    await git(['push', '--quiet', '--force', 'origin', `HEAD:refs/heads/${branch}`], { cwd: work, env: ALLOW_MAIN_ENV })
     return (await git(['rev-parse', 'HEAD'], { cwd: work })).trim()
   } finally {
     rmSync(tmp, { recursive: true, force: true })

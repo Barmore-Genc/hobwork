@@ -11,7 +11,7 @@ import { pipelineVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
 import { createTestHost } from '../test-host.ts'
-import { signedIn, TEST_PUBLIC_URL } from '../test-web.ts'
+import { sendTo, signedIn, TEST_APPS_DOMAIN, TEST_PUBLIC_URL } from '../test-web.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { createRuntime, type Runtime } from './runtime.ts'
 
@@ -145,29 +145,46 @@ export default (async (ctx) => {
     expect(await (await api('/lights')).json()).toEqual({ ai: 'function', code: 'not_configured' })
   })
 
-  test('the template UI is served with the theme to signed-in users and calls its route', async () => {
+  test('the template UI opens on its app origin through the sign-in redirects and calls its route', async () => {
     const { cookie } = signedIn(host)
-    expect((await fetch(`${base}/p/filament/`, { redirect: 'manual' })).status).toBe(401)
-    const page = await fetch(`${base}/p/filament/`, { headers: { cookie } })
-    expect(page.status).toBe(200)
-    const html = await page.text()
-    expect(html).toContain('<base href="/p/filament/">')
-    expect(html).toContain('href="/theme/theme.css"')
-    expect(await (await fetch(`${base}/p/filament/spools/3`, { headers: { cookie } })).text()).toBe(html)
+    const origin = `http://filament.${TEST_APPS_DOMAIN}`
+    const send = (url: string, headers: Record<string, string> = {}) => sendTo(base, url, { headers })
+    const page = { accept: 'text/html' }
 
-    const assets = [...html.matchAll(/(?:src|href)="\.\/(assets\/[^"]+)"/g)].map((m) => m[1]!)
+    // Signed out of the app: to Hobwork, which hands the session over with a code.
+    const start = await send(`${origin}/spools/3`, page)
+    expect(start.status).toBe(302)
+    const handoff = new URL(start.headers.location!)
+    expect(handoff.pathname).toBe('/auth/app')
+    const toApp = await send(handoff.href, { cookie })
+    expect(toApp.status).toBe(302)
+    const exchanged = await send(toApp.headers.location!)
+    expect(exchanged.headers.location).toBe('/spools/3')
+    const appCookie = exchanged.headers['set-cookie']![0]!.split(';')[0]!
+
+    const index = await send(`${origin}/spools/3`, { ...page, cookie: appCookie })
+    expect(index.status).toBe(200)
+    expect(index.headers['content-security-policy']).toBe(`frame-ancestors ${TEST_PUBLIC_URL}`)
+    const html = index.body
+    expect(html).toContain('<base href="/">')
+    expect(html).toContain('href="/theme/theme.css"')
+    expect((await send(`${origin}/theme/theme.css`)).status).toBe(200)
+
+    const assets = [...html.matchAll(/(?:src|href)="\/(assets\/[^"]+)"/g)].map((m) => m[1]!)
     expect(assets.some((path) => path.endsWith('.js'))).toBe(true)
     const css = assets.find((path) => path.endsWith('.css'))
     expect(css).toBeDefined()
-    const styles = await (await fetch(`${base}/p/filament/${css}`, { headers: { cookie } })).text()
+    const styles = (await send(`${origin}/${css}`, { cookie: appCookie })).body
     // The theme mapping from @hobwork/theme in the image.
     expect(styles).toContain('var(--hw-surface)')
-    for (const path of assets) expect((await fetch(`${base}/p/filament/${path}`, { headers: { cookie } })).status).toBe(200)
-    expect((await fetch(`${base}/p/filament/handlers/src/greeting-route.js`, { headers: { cookie } })).status).toBe(404)
+    for (const path of assets) expect((await send(`${origin}/${path}`, { cookie: appCookie })).status).toBe(200)
+    expect((await send(`${origin}/handlers/src/greeting-route.js`, { cookie: appCookie })).status).toBe(404)
 
     // What @hobwork/sdk/browser sends from the page.
-    const greeting = await fetch(`${base}/p/filament/api/greeting`, { headers: { cookie, 'x-hobwork-csrf': '1' } })
-    expect(await greeting.json()).toEqual({ message: expect.stringMatching(/^Good /) })
+    const greeting = await send(`${origin}/api/greeting`, { cookie: appCookie, 'x-hobwork-csrf': '1' })
+    expect(JSON.parse(greeting.body)).toEqual({ message: expect.stringMatching(/^Good /) })
+    // Hobwork's own API does not take the app's session.
+    expect((await send(`${TEST_PUBLIC_URL}/api/projects`, { cookie: appCookie })).status).toBe(401)
   })
 
   test('crons run by hand and on schedule', async () => {
@@ -213,5 +230,61 @@ export default (async (ctx) => {
       },
       { timeout: 10_000, interval: 500 },
     )
+  })
+
+  test('a branch preview serves its own UI and routes at its origin, and its own webhook', async () => {
+    const b = { project: 'filament', branch: 'preview-ui' }
+    await ok('create_branch', b)
+    const app = await ok('read_file', { ...b, path: 'ui/App.tsx' })
+    await ok('write_file', { ...b, path: 'ui/App.tsx', content: app.replace("This page is the project's dashboard.", 'This is the branch preview.') })
+    await ok('write_file', {
+      ...b,
+      path: 'src/greeting-route.ts',
+      content: `import type { Handler } from '@hobwork/sdk'
+
+export default (async () => ({ message: 'Hello from the branch' })) satisfies Handler
+`,
+    })
+    await ok('write_file', {
+      ...b,
+      path: 'src/ping.ts',
+      content: `import type { RequestHandler } from '@hobwork/sdk'
+
+export default (async (ctx) => ({ pinged: await ctx.request.text() })) satisfies RequestHandler
+`,
+    })
+    const config = JSON.parse(await ok('read_file', { ...b, path: 'hobwork.json' }))
+    config.webhooks = { ping: { handler: 'src/ping.ts' } }
+    await ok('write_file', { ...b, path: 'hobwork.json', content: JSON.stringify(config, null, 2) })
+    await ok('commit', { ...b, message: 'Try a new greeting' })
+
+    const { cookie } = signedIn(host)
+    const origin = `http://preview-ui--filament.${TEST_APPS_DOMAIN}`
+    const send = (url: string, headers: Record<string, string> = {}, init: { method?: string; body?: string } = {}) =>
+      sendTo(base, url, { headers, ...init })
+    const start = await send(`${origin}/`, { accept: 'text/html' })
+    const handoff = new URL(start.headers.location!)
+    expect(handoff.searchParams.get('branch')).toBe('preview-ui')
+    const toApp = await send(handoff.href, { cookie })
+    const exchanged = await send(toApp.headers.location!)
+    const appCookie = exchanged.headers['set-cookie']![0]!.split(';')[0]!
+
+    const page = await send(`${origin}/`, { accept: 'text/html', cookie: appCookie })
+    expect(page.status).toBe(200)
+    const scripts = [...page.body.matchAll(/src="\/(assets\/[^"]+\.js)"/g)].map((m) => m[1]!)
+    const code = (await Promise.all(scripts.map(async (path) => (await send(`${origin}/${path}`, { cookie: appCookie })).body))).join('')
+    expect(code).toContain('This is the branch preview.')
+    const greeting = await send(`${origin}/api/greeting`, { cookie: appCookie })
+    expect(JSON.parse(greeting.body)).toEqual({ message: 'Hello from the branch' })
+    expect(await (await api('/greeting')).json()).toEqual({ message: expect.stringMatching(/^Good /) })
+
+    const rotated = await ok('rotate_webhook_token', { project: 'filament', webhook: 'ping', branch: 'preview-ui' })
+    const path = /(\/hooks\/\S+)/.exec(rotated)![1]!
+    expect(path).toMatch(/^\/hooks\/preview-ui--filament\/ping\//)
+    const hook = await fetch(`${base}${path}`, { method: 'POST', body: 'hello' })
+    expect(await hook.json()).toEqual({ pinged: 'hello' })
+    const list = await ok('list_invocations', { project: 'filament', branch: 'preview-ui' })
+    expect(list).toContain('webhook "ping" branch preview-ui ok')
+    expect(list).toContain('route "GET /greeting" branch preview-ui ok')
   })
 })

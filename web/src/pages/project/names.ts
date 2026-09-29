@@ -4,6 +4,10 @@ export function projectPath(name: string, path = ''): string {
   return `/projects/${encodeURIComponent(name)}${path}`
 }
 
+export function previewPath(project: string, branch: string): string {
+  return projectPath(project, `/preview/${encodeURIComponent(branch)}`)
+}
+
 export const KIND_LABELS: Record<InvocationKind, string> = {
   cron: 'Schedule',
   route: 'App request',

@@ -60,11 +60,15 @@ export type ProjectDetail = {
   database: DbStatus | null
   // The running version has a page to open.
   app: boolean
+  // Where the project's app lives, on its own origin.
+  appUrl: string | null
 }
 
 export type Invocation = {
   id: number
   version: number | null
+  // Set when a preview of this branch ran.
+  branch: string | null
   kind: InvocationKind
   name: string
   manual: boolean
@@ -82,6 +86,7 @@ export type ActivityRun = Invocation & { project: string }
 export type ProblemEvent = {
   id: number
   project: string
+  branch: string | null
   invocationId: number | null
   level: LogLevel
   event: string
@@ -95,6 +100,7 @@ export type ActivityFilter = InvocationFilter & { project?: string }
 
 export type LogLine = {
   id: number
+  branch: string | null
   invocationId: number | null
   source: 'handler' | 'runtime' | 'pipeline'
   level: LogLevel
@@ -105,7 +111,22 @@ export type LogLine = {
 
 export type InvocationDetail = Invocation & { stack: string | null; logs: LogLine[] }
 
-export type InvocationFilter = { kind?: InvocationKind; status?: InvocationStatus; since?: string; before?: number }
+export type InvocationFilter = {
+  kind?: InvocationKind
+  status?: InvocationStatus
+  since?: string
+  before?: number
+  branch?: string
+}
+
+export type Branch = {
+  name: string
+  head: { sha: string; subject: string; updatedAt: string }
+  previewUrl: string | null
+  running: boolean
+  homeAssistant: { by: string; grantedAt: string } | null
+  recentRuns: Invocation[]
+}
 
 export type LogView = 'all' | 'events' | 'problems'
 
@@ -298,6 +319,14 @@ export const api = {
       'POST',
       `/api/projects/${encodeURIComponent(project)}/versions/${version}/restore`,
     ),
+  branches: (project: string) => request<Branch[]>('GET', `/api/projects/${encodeURIComponent(project)}/branches`),
+  allowBranchHomeAssistant: (project: string, branch: string) =>
+    request<{ by: string; grantedAt: string }>(
+      'PUT',
+      `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/home-assistant`,
+    ),
+  stopBranchHomeAssistant: (project: string, branch: string) =>
+    request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/home-assistant`),
   invocations: (project: string, filter: InvocationFilter) =>
     request<{ invocations: Invocation[]; more: boolean }>(
       'GET',

@@ -23,7 +23,7 @@ async function requireBranch(host: Host, project: Project, branch: string) {
 }
 
 // Branches with their preview address, recent preview runs and whether they
-// may control Home Assistant. Only people change that; agents have no API for it.
+// may control Home Assistant. Agents change that over MCP.
 export function branchRoutes(options: {
   host: Host
   runtime?: Runtime
@@ -59,7 +59,7 @@ export function branchRoutes(options: {
       handle: async ({ res, user, params }) => {
         const project = projectOf(host, params[0]!)
         await requireBranch(host, project, params[1]!)
-        json(res, 200, grantBranchHa(host, project.name, params[1]!, user.id))
+        json(res, 200, grantBranchHa(host, project.name, params[1]!, { userId: user.id }))
       },
     },
     {

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createHomeAssistant, type HomeAssistant } from '../homeassistant/client.ts'
 import { startFakeHomeAssistant, type FakeHomeAssistant } from '../homeassistant/fake-ha.ts'
+import { getBranchHaApproval } from '../homeassistant/approvals.ts'
+import { createProject } from '../projects.ts'
+import { createBranch } from '../repo.ts'
+import { seedMain } from '../test-project.ts'
 import { startTestMcp, textOf, type TestMcp } from './test-mcp.ts'
 
 let fake: FakeHomeAssistant
@@ -390,4 +394,18 @@ test('tools report when Home Assistant is not configured', async () => {
   } finally {
     await other.close()
   }
+})
+
+test('agents let a branch control Home Assistant and take it back', async () => {
+  await createProject(mcp.host, 'lights')
+  await seedMain(mcp.host, 'lights')
+  await createBranch(mcp.host, 'lights', 'dim')
+  const set = (branch: string, allowed: boolean) => mcp.call('set_branch_home_assistant', { project: 'lights', branch, allowed })
+
+  expect(textOf(await set('dim', true))).toBe('Branch "dim" of lights can now control Home Assistant.')
+  expect(getBranchHaApproval(mcp.host, 'lights', 'dim')).toMatchObject({ by: 'claude', byAgent: true })
+  expect(textOf(await set('dim', false))).toBe('Branch "dim" of lights can no longer control Home Assistant.')
+  expect(getBranchHaApproval(mcp.host, 'lights', 'dim')).toBeUndefined()
+  expect((await set('main', true)).isError).toBe(true)
+  expect((await set('nope', true)).isError).toBe(true)
 })

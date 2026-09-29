@@ -95,7 +95,7 @@ async function run(ha: HomeAssistant, request: HaRequest, access: HaAccess): Pro
       if (typeof access === 'object' && !access.allowed()) {
         throw new HomeAssistantError(
           'not_approved',
-          `Branch "${access.branch}" may not control Home Assistant. Ask the user to turn on "Let this branch control Home Assistant" for it on the project page in Hobwork`,
+          `Branch "${access.branch}" may not control Home Assistant. Turn it on with the set_branch_home_assistant MCP tool, or ask the user to turn on "Let this branch control Home Assistant" for it on the project page in Hobwork`,
         )
       }
       if (access === 'read') {

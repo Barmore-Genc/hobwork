@@ -44,6 +44,8 @@ export type Config = {
   backup?: BackupConfig
   // Undefined when push notifications are off.
   apns?: ApnsConfig
+  // Team ID and bundle ID of the app that may open NFC tag URLs (universal links).
+  appleAppId: string
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -125,6 +127,16 @@ function loadApns(env: NodeJS.ProcessEnv): ApnsConfig | undefined {
   return { keyFile: resolve(keyFile), keyId, teamId }
 }
 
+export const DEFAULT_APPLE_APP_ID = '63QQLP356Q.dev.bgenc.hobwork'
+
+function loadAppleAppId(env: NodeJS.ProcessEnv): string {
+  const value = env.HOBWORK_APPLE_APP_ID || DEFAULT_APPLE_APP_ID
+  if (!/^[A-Z0-9]{10}\.[A-Za-z0-9.-]+$/.test(value)) {
+    throw new Error(`HOBWORK_APPLE_APP_ID must be <team ID>.<bundle ID>, like 63QQLP356Q.dev.bgenc.hobwork, got "${value}"`)
+  }
+  return value
+}
+
 function loadAllowlist(env: NodeJS.ProcessEnv): Allowlist {
   const entries = (env.HOBWORK_ALLOWED_USERS ?? '')
     .split(',')
@@ -172,5 +184,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(env.HOBWORK_SECRET_KEY ? { secretKey: env.HOBWORK_SECRET_KEY } : {}),
     backup: loadBackupConfig(env),
     apns: loadApns(env),
+    appleAppId: loadAppleAppId(env),
   }
 }

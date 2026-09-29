@@ -86,3 +86,9 @@ test('apps URL defaults to apps.<public host> and must be an origin with a domai
     'must differ',
   )
 })
+
+test('the Apple app ID for universal links has a default and must be <team ID>.<bundle ID>', () => {
+  expect(loadConfig({}).appleAppId).toBe('63QQLP356Q.dev.bgenc.hobwork')
+  expect(loadConfig({ HOBWORK_APPLE_APP_ID: 'ABCDE12345.example.app' }).appleAppId).toBe('ABCDE12345.example.app')
+  expect(() => loadConfig({ HOBWORK_APPLE_APP_ID: 'dev.bgenc.hobwork' })).toThrow('<team ID>.<bundle ID>')
+})

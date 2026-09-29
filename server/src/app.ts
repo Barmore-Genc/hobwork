@@ -36,6 +36,8 @@ import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } f
 
 export type WebOptions = {
   publicUrl: string
+  // Team ID and bundle ID in /.well-known/apple-app-site-association.
+  appleAppId?: string
   // Defaults to apps.<public host>.
   appsUrl?: string
   allowlist: Allowlist
@@ -67,7 +69,7 @@ export function createApp(
   const delivery = options.delivery ?? createDelivery(host, { workspaces })
   const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
   const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
-  const devices = options.devices ?? createDevices({ host, allowlist: web.allowlist })
+  const devices = options.devices ?? createDevices({ host, allowlist: web.allowlist, publicUrl: web.publicUrl })
   const oauth = createOAuthServer({
     db: host.db,
     publicUrl: web.publicUrl,
@@ -114,7 +116,14 @@ export function createApp(
     secrets: options.secrets,
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
-  const handleDevices = createDeviceRoutes({ db: host.db, auth, allowlist: web.allowlist, publicUrl: web.publicUrl, devices })
+  const handleDevices = createDeviceRoutes({
+    db: host.db,
+    auth,
+    allowlist: web.allowlist,
+    publicUrl: web.publicUrl,
+    devices,
+    appleAppId: web.appleAppId,
+  })
   const deviceSockets = createDeviceSockets({ db: host.db, allowlist: web.allowlist, devices })
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),

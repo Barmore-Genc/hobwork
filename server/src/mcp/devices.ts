@@ -8,7 +8,7 @@ export function registerDeviceTools(server: McpServer, devices: Devices): void {
     'list_devices',
     {
       description:
-        'List the phones and computers paired with Hobwork: the name handlers pass to ctx.device(name), the owner, capabilities (e.g. "notifications"), whether the app is connected and when it was last seen. Only deployed handlers can use devices; workspaces and branch previews cannot, so tests fake ctx.device with createTestContext.',
+        'List the phones and computers paired with Hobwork: the name handlers pass to ctx.device(name), the owner, capabilities, whether the app is connected and when it was last seen. Capabilities are what the app on the device can do and the person allowed: notifications, alarms (AlarmKit alarms and timers), screenTime (block app sets, schedules, daily limits), focus (which Focus modes are on), nfc (write and read tags), health (HealthKit samples). Calls to a capability a device does not list fail with "unsupported". Events (notification actions, Focus changes, NFC tag scans, Health samples) run hobwork.json triggers with a "device" block. Only deployed handlers can use devices; workspaces and branch previews cannot, so tests fake ctx.device with createTestContext.',
       annotations: { readOnlyHint: true },
     },
     () => {

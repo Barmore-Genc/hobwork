@@ -309,3 +309,130 @@ export function answerNotification(db: DatabaseSync, id: string, now = Date.now(
     .run(iso(now), id)
   return Number(result.changes) > 0
 }
+
+export const COMMAND_TTL_MS = 10 * 60 * 1000
+export const COMMAND_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+export type CommandStatus = 'pending' | 'done' | 'failed' | 'expired'
+
+export type CommandRecord = {
+  id: string
+  deviceId: number
+  project: string
+  invocation: number | null
+  capability: string
+  method: string
+  args: unknown
+  status: CommandStatus
+  createdAt: string
+  expiresAt: string
+}
+
+function toCommand(row: Record<string, unknown>): CommandRecord {
+  return {
+    id: String(row.id),
+    deviceId: Number(row.device_id),
+    project: String(row.project),
+    invocation: row.invocation === null ? null : Number(row.invocation),
+    capability: String(row.capability),
+    method: String(row.method),
+    args: JSON.parse(String(row.args)),
+    status: String(row.status) as CommandStatus,
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+  }
+}
+
+const SELECT_COMMAND = 'SELECT c.*, p.name AS project FROM device_commands c JOIN projects p ON p.id = c.project_id'
+
+export function recordCommand(
+  db: DatabaseSync,
+  command: { id: string; deviceId: number; projectId: number; invocation?: number; capability: string; method: string; args: unknown },
+  now = Date.now(),
+): CommandRecord {
+  db.prepare('DELETE FROM device_commands WHERE created_at <= ?').run(iso(now - COMMAND_RETENTION_MS))
+  db.prepare(
+    `INSERT INTO device_commands (id, device_id, project_id, invocation, capability, method, args, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    command.id,
+    command.deviceId,
+    command.projectId,
+    command.invocation ?? null,
+    command.capability,
+    command.method,
+    JSON.stringify(command.args ?? {}),
+    iso(now),
+    iso(now + COMMAND_TTL_MS),
+  )
+  return getCommand(db, command.id)!
+}
+
+export function getCommand(db: DatabaseSync, id: string): CommandRecord | undefined {
+  const row = db.prepare(`${SELECT_COMMAND} WHERE c.id = ?`).get(id)
+  return row ? toCommand(row) : undefined
+}
+
+// Pending commands whose time ran out become expired.
+export function expireCommands(db: DatabaseSync, now = Date.now()): CommandRecord[] {
+  return db
+    .prepare(
+      `UPDATE device_commands SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?
+       RETURNING *, (SELECT name FROM projects WHERE id = project_id) AS project`,
+    )
+    .all(iso(now))
+    .map(toCommand)
+}
+
+// Oldest first, for resending after a hello.
+export function pendingCommands(db: DatabaseSync, deviceId: number, now = Date.now()): CommandRecord[] {
+  return db
+    .prepare(`${SELECT_COMMAND} WHERE c.device_id = ? AND c.status = 'pending' AND c.expires_at > ? ORDER BY c.created_at, c.rowid`)
+    .all(deviceId, iso(now))
+    .map(toCommand)
+}
+
+// Records the device's answer. False when the command already has one: the
+// same command can reach the app by socket, push and hello, and the first
+// result wins. The app may still have run a command the host marked expired,
+// so that answer is taken too.
+export function answerCommand(
+  db: DatabaseSync,
+  id: string,
+  outcome: { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } },
+  now = Date.now(),
+): boolean {
+  const result = db
+    .prepare(
+      `UPDATE device_commands SET status = ?, result = ?, answered_at = ?
+       WHERE id = ? AND status IN ('pending', 'expired') AND answered_at IS NULL`,
+    )
+    .run(
+      outcome.ok ? 'done' : 'failed',
+      JSON.stringify(outcome.ok ? (outcome.value ?? null) : outcome.error),
+      iso(now),
+      id,
+    )
+  return Number(result.changes) > 0
+}
+
+export const NFC_TAG_ID = /^[A-Za-z0-9_-]{22}$/
+
+export function newNfcTagId(): string {
+  return randomBytes(16).toString('base64url')
+}
+
+export function recordNfcTag(db: DatabaseSync, id: string, projectId: number, now = Date.now()) {
+  db.prepare('INSERT INTO nfc_tags (id, project_id, created_at) VALUES (?, ?, ?)').run(id, projectId, iso(now))
+}
+
+export function deleteNfcTag(db: DatabaseSync, id: string) {
+  db.prepare('DELETE FROM nfc_tags WHERE id = ?').run(id)
+}
+
+// The project that wrote the tag.
+export function nfcTagProject(db: DatabaseSync, id: string): string | undefined {
+  if (!NFC_TAG_ID.test(id)) return undefined
+  const row = db.prepare('SELECT p.name FROM nfc_tags t JOIN projects p ON p.id = t.project_id WHERE t.id = ?').get(id)
+  return row ? String(row.name) : undefined
+}

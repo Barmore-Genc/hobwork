@@ -42,6 +42,7 @@ const devices = createDevices({
   host,
   apns,
   allowlist: config.allowlist,
+  publicUrl: config.publicUrl,
   triggers: async (project) => (await runtime.config(project)).config.triggers,
   invokeTrigger: (project, name, payload) => runtime.invoke(project, { kind: 'trigger', name, manual: false, payload }),
 })
@@ -134,6 +135,7 @@ const server = createApp(host, {
     allowlist: config.allowlist,
     oidc: config.oidc,
     webDist: config.webDist,
+    appleAppId: config.appleAppId,
   },
 })
 

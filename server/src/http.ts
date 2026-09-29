@@ -56,18 +56,27 @@ export async function readForm(req: IncomingMessage, limit = 64 * 1024): Promise
   return new URLSearchParams(await readBody(req, limit))
 }
 
+// A cookie name sent more than once is dropped: a sibling subdomain can set a
+// cookie with Domain= on the parent, and browsers then send both, in an order
+// the host cannot tell apart from the real one.
 export function parseCookies(header: string | undefined): Map<string, string> {
   const cookies = new Map<string, string>()
+  const repeated = new Set<string>()
   for (const part of header?.split(';') ?? []) {
     const eq = part.indexOf('=')
     if (eq === -1) continue
     const name = part.slice(0, eq).trim()
-    if (!cookies.has(name)) {
-      try {
-        cookies.set(name, decodeURIComponent(part.slice(eq + 1).trim()))
-      } catch {}
+    if (cookies.has(name) || repeated.has(name)) {
+      repeated.add(name)
+      continue
+    }
+    try {
+      cookies.set(name, decodeURIComponent(part.slice(eq + 1).trim()))
+    } catch {
+      repeated.add(name)
     }
   }
+  for (const name of repeated) cookies.delete(name)
   return cookies
 }
 

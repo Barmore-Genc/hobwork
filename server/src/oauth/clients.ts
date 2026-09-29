@@ -1,6 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { OAuthError } from './grants.ts'
 import { hashSecret } from './secrets.ts'
 import type { FetchedDocument } from './metadata-fetch.ts'
 
@@ -191,12 +190,13 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
   db.prepare(
     `DELETE FROM oauth_clients WHERE created_at < ? AND id NOT IN (SELECT client_id FROM oauth_grants)`,
   ).run(new Date(now - UNUSED_CLIENT_TTL_MS).toISOString())
-  const unused = db
-    .prepare('SELECT count(*) AS n FROM oauth_clients WHERE id NOT IN (SELECT client_id FROM oauth_grants)')
-    .get()
-  if (Number(unused?.n) >= MAX_UNUSED_CLIENTS) {
-    throw new OAuthError('temporarily_unavailable', 'Too many apps registered without connecting. Try again tomorrow.', 429)
-  }
+  // Room is made by dropping the oldest, so a flood of registrations cannot
+  // keep a real client from registering.
+  db.prepare(
+    `DELETE FROM oauth_clients WHERE id IN (
+       SELECT id FROM oauth_clients WHERE id NOT IN (SELECT client_id FROM oauth_grants)
+       ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`,
+  ).run(MAX_UNUSED_CLIENTS - 1)
   db.prepare(
     'INSERT INTO oauth_clients (id, name, uri, redirect_uris, secret_hash, auth_method, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run(

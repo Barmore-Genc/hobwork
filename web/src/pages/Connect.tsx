@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { accessReady, FULL_ACCESS, projectsText } from '../access.ts'
+import { accessReady, projectsText, READ_ONLY_ACCESS } from '../access.ts'
 import { AccessPicker } from '../AccessPicker.tsx'
 import { api, ApiError, type Access, type ConnectRequest } from '../api.ts'
 import { Link } from '../router.tsx'
@@ -39,7 +39,7 @@ export function Frame({ children }: { children: ReactNode }) {
 
 function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
   const [agentName, setAgentName] = useState(request.agentName)
-  const [access, setAccess] = useState<Access>(FULL_ACCESS)
+  const [access, setAccess] = useState<Access>(READ_ONLY_ACCESS)
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { client } = request

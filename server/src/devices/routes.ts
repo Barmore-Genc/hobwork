@@ -7,7 +7,7 @@ import { getUser, isAllowed } from '../auth/users.ts'
 import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
-import { createNfcPage, NFC_PATH } from './nfc-page.ts'
+import { createNfcPage, NFC_PATH, page } from './nfc-page.ts'
 import { deviceFromRequest, parsePush } from './socket.ts'
 import {
   createPairingCode,
@@ -19,7 +19,9 @@ import {
   exchangePairingCode,
   freeDeviceName,
   isPlatform,
+  PAIRED_PATH,
   PAIRING_REDIRECT_URI,
+  pairedUniversalLink,
   redeemWebSessionLink,
   renameDevice,
   setPushToken,
@@ -55,12 +57,22 @@ function string(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-type PairingParams = { displayName: string; platform: 'ios' | 'macos'; challenge: string; state: string | null }
+type PairingParams = {
+  displayName: string
+  platform: 'ios' | 'macos'
+  challenge: string
+  state: string | null
+  redirectUri: string
+}
 
 // Checks the query the app opened /devices/connect with. The redirect URI is
-// fixed, so a page elsewhere cannot start a pairing that hands the code to itself.
-function pairingParams(input: Record<string, unknown>): PairingParams {
-  if (input.redirect_uri !== PAIRING_REDIRECT_URI) throw new HttpError(400, `redirect_uri must be ${PAIRING_REDIRECT_URI}`)
+// one of two fixed ones, so a page elsewhere cannot start a pairing that hands
+// the code to itself.
+function pairingParams(input: Record<string, unknown>, publicUrl: string): PairingParams {
+  const redirectUri = input.redirect_uri
+  if (redirectUri !== pairedUniversalLink(publicUrl) && redirectUri !== PAIRING_REDIRECT_URI) {
+    throw new HttpError(400, `redirect_uri must be ${pairedUniversalLink(publicUrl)}`)
+  }
   const displayName = string(input.name)?.trim()
   if (!displayName || displayName.length > MAX_DISPLAY_NAME) throw new HttpError(400, 'The app sent no device name')
   if (!isPlatform(input.platform)) throw new HttpError(400, 'The app sent an unknown platform')
@@ -70,11 +82,11 @@ function pairingParams(input: Record<string, unknown>): PairingParams {
   }
   const state = input.state === undefined || input.state === null ? null : string(input.state)
   if (state === undefined || (state !== null && state.length > MAX_STATE)) throw new HttpError(400, 'The app sent an invalid state')
-  return { displayName, platform: input.platform, challenge, state }
+  return { displayName, platform: input.platform, challenge, state, redirectUri }
 }
 
-function pairedUrl(params: Record<string, string | null>): string {
-  const url = new URL(PAIRING_REDIRECT_URI)
+function pairedUrl(redirectUri: string, params: Record<string, string | null>): string {
+  const url = new URL(redirectUri)
   for (const [key, value] of Object.entries(params)) if (value !== null) url.searchParams.set(key, value)
   return url.href
 }
@@ -97,8 +109,8 @@ function deviceId(params: string[]): number {
   return Number(params[0])
 }
 
-export function deviceUserRoutes(options: { db: DatabaseSync; devices: Devices }): ApiRoute[] {
-  const { db, devices } = options
+export function deviceUserRoutes(options: { db: DatabaseSync; devices: Devices; publicUrl: string }): ApiRoute[] {
+  const { db, devices, publicUrl } = options
   return [
     {
       method: 'GET',
@@ -132,7 +144,7 @@ export function deviceUserRoutes(options: { db: DatabaseSync; devices: Devices }
       method: 'GET',
       pattern: /^\/api\/devices\/pairing$/,
       handle({ res, query }) {
-        const params = pairingParams(Object.fromEntries(query))
+        const params = pairingParams(Object.fromEntries(query), publicUrl)
         json(res, 200, { displayName: params.displayName, platform: params.platform, name: freeDeviceName(db, params.displayName) })
       },
     },
@@ -142,13 +154,13 @@ export function deviceUserRoutes(options: { db: DatabaseSync; devices: Devices }
       async handle({ req, res, user }) {
         const body = await readJson(req)
         if (!isObject(body) || !isObject(body.request)) throw new HttpError(400, 'Send { request, name }')
-        const params = pairingParams(body.request)
+        const params = pairingParams(body.request, publicUrl)
         const name = typeof body.name === 'string' ? body.name.trim() : ''
         const error = deviceNameError(name)
         if (error) throw new HttpError(400, error)
         if (deviceNameTaken(db, name)) throw new HttpError(409, `A device called "${name}" already exists`)
         const code = createPairingCode(db, { userId: user.id, name, platform: params.platform, codeChallenge: params.challenge })
-        json(res, 200, { redirectTo: pairedUrl({ code, state: params.state }) })
+        json(res, 200, { redirectTo: pairedUrl(params.redirectUri, { code, state: params.state }) })
       },
     },
     {
@@ -157,8 +169,8 @@ export function deviceUserRoutes(options: { db: DatabaseSync; devices: Devices }
       async handle({ req, res }) {
         const body = await readJson(req)
         if (!isObject(body) || !isObject(body.request)) throw new HttpError(400, 'Send { request }')
-        const params = pairingParams(body.request)
-        json(res, 200, { redirectTo: pairedUrl({ error: 'access_denied', state: params.state }) })
+        const params = pairingParams(body.request, publicUrl)
+        json(res, 200, { redirectTo: pairedUrl(params.redirectUri, { error: 'access_denied', state: params.state }) })
       },
     },
   ]
@@ -260,7 +272,21 @@ export function createDeviceRoutes(options: {
       return true
     }
     if (pathname === AASA_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
-      json(res, 200, { applinks: { details: [{ appIDs: [appleAppId], components: [{ '/': '/nfc/*' }] }] } })
+      // webcredentials lets ASWebAuthenticationSession finish on the pairing link.
+      json(res, 200, {
+        applinks: { details: [{ appIDs: [appleAppId], components: [{ '/': '/nfc/*' }, { '/': PAIRED_PATH }] }] },
+        webcredentials: { apps: [appleAppId] },
+      })
+      return true
+    }
+    if (pathname === PAIRED_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+      page(
+        res,
+        200,
+        'Pairing',
+        '<p>Open the Hobwork app on your phone or Mac to finish pairing. If pairing did not finish, go back to the app and start it again.</p>',
+        'Pairing',
+      )
       return true
     }
     const nfc = NFC_PATH.exec(pathname)

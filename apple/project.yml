@@ -22,7 +22,8 @@ settings:
     # not offer Screen Time.
     HOBWORK_FAMILY_CONTROLS: YES
     # A host name such as hobwork.example.com adds it to Associated Domains, so
-    # NFC tag links to https://<host>/nfc/<tag> open the app.
+    # NFC tag links to https://<host>/nfc/<tag> open the app, and pairing with this
+    # host finishes on a link only the app can claim.
     HOBWORK_APPLINKS_HOST: ""
     # Entitlements files are picked by name from the two settings above.
     HOBWORK_FAMILY_CONTROLS_SUFFIX_YES: ""
@@ -70,6 +71,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
+        HobworkAppLinksHost: $(HOBWORK_APPLINKS_HOST)
         HobworkFamilyControls: $(HOBWORK_FAMILY_CONTROLS)
         # Hosts on the home network are often plain http on a local name or IP.
         # `.localhost` names are what the host's development setup uses; local

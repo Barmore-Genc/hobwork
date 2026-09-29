@@ -1,6 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns'
 import { request } from 'node:https'
-import { BlockList, isIP, type LookupFunction } from 'node:net'
+import type { LookupFunction } from 'node:net'
+import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 
 const MAX_BYTES = 16 * 1024
 const TIMEOUT_MS = 5000
@@ -9,45 +10,13 @@ export type FetchedDocument = { body: unknown; maxAgeSeconds: number | undefined
 
 // Anyone can make the host fetch a client ID URL, so only public addresses are
 // allowed. Checking inside the socket's lookup (not before the request) means a
-// DNS answer cannot change between the check and the connection. BlockList
-// matches IPv4-mapped IPv6 addresses against the IPv4 rules itself.
-const blocked = new BlockList()
-for (const [net, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.0.0.0', 24],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4],
-] as const) {
-  blocked.addSubnet(net, prefix, 'ipv4')
-}
-for (const [net, prefix] of [
-  ['::', 128],
-  ['::1', 128],
-  ['64:ff9b::', 96],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['ff00::', 8],
-] as const) {
-  blocked.addSubnet(net, prefix, 'ipv6')
-}
-
-export function isPublicAddress(address: string): boolean {
-  const family = isIP(address)
-  if (family === 0) return false
-  return !blocked.check(address, family === 4 ? 'ipv4' : 'ipv6')
-}
+// DNS answer cannot change between the check and the connection.
+const hostNetworks = hostNetworksBlockList()
 
 const publicLookup: LookupFunction = (hostname, options, callback) => {
   dnsLookup(hostname, { ...options, all: true }, (err, addresses: LookupAddress[]) => {
     if (err) return callback(err, '', 0)
-    const allowed = addresses.filter((a) => isPublicAddress(a.address))
+    const allowed = addresses.filter((a) => isPublicAddress(a.address, { extraBlocked: hostNetworks() }))
     if (allowed.length === 0) {
       return callback(new Error(`${hostname} does not resolve to a public address`), '', 0)
     }

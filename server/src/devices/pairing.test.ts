@@ -61,6 +61,45 @@ test('the pairing page checks the request and suggests a free name', async () =>
   expect((await fetch(`${app.base}/api/devices/pairing?${connectQuery()}`)).status).toBe(401)
 })
 
+test('the pairing redirect can be the universal link on the public host', async () => {
+  const universal = `${TEST_PUBLIC_URL}/devices/paired`
+  const check = (uri: string) => fetch(`${app.base}/api/devices/pairing?${connectQuery({ redirect_uri: uri })}`, { headers: { cookie } })
+  expect((await check(universal)).status).toBe(200)
+  expect((await check(`${universal}/`)).status).toBe(400)
+  expect((await check('https://evil.example/devices/paired')).status).toBe(400)
+
+  const { verifier, challenge } = pkce()
+  const request = { name: "Kaan's iPhone", platform: 'ios', challenge, state: 'abc', redirect_uri: universal }
+  const approve = await fetch(`${app.base}/api/devices/pairing/approve`, {
+    method: 'POST',
+    headers: writeHeaders(cookie),
+    body: JSON.stringify({ request, name: 'kaan-iphone' }),
+  })
+  const redirectTo = new URL(((await approve.json()) as { redirectTo: string }).redirectTo)
+  expect(redirectTo.origin + redirectTo.pathname).toBe(universal)
+  expect(redirectTo.searchParams.get('state')).toBe('abc')
+  const exchange = await fetch(`${app.base}/api/devices/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: redirectTo.searchParams.get('code'), codeVerifier: verifier }),
+  })
+  expect(exchange.status).toBe(200)
+
+  const deny = await fetch(`${app.base}/api/devices/pairing/deny`, {
+    method: 'POST',
+    headers: writeHeaders(cookie),
+    body: JSON.stringify({ request }),
+  })
+  expect(await deny.json()).toEqual({ redirectTo: `${universal}?error=access_denied&state=abc` })
+})
+
+test('the pairing link opened in a browser says what to do', async () => {
+  const res = await fetch(`${app.base}/devices/paired?code=abc`)
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-type')).toContain('text/html')
+  expect(await res.text()).toContain('Open the Hobwork app')
+})
+
 test('approving redirects to hobwork://paired with a code the app exchanges once with its verifier', async () => {
   const { verifier, challenge } = pkce()
   const request = { name: "Kaan's iPhone", platform: 'ios', challenge, state: 'abc', redirect_uri: 'hobwork://paired' }

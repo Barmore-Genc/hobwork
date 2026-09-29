@@ -11,7 +11,9 @@ import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 import { isMetadataDocumentUrl, redirectUriAllowed, type OAuthClient } from './clients.ts'
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from './grants.ts'
-import { isPublicAddress, type FetchedDocument } from './metadata-fetch.ts'
+import { isPublicAddress } from '../public-address.ts'
+import type { FetchedDocument } from './metadata-fetch.ts'
+import { rateLimitKey } from './rate-limit.ts'
 import { canonicalResource } from './routes.ts'
 import { s256 } from './secrets.ts'
 
@@ -604,6 +606,20 @@ test('helpers', () => {
   for (const address of ['127.0.0.1', '10.1.2.3', '192.168.1.1', '169.254.169.254', '::1', 'fd00::1', '::ffff:127.0.0.1']) {
     expect(isPublicAddress(address)).toBe(false)
   }
+  for (const address of [
+    '64:ff9b::7f00:1',
+    '64:ff9b:1::a00:1',
+    '64:ff9b:1:ffff::1',
+    '2002:7f00:1::1',
+    '2002:c0a8:101::',
+    '::7f00:1',
+    '::8.8.8.8',
+    '::ffff:10.0.0.1',
+    '::ffff:169.254.169.254',
+    '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+  ]) {
+    expect(isPublicAddress(address), address).toBe(false)
+  }
   expect(isPublicAddress('160.79.104.10')).toBe(true)
   expect(isPublicAddress('2606:4700::1')).toBe(true)
 })
@@ -659,7 +675,7 @@ test('approving with an unknown project or no project is refused', async () => {
   expect(host.db.prepare('SELECT count(*) AS n FROM oauth_grants').get()?.n).toBe(0)
 })
 
-test('registration is rate limited per address and unused clients are capped', async () => {
+test('registration is rate limited per address and the oldest unused clients make room', async () => {
   const register = () =>
     fetch(`${app.base}/oauth/register`, {
       method: 'POST',
@@ -676,12 +692,15 @@ test('registration is rate limited per address and unused clients are capped', a
   const insert = host.db.prepare(
     `INSERT INTO oauth_clients (id, name, redirect_uris, auth_method, created_at) VALUES (?, 'x', '[]', 'none', ?)`,
   )
-  for (let i = 0; i < 200 - 30; i++) insert.run(`hwc_filler${i}`, new Date(now).toISOString())
+  for (let i = 0; i < 200 - 30; i++) insert.run(`hwc_filler${i}`, new Date(now - 3 * 60 * 60 * 1000 - 1000 * (200 - i)).toISOString())
+  const count = () => Number(host.db.prepare('SELECT count(*) AS n FROM oauth_clients').get()?.n)
+  expect(count()).toBe(200)
   const full = await register()
-  expect(full.status).toBe(429)
-  expect((await jsonOf(full)).error_description).toContain('Too many apps')
-  now += 25 * 60 * 60 * 1000
-  expect((await register()).status).toBe(201)
+  expect(full.status).toBe(201)
+  expect(count()).toBe(200)
+  const registered = ((await jsonOf(full)) as { client_id: string }).client_id
+  expect(host.db.prepare('SELECT 1 FROM oauth_clients WHERE id = ?').get(registered)).toBeTruthy()
+  expect(host.db.prepare(`SELECT 1 FROM oauth_clients WHERE id = 'hwc_filler0'`).get()).toBeUndefined()
 })
 
 test('behind a trusted proxy the limits apply to each forwarded client', async () => {
@@ -711,7 +730,7 @@ test('without trusted proxies a forwarded address does not escape the limit', as
   expect((await register('198.51.100.200')).status).toBe(429)
 })
 
-test('authorization requests are rate limited per address and pending ones are capped', async () => {
+test('authorization requests are rate limited per address and the oldest pending ones make room', async () => {
   const { client_id } = await registeredClient()
   const location = async () =>
     new URL((await fetch(authorizeUrl(client_id).url, { redirect: 'manual' })).headers.get('location')!, app.base)
@@ -722,8 +741,21 @@ test('authorization requests are rate limited per address and pending ones are c
   const insert = host.db.prepare(
     `INSERT INTO oauth_requests (id, client_id, redirect_uri, code_challenge, resource, expires_at) VALUES (?, 'x', 'x', 'x', 'x', ?)`,
   )
-  for (let i = 0; i < 200 - 60; i++) insert.run(`filler${i}`, new Date(now + 60_000).toISOString())
-  expect((await location()).search).toBe('?error=too_many_requests')
-  now += 16 * 60 * 1000
+  for (let i = 0; i < 200; i++) insert.run(`filler${i}`, new Date(now + 60_000 + i * 1000).toISOString())
   expect((await location()).searchParams.get('request')).toBeTruthy()
+  const count = () => Number(host.db.prepare('SELECT count(*) AS n FROM oauth_requests').get()?.n)
+  expect(count()).toBe(200)
+  expect(host.db.prepare(`SELECT 1 FROM oauth_requests WHERE id = 'filler0'`).get()).toBeUndefined()
+  expect(host.db.prepare(`SELECT 1 FROM oauth_requests WHERE id = 'filler199'`).get()).toBeTruthy()
+})
+
+test('IPv6 clients are limited by their /64', () => {
+  expect(rateLimitKey('203.0.113.9')).toBe('203.0.113.9')
+  expect(rateLimitKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64')
+  expect(rateLimitKey('2001:db8:1:2::1')).toBe('2001:db8:1:2::/64')
+  expect(rateLimitKey('2001:0DB8:1:2:0:0:0:9')).toBe('2001:db8:1:2::/64')
+  expect(rateLimitKey('2001:db8:1:3::1')).not.toBe(rateLimitKey('2001:db8:1:2::1'))
+  expect(rateLimitKey('2001:db8::1')).toBe('2001:db8:0:0::/64')
+  expect(rateLimitKey('::1')).toBe('0:0:0:0::/64')
+  expect(rateLimitKey('unknown')).toBe('unknown')
 })

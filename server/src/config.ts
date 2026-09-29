@@ -75,6 +75,20 @@ function loadHomeAssistant(env: NodeJS.ProcessEnv): HomeAssistantConnection | un
   return { url, token }
 }
 
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '[::1]') return true
+  return /^127(\.\d{1,3}){3}$/.test(host)
+}
+
+function requireHttpsUnlessLoopback(name: string, url: URL) {
+  if (url.protocol === 'http:' && !isLoopbackHost(url.hostname)) {
+    throw new Error(
+      `${name} must use https unless it is a loopback address (localhost, *.localhost, 127.0.0.0/8 or [::1]), got "${url.origin}". Put a TLS-terminating reverse proxy in front of the host and use its https URL`,
+    )
+  }
+}
+
 function loadPublicUrl(env: NodeJS.ProcessEnv, port: number): string {
   const value = env.HOBWORK_PUBLIC_URL
   if (!value) return `http://localhost:${port}`
@@ -82,6 +96,7 @@ function loadPublicUrl(env: NodeJS.ProcessEnv, port: number): string {
   if (url.pathname !== '/' || url.search || url.hash) {
     throw new Error(`HOBWORK_PUBLIC_URL must be an origin without a path, like https://hobwork.example.com, got "${value}"`)
   }
+  requireHttpsUnlessLoopback('HOBWORK_PUBLIC_URL', url)
   return url.origin
 }
 
@@ -104,6 +119,7 @@ function loadAppsUrl(env: NodeJS.ProcessEnv, publicUrl: string): string {
   if (!url.hostname.includes('.') || /^[\d.]+$|^\[/.test(url.hostname)) {
     throw new Error(`HOBWORK_APPS_URL needs a domain name that hob names can go in front of, got "${value}"`)
   }
+  requireHttpsUnlessLoopback('HOBWORK_APPS_URL', url)
   if (url.origin === publicUrl) throw new Error('HOBWORK_APPS_URL must differ from HOBWORK_PUBLIC_URL')
   return url.origin
 }

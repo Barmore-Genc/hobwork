@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createTestHost } from '../test-host.ts'
 import { startTestApp, TEST_PUBLIC_URL } from '../test-web.ts'
 import { startFakeOidcProvider, type FakeOidcProvider } from './fake-oidc.ts'
+import { createSignInLink } from './links.ts'
 import { identityFromClaims, safeReturnTo } from './oidc.ts'
+import { signedIn } from '../test-web.ts'
 
 let host: ReturnType<typeof createTestHost>
 let provider: FakeOidcProvider
@@ -121,6 +123,64 @@ test('a flow cookie from another login attempt fails the PKCE and state checks',
   const second = await startLogin()
   const res = await finish(provider.approve(first.authorizationUrl, kaan), second.flowCookie)
   expect(res.headers.get('location')).toBe('/login?error=failed')
+})
+
+test('the flow cookie holds an opaque ID, not the state', async () => {
+  const { authorizationUrl, flowCookie } = await startLogin()
+  const state = new URL(authorizationUrl).searchParams.get('state')!
+  expect(flowCookie).not.toContain(state)
+  expect(host.db.prepare('SELECT count(*) AS n FROM oidc_flows').get()?.n).toBe(1)
+  expect(host.db.prepare('SELECT state FROM oidc_flows').get()?.state).toBe(state)
+})
+
+test('a flow cookie the host never issued is refused', async () => {
+  const { authorizationUrl } = await startLogin()
+  const planted = Buffer.from(JSON.stringify({ state: 'x', nonce: 'y', verifier: 'z', returnTo: '/' })).toString('base64url')
+  const res = await finish(provider.approve(authorizationUrl, kaan), `hobwork_oidc=${planted}`)
+  expect(res.headers.get('location')).toBe('/login?error=expired')
+})
+
+test('a flow can be finished once', async () => {
+  const { authorizationUrl, flowCookie } = await startLogin()
+  const callback = provider.approve(authorizationUrl, kaan)
+  expect((await finish(callback, flowCookie)).headers.get('location')).toBe('/projects/filament')
+  expect((await finish(callback, flowCookie)).headers.get('location')).toBe('/login?error=expired')
+})
+
+test('an expired flow is refused', async () => {
+  const { authorizationUrl, flowCookie } = await startLogin()
+  host.db.prepare(`UPDATE oidc_flows SET expires_at = '2000-01-01T00:00:00.000Z'`).run()
+  const res = await finish(provider.approve(authorizationUrl, kaan), flowCookie)
+  expect(res.headers.get('location')).toBe('/login?error=expired')
+})
+
+test('a flow cookie sent twice counts as no flow', async () => {
+  const { authorizationUrl, flowCookie } = await startLogin()
+  const other = await startLogin()
+  const res = await finish(provider.approve(authorizationUrl, kaan), `${flowCookie}; ${other.flowCookie}`)
+  expect(res.headers.get('location')).toBe('/login?error=expired')
+})
+
+test('a session cookie sent twice counts as signed out', async () => {
+  const first = signedIn(host)
+  const second = signedIn(host, 'kaan@example.com')
+  expect(await session(first.cookie)).toMatchObject({ user: { name: 'Kaan' } })
+  expect(await session(`${first.cookie}; ${second.cookie}`)).toMatchObject({ user: null })
+})
+
+test('sign-in links are only followed from the address bar or apps, not from other sites', async () => {
+  const { user } = signedIn(host)
+  const follow = (headers: Record<string, string>) => {
+    const link = createSignInLink(host.db, app.base, user.id)
+    return fetch(link, { redirect: 'manual', headers })
+  }
+  expect((await follow({ 'sec-fetch-site': 'cross-site' })).status).toBe(403)
+  expect((await follow({ 'sec-fetch-site': 'same-site' })).status).toBe(403)
+  expect((await follow({ 'sec-fetch-site': 'same-origin' })).status).toBe(403)
+  const typed = await follow({ 'sec-fetch-site': 'none' })
+  expect(typed.status).toBe(303)
+  expect(typed.headers.get('location')).toBe('/settings')
+  expect((await follow({})).status).toBe(303)
 })
 
 test('sign-out deletes the session and needs the CSRF header', async () => {

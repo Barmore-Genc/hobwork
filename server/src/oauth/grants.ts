@@ -12,7 +12,8 @@ export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 const CODE_TTL_MS = 5 * 60 * 1000
 export const REQUEST_TTL_MS = 15 * 60 * 1000
-// Anyone can start an authorization request, so the table is capped.
+// Anyone can start an authorization request, so the table is capped and the
+// oldest requests make room for new ones.
 export const MAX_PENDING_REQUESTS = 200
 
 export const ACCESS_TOKEN_PREFIX = 'hwa_'
@@ -52,10 +53,9 @@ const iso = (ms: number) => new Date(ms).toISOString()
 
 export function saveRequest(db: DatabaseSync, request: Omit<AuthorizationRequest, 'id'>, now: number): string {
   db.prepare('DELETE FROM oauth_requests WHERE expires_at <= ?').run(iso(now))
-  const pending = db.prepare('SELECT count(*) AS n FROM oauth_requests').get()
-  if (Number(pending?.n) >= MAX_PENDING_REQUESTS) {
-    throw new OAuthError('temporarily_unavailable', 'Too many connection requests are waiting', 429)
-  }
+  db.prepare(
+    'DELETE FROM oauth_requests WHERE id IN (SELECT id FROM oauth_requests ORDER BY expires_at DESC, rowid DESC LIMIT -1 OFFSET ?)',
+  ).run(MAX_PENDING_REQUESTS - 1)
   const id = randomBytes(24).toString('base64url')
   db.prepare(
     `INSERT INTO oauth_requests (id, client_id, redirect_uri, state, code_challenge, resource, scope, expires_at)

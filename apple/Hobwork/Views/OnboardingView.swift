@@ -103,7 +103,7 @@ struct OnboardingView: View {
                 let request = Pairing(host: host, deviceName: name)
                 let callback = try await webAuthenticationSession.authenticate(
                     using: request.url,
-                    callback: .customScheme(Pairing.callbackScheme),
+                    callback: request.webAuthenticationCallback,
                     preferredBrowserSession: .shared,
                     additionalHeaderFields: [:]
                 )
@@ -143,5 +143,14 @@ extension View {
             autocorrectionDisabled()
                 .labelsHidden()
         #endif
+    }
+}
+
+extension Pairing {
+    var webAuthenticationCallback: ASWebAuthenticationSession.Callback {
+        switch callback {
+        case let .customScheme(scheme): .customScheme(scheme)
+        case let .https(host, path): .https(host: host, path: path)
+        }
     }
 }

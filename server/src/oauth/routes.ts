@@ -18,7 +18,7 @@ import {
   type AuthorizationRequest,
 } from './grants.ts'
 import { fetchMetadataDocument, type FetchedDocument } from './metadata-fetch.ts'
-import { createRateLimiter } from './rate-limit.ts'
+import { createRateLimiter, rateLimitKey } from './rate-limit.ts'
 
 export const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
 const AUTHORIZATION_SERVER_PATH = '/.well-known/oauth-authorization-server'
@@ -75,7 +75,7 @@ export function createOAuthServer(options: {
 }) {
   const { db, publicUrl, auth } = options
   const now = options.now ?? Date.now
-  const clientAddress = (req: IncomingMessage) => options.clientAddress(req) ?? 'unknown'
+  const clientAddress = (req: IncomingMessage) => rateLimitKey(options.clientAddress(req) ?? 'unknown')
   const issuer = publicUrl
   const resource = `${publicUrl}${options.mcpPath}`
   const resourceMetadataUrl = `${publicUrl}${PROTECTED_RESOURCE_PATH}${options.mcpPath}`

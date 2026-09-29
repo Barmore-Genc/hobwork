@@ -44,15 +44,25 @@ export function findUserByEmail(db: DatabaseSync, email: string): User | undefin
   return row ? toUser(row) : undefined
 }
 
-// Returns undefined when the identity is not on the allowlist. Name and email
-// follow the provider, so changes there show up on the next sign-in.
+// Returns undefined when the identity is not on the allowlist, or when the
+// email belongs to a user already linked to another subject of the same
+// issuer: one identity per issuer, so a second account at the provider cannot
+// take over. Name and email follow the provider, so changes there show up on
+// the next sign-in.
 export function signInOidcUser(db: DatabaseSync, allowlist: Allowlist, identity: OidcIdentity): User | undefined {
   if (!identityAllowed(allowlist, identity)) return undefined
   // A new identity with a verified email joins the user who already has that
   // email, for example one who started with a sign-in link and a passkey.
-  const existing =
-    db.prepare('SELECT user_id FROM user_identities WHERE issuer = ? AND subject = ?').get(identity.issuer, identity.subject) ??
-    linkIdentityByEmail(db, identity)
+  const known = db
+    .prepare('SELECT user_id FROM user_identities WHERE issuer = ? AND subject = ?')
+    .get(identity.issuer, identity.subject)
+  const existing = known ?? linkIdentityByEmail(db, identity)
+  if (existing === 'refused') {
+    console.warn(
+      `Refused sign-in of subject ${identity.subject} at ${identity.issuer}: ${identity.email} belongs to a user linked to another subject of this issuer`,
+    )
+    return undefined
+  }
   if (existing) {
     const row = db
       .prepare(
@@ -86,10 +96,12 @@ export function signInOidcUser(db: DatabaseSync, allowlist: Allowlist, identity:
   }
 }
 
-function linkIdentityByEmail(db: DatabaseSync, identity: OidcIdentity): { user_id: number } | undefined {
+function linkIdentityByEmail(db: DatabaseSync, identity: OidcIdentity): { user_id: number } | 'refused' | undefined {
   if (!identity.email) return undefined
   const user = findUserByEmail(db, identity.email)
   if (!user) return undefined
+  const linked = db.prepare('SELECT 1 FROM user_identities WHERE user_id = ? AND issuer = ?').get(user.id, identity.issuer)
+  if (linked) return 'refused'
   db.prepare('INSERT INTO user_identities (user_id, issuer, subject) VALUES (?, ?, ?)').run(
     user.id,
     identity.issuer,

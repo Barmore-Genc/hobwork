@@ -2,6 +2,7 @@ import { basename, join, posix, resolve } from 'node:path'
 import { readRegularFile } from './files.ts'
 import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import { HeadTailOutput } from './mcp/output.ts'
+import { MIN_RELEASE_AGE_MINUTES } from './pipeline/pnpm-settings.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
 import type { EgressBlocked, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
@@ -108,7 +109,9 @@ function sandboxOptions(
     ...VM_RESOURCES,
     mounts: { [GUEST_DIR]: { hostPath: dir, vmDisk: ['node_modules'] } },
     // Without a TTY, pnpm refuses to recreate node_modules unless it runs in CI mode.
-    env: { CI: 'true' },
+    // An environment setting beats a hob's pnpm-workspace.yaml, and unlike a
+    // global config file it does not depend on where the VM's HOME or XDG_CONFIG_HOME point.
+    env: { CI: 'true', pnpm_config_minimum_release_age: String(MIN_RELEASE_AGE_MINUTES) },
     egress,
     label,
     secrets: environment?.secrets,

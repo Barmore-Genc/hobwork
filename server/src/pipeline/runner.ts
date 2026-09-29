@@ -10,6 +10,7 @@ import { saveBuild } from '../runtime/builds.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { ExecWorkspaceVm } from '../workspaces.ts'
 import { extraDependencies } from '../platform.ts'
+import { checkPnpmWorkspace, describeAllowedBuildsChange, explainFrozenInstallFailure } from './pnpm-settings.ts'
 import { checkViteConfig, validateHobworkJson } from './validate.ts'
 
 // `iconsCommand` renders the project icon into dist/ after the build, given
@@ -68,6 +69,11 @@ export type Candidate = {
   branch?: string
   agentId?: number
 }
+
+// The install of a hob's extras is the one that was tested, so a lockfile is required.
+export const FROZEN_INSTALL = 'pnpm install --frozen-lockfile'
+export const MISSING_LOCKFILE =
+  'pnpm-lock.yaml is missing. Run pnpm install in the workspace, then commit pnpm-lock.yaml'
 
 const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000
 // Full step output stays in pipeline_status. The log store gets enough to see what happened.
@@ -169,6 +175,12 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     vm ??= await options.startVm({ dir: await dir() })
     return exec(vm, command, timeoutMs)
   }
+  async function stopVm() {
+    const running = vm
+    if (!running) return
+    await running.stop()
+    vm = undefined
+  }
 
   const steps: Record<PipelineStepName, () => Promise<StepOutcome>> = {
     async validate() {
@@ -177,7 +189,13 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
       if (problems.length) return { status: 'failed', output: `hobwork.json is invalid:\n${problems.join('\n')}` }
       const viteProblem = checkViteConfig(raw, await readBlob(gitDir, commit, 'vite.config.ts'))
       if (viteProblem) return { status: 'failed', output: viteProblem }
-      return { status: 'passed', output: 'hobwork.json is valid' }
+      const workspaceFile = await readBlob(gitDir, commit, 'pnpm-workspace.yaml')
+      const pnpmProblems = checkPnpmWorkspace(workspaceFile)
+      if (pnpmProblems.length) return { status: 'failed', output: pnpmProblems.join('\n') }
+      // A candidate is a squashed commit on top of main, so its parent is the deployed version.
+      const previous = await readBlob(gitDir, `${commit}^`, 'pnpm-workspace.yaml')
+      const notice = describeAllowedBuildsChange(previous, workspaceFile)
+      return { status: 'passed', output: ['hobwork.json is valid', notice].filter(Boolean).join('\n\n') }
     },
     async install() {
       const raw = await readBlob(gitDir, commit, 'package.json')
@@ -189,7 +207,12 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
         return { status: 'failed', output: `package.json is not valid JSON: ${(err as Error).message}` }
       }
       if (!extras.length) return { status: 'skipped', output: 'No extra dependencies. Platform packages come with the VM.' }
-      return inVm('pnpm install')
+      if ((await readBlob(gitDir, commit, 'pnpm-lock.yaml')) === undefined) {
+        return { status: 'failed', output: `${MISSING_LOCKFILE}\n` }
+      }
+      const outcome = await inVm(FROZEN_INSTALL)
+      const hint = outcome.status === 'failed' ? explainFrozenInstallFailure(outcome.output) : undefined
+      return hint ? { ...outcome, output: `${outcome.output}\n${hint}` } : outcome
     },
     typecheck: () => inVm('pnpm run typecheck'),
     lint: () => inVm('pnpm run lint'),
@@ -201,7 +224,11 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
         outcome = { status: icons.status, output: `${outcome.output}\n${icons.output}` }
       }
       // The checkout is deleted after the run, so the build is kept for deploy.
-      if (outcome.status === 'passed') await saveBuild(host, { project: candidate.project, gitDir, commit, dir: await dir() })
+      // The VM is stopped first: while it runs, build code can still change dist/ as the copy reads it.
+      if (outcome.status === 'passed') {
+        await stopVm()
+        await saveBuild(host, { project: candidate.project, gitDir, commit, dir: await dir() })
+      }
       return outcome
     },
     migrations: () => migrationDryRun({ project: candidate.project, gitDir, commit }),

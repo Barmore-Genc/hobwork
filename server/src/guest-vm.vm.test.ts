@@ -86,6 +86,30 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     expect(JSON.parse(await ok('list_versions', { hob: p.hob }))).toHaveLength(2)
   })
 
+  test('installs are age-gated, blocked from running scripts and frozen in the pipeline', async () => {
+    const extras = { hob: p.hob, branch: 'extras' }
+    await ok('create_branch', extras)
+    expect(await ok('bash', { ...extras, command: 'pnpm config get minimumReleaseAge' })).toContain('4320')
+
+    const scripts = await ok('bash', { ...extras, command: 'pnpm add esbuild', timeout_seconds: 300 })
+    expect(scripts).toContain('ERR_PNPM_IGNORED_BUILDS')
+    await ok('bash', { ...extras, command: 'pnpm remove esbuild && rm -f pnpm-lock.yaml', timeout_seconds: 300 })
+
+    const added = await ok('bash', { ...extras, command: 'pnpm add is-odd@3.0.1', timeout_seconds: 300 })
+    expect(added, added).toMatch(/^exit code: 0/)
+    await ok('commit', { ...extras, message: 'Add is-odd' })
+    const merged = await ok('merge', { ...extras, summary: 'Add is-odd' })
+    expect(merged, merged).toMatch(/^Merged extras into main/)
+
+    await ok('create_branch', { ...extras, branch: 'no-lockfile' })
+    const noLock = { ...extras, branch: 'no-lockfile' }
+    await ok('bash', { ...noLock, command: 'rm pnpm-lock.yaml' })
+    await ok('commit', { ...noLock, message: 'Drop lockfile' })
+    const refused = await call('merge', { ...noLock, summary: 'Drop lockfile' })
+    expect(refused.isError, refused.text).toBe(true)
+    expect(refused.text).toContain('commit pnpm-lock.yaml')
+  })
+
   test('egress follows hobwork.json and the VM restarts when it changes', async () => {
     const status = 'curl -s -o /dev/null -w "%{http_code}" https://example.com/'
     expect(await ok('bash', { ...p, command: status })).toContain('403')

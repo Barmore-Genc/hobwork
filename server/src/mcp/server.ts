@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
+import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import type { AuthenticatedAgent } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -188,9 +189,9 @@ export function createMcpServer({
       if (raw === undefined) configError = `hobwork.json is missing on ${DEFAULT_BRANCH}`
       else {
         try {
-          config = JSON.parse(raw)
+          config = parseHobworkJson(raw) as Record<string, unknown>
         } catch (err) {
-          configError = `hobwork.json on ${DEFAULT_BRANCH} is not valid JSON: ${(err as Error).message}`
+          configError = `hobwork.json on ${DEFAULT_BRANCH} cannot be parsed: ${(err as Error).message}`
         }
       }
       const { crons = {}, webhooks = {}, routes = {}, triggers = {}, ...settings } = config

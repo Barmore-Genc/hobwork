@@ -140,6 +140,21 @@ test('an invalid hobwork.json fails validation before a VM starts', async () => 
   expect(vmStarts).toBe(0)
 })
 
+test('merges a hobwork.json with comments unless vite.config.ts reads it with JSON.parse', async () => {
+  const hobworkJson = '{\n  // Nothing yet.\n  "egress": ["api.example.com",],\n}\n'
+  await branchWith('comments', { 'hobwork.json': hobworkJson })
+  expect((await delivery().merge({ project, branch: 'comments', summary: 'Comment', agent })).status).toBe('merged')
+
+  await branchWith('old-vite', {
+    'hobwork.json': hobworkJson.replace('Nothing yet', 'Still nothing'),
+    'vite.config.ts': "const config = JSON.parse(readFileSync('hobwork.json', 'utf8'))\n",
+  })
+  const result = await delivery().merge({ project, branch: 'old-vite', summary: 'Old vite config', agent })
+  if (result.status !== 'failed') throw new Error(JSON.stringify(result))
+  expect(result.run.failedStep).toBe('validate')
+  expect(result.run.steps[0]?.output).toContain("import { hobworkViteConfig } from '@hobwork/sdk/vite'")
+})
+
 test('reports a rebase conflict without changing main', async () => {
   await createBranch(host, project, 'one')
   await createBranch(host, project, 'two')

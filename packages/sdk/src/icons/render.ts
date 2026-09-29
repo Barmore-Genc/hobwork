@@ -1,6 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, normalize } from 'node:path'
+// Not ../hobwork-json.js: only this directory is mounted into the pipeline VM.
+import { parseHobworkJson } from '@hobwork/sdk/hobwork-json'
 import sharp from 'sharp'
 import {
   FAVICON_SIZE,
@@ -78,7 +80,7 @@ function renderLetter(icon: LetterIcon, size: number): Promise<Buffer> {
 // Renders the icon from `dir`/hobwork.json into `dir`/dist/_hobwork/icons.
 // The default icon's letter needs a font that fontconfig finds.
 export async function renderIcons(options: { dir: string; project: string }): Promise<void> {
-  const config = JSON.parse(readFileSync(join(options.dir, 'hobwork.json'), 'utf8')) as { icon?: unknown }
+  const config = parseHobworkJson(readFileSync(join(options.dir, 'hobwork.json'), 'utf8')) as { icon?: unknown }
   const source = iconSource(options.project, config.icon)
   let render: (size: number) => Promise<Buffer>
   if ('letter' in source) render = (size) => renderLetter(source, size)

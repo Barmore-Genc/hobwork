@@ -91,7 +91,7 @@ afterEach(() => {
 })
 
 test('workspace VMs mount the checkout with node_modules on the VM disk', async () => {
-  writeFileSync(join(dir, 'hobwork.json'), JSON.stringify({ egress: ['api.example.com'] }))
+  writeFileSync(join(dir, 'hobwork.json'), '{\n  // Spoolman\n  "egress": ["api.example.com",],\n}\n')
   const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
   const [sandbox] = sandboxes
   expect(sandbox?.options).toMatchObject({

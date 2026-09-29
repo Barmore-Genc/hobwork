@@ -7,6 +7,8 @@
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
     "./testing": "./src/testing.ts",
+    "./hobwork-json": "./src/hobwork-json.js",
+    "./vite": "./src/vite.js",
     "./hobwork.schema.json": "./hobwork.schema.json"
   },
   "scripts": {
@@ -15,13 +17,19 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
     "@twemoji/svg": "15.0.0",
     "@types/node": "^24.13.3",
+    "@vitejs/plugin-react": "6.1.1",
     "ajv": "^8.17.1",
     "oxlint": "^1.81.0",
     "sharp": "0.35.4",
     "typescript": "~6.0.2",
+    "vite": "8.3.1",
     "vitest": "^4.0.0",
     "zod": "^4.6.5"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   }
 }

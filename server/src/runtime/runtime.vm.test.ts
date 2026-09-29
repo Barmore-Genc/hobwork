@@ -91,7 +91,9 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
     config.routes['GET /boom/:id'] = { handler: 'src/boom.ts' }
     config.routes['GET /lights'] = { handler: 'src/lights.ts' }
     config.crons = { tick: { schedule: '* * * * *', handler: 'src/tick.ts' } }
-    await ok('write_file', { ...p, path: 'hobwork.json', content: JSON.stringify(config, null, 2) })
+    // The comment checks that the host, the build and the icon renderer all accept JSONC.
+    const content = `// Added by the runtime test.\n${JSON.stringify(config, null, 2)}`
+    await ok('write_file', { ...p, path: 'hobwork.json', content })
     await ok('write_file', {
       ...p,
       path: 'src/boom.ts',

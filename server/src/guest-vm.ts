@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join, posix, resolve } from 'node:path'
+import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
 import type { EgressBlocked, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
@@ -69,9 +70,9 @@ function guestCwd(cwd: string): string {
   return path
 }
 
-function readJson(path: string): unknown {
+function readJson(path: string, parse: (text: string) => unknown = JSON.parse): unknown {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'))
+    return parse(readFileSync(path, 'utf8'))
   } catch {
     return undefined
   }
@@ -80,7 +81,7 @@ function readJson(path: string): unknown {
 // Invalid files count as empty. The pipeline reports them, and the agent can
 // still run commands to fix them.
 export function hobworkEgress(dir: string): string[] {
-  const config = readJson(join(dir, 'hobwork.json'))
+  const config = readJson(join(dir, 'hobwork.json'), parseHobworkJson)
   const egress = (config as { egress?: unknown } | undefined)?.egress
   return Array.isArray(egress) ? egress.filter((host): host is string => typeof host === 'string') : []
 }

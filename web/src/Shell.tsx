@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { api, type SessionUser } from './api.ts'
+import { useAttention } from './attention.ts'
 import { Link } from './router.tsx'
 import { Logo } from './ui.tsx'
 
@@ -7,6 +8,7 @@ type NavItem = { to: string; label: string; match: (pathname: string) => boolean
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Projects', match: (p) => p === '/' || p.startsWith('/projects/') },
+  { to: '/activity', label: 'Activity', match: (p) => p === '/activity' },
   { to: '/secrets', label: 'Secrets', match: (p) => p.startsWith('/secrets') },
   { to: '/agents', label: 'Agent access', match: (p) => p.startsWith('/agents') },
   { to: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
@@ -27,6 +29,7 @@ export function Shell({
   children: ReactNode
 }) {
   const [signingOut, setSigningOut] = useState(false)
+  const attention = useAttention(pathname)
 
   async function signOut() {
     setSigningOut(true)
@@ -77,6 +80,16 @@ export function Shell({
                         />
                       )}
                       {item.label}
+                      {item.to === '/activity' && attention.count > 0 && (
+                        <span
+                          className="ml-2 rounded-full bg-danger px-1.5 text-[0.75rem] leading-5 font-semibold text-on-danger tabular"
+                          title="New problems since you last looked"
+                        >
+                          {attention.count}
+                          {attention.more && '+'}
+                          <span className="sr-only"> new problems</span>
+                        </span>
+                      )}
                     </Link>
                   </li>
                 )

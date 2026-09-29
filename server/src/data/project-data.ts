@@ -332,6 +332,12 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       await pool.close(branchDbPath(project, branch))
     },
 
+    // Closes the production DB and forgets its warnings, before it is moved away.
+    async closeProject(project: string): Promise<void> {
+      await pool.close(dbPath(project))
+      stats.delete(project)
+    },
+
     status(project: string): DbStatus {
       const s = statsOf(project)
       checkSize(project)

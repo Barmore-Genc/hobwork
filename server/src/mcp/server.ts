@@ -50,6 +50,7 @@ Rules:
 - Every change needs tests. Merging runs typecheck, lint, tests and build, and refuses on failure.
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.
 - Debug from logs and invocation records. Do not guess.
+- Only people can delete a project, in the Hobwork web UI. There is no tool for it.
 - Only the user creates secrets and sets their values and the hosts they may be sent to, in the Hobwork UI. When a project needs one, look for it with list_secrets and assign it to the project with assign_secret. If it does not exist, ask the user to create it in Hobwork with the hosts it may be sent to, then assign it. Handlers read it as ctx.secrets.<env name>.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
 

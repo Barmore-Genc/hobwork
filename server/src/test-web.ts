@@ -6,9 +6,12 @@ import { signInOidcUser, type User } from './auth/users.ts'
 import { createApp, type WebOptions } from './app.ts'
 import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
+import type { HomeAssistant } from './homeassistant/client.ts'
+import type { HomeAssistantSettings } from './homeassistant/settings.ts'
 import type { Host } from './host.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
+import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
 
 export const TEST_PUBLIC_URL = 'http://hobwork.test'
 
@@ -32,11 +35,17 @@ export async function startTestApp(
     runtime?: Runtime
     data?: ProjectData
     backups?: Backups
+    workspaces?: WorkspaceManager<ExecWorkspaceVm>
+    homeAssistant?: HomeAssistant
+    homeAssistantSettings?: HomeAssistantSettings
   } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
   const server = createApp(host, {
     delivery: options.delivery,
+    workspaces: options.workspaces,
+    homeAssistant: options.homeAssistant,
+    homeAssistantSettings: options.homeAssistantSettings,
     secrets: options.secrets,
     runtime: options.runtime,
     data: options.data,

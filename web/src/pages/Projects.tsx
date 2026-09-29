@@ -1,4 +1,5 @@
 import { api } from '../api.ts'
+import { useLocation } from '../navigation.ts'
 import { exactTime, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Notice, PageHeading, StatusBadge } from '../ui.tsx'
@@ -6,13 +7,15 @@ import { useLoad } from '../useLoad.ts'
 
 export function ProjectsPage() {
   const { data: projects, error } = useLoad(api.projects)
+  const deleted = useLocation().search.get('deleted')
 
   return (
     <div>
       <PageHeading>Projects</PageHeading>
       <p className="mt-3 max-w-prose text-muted">Everything your agents have built for the house, and the version each one is running.</p>
 
-      <div className="mt-10">
+      <div className="mt-10 space-y-6">
+        {deleted && <Notice tone="success">Deleted {deleted}.</Notice>}
         {error && <Notice tone="error">{error}</Notice>}
         {projects?.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-6 py-10">

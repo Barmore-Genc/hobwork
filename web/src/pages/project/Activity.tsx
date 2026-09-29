@@ -25,10 +25,10 @@ function toQuery(filter: Filter, before?: number) {
   }
 }
 
-const selectClass =
+export const selectClass =
   'min-h-10 rounded-md border border-border bg-surface-raised px-3 text-fg focus:border-accent focus:outline-none'
 
-function RunRow({ project, run }: { project: string; run: Invocation }) {
+export function RunRow({ project, run, showProject = false }: { project: string; run: Invocation; showProject?: boolean }) {
   return (
     <li>
       <Link
@@ -44,6 +44,12 @@ function RunRow({ project, run }: { project: string; run: Invocation }) {
           </p>
           <p className="text-sm text-muted">
             {KIND_LABELS[run.kind]}
+            {showProject && (
+              <>
+                {' in '}
+                <span className="font-semibold text-fg">{project}</span>
+              </>
+            )}
             {run.manual && ', started by an agent'}
             {run.httpStatus !== null && `, answered ${run.httpStatus}`}
           </p>

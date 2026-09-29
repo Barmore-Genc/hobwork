@@ -1,4 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { allActivityRoutes } from './api/all-activity.ts'
+import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
+import { projectDeletionRoutes } from './api/project-deletion.ts'
+import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
 import { createAuth } from './auth/auth.ts'
 import { createOidcLogin } from './auth/oidc.ts'
@@ -11,6 +15,7 @@ import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
+import type { HomeAssistantSettings } from './homeassistant/settings.ts'
 import type { Host } from './host.ts'
 import { json } from './http.ts'
 import { bearerTokenAuth, createMcpHandler, MCP_PATH, mcpAuth, type McpAuthenticator } from './mcp/http.ts'
@@ -39,6 +44,7 @@ export function createApp(
     delivery?: Delivery
     authenticate?: McpAuthenticator
     homeAssistant?: HomeAssistant
+    homeAssistantSettings?: HomeAssistantSettings
     runtime?: Runtime
     data?: ProjectData
     secrets?: SecretStore
@@ -90,6 +96,16 @@ export function createApp(
     secrets: options.secrets,
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
+  const handleUserApi = userRoutes(auth, [
+    ...allActivityRoutes(host),
+    ...projectDeletionRoutes({ host, workspaces, delivery, runtime: options.runtime, data: options.data }),
+    ...homeAssistantSettingsRoutes({
+      host,
+      settings: options.homeAssistantSettings,
+      ha: options.homeAssistant,
+      runtime: options.runtime,
+    }),
+  ])
   const handleRuntime =
     options.runtime &&
     createRuntimeHttp(
@@ -117,6 +133,7 @@ export function createApp(
       if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
       if (await handleBackups(req, res, pathname)) return
+      if (await handleUserApi(req, res, pathname, new URLSearchParams(search))) return
       if (await handleApi(req, res, pathname, new URLSearchParams(search))) return
       if (!pathname.startsWith('/api/') && handleStatic(req, res, pathname)) return
       json(res, 404, { error: 'not found' })

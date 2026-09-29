@@ -10,3 +10,17 @@ export const KIND_LABELS: Record<InvocationKind, string> = {
   webhook: 'Webhook',
   trigger: 'Home Assistant',
 }
+
+export const EVENT_LABELS: Record<string, string> = {
+  start: 'Started',
+  stop: 'Stopped',
+  crash: 'Crashed',
+  deploy: 'Update',
+  'auto-revert': 'Rolled back',
+  'egress-blocked': 'Blocked',
+  trigger: 'Home Assistant',
+  pipeline: 'Check',
+  migration: 'Data change',
+  db: 'Data',
+  secret: 'Secret',
+}

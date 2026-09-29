@@ -8,8 +8,10 @@ import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
+import { createHomeAssistantSettings } from './homeassistant/settings.ts'
 import { createTriggerRegistry } from './homeassistant/triggers.ts'
 import { repoPath, type Host } from './host.ts'
+import { startHousekeeping } from './housekeeping.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
@@ -27,10 +29,12 @@ const host: Host = { db: openHostDb(join(config.dataDir, 'hobwork.db')), dataDir
 // Keeps hooks current in repos created by an older host version.
 for (const project of listProjects(host)) installHooks(repoPath(host, project.name))
 
-const secrets = createSecretStore(host, loadSecretKey(config.dataDir, config.secretKey))
+const secretKey = loadSecretKey(config.dataDir, config.secretKey)
+const secrets = createSecretStore(host, secretKey)
+const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
 const homeAssistant = createHomeAssistant({
-  connection: () => config.homeAssistant,
+  connection: () => homeAssistantSettings.connection(),
   logger: homeAssistantClientLogger(host, () =>
     listProjects(host).map((p) => p.name).filter((name) => triggers.active(name).length > 0)),
 })
@@ -80,6 +84,7 @@ const delivery = createDelivery(host, {
 const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime })
 homeAssistant.start()
 await runtime.start()
+const housekeeping = startHousekeeping(host, runtime)
 
 if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
   console.warn('HOBWORK_ALLOWED_USERS is empty, so nobody can sign in to the web UI.')
@@ -97,6 +102,7 @@ const server = createApp(host, {
   workspaces,
   delivery,
   homeAssistant,
+  homeAssistantSettings,
   runtime,
   data,
   secrets,
@@ -117,6 +123,7 @@ ssh?.listen(sshPort, config.host, () => {
 async function shutdown() {
   homeAssistant.stop()
   backups?.stop()
+  housekeeping.stop()
   ssh?.close()
   await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
   await data.stop()

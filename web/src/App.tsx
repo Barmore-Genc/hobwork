@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, setSignedOutHandler, type Session } from './api.ts'
 import { AgentsPage } from './pages/Agents.tsx'
+import { AllActivityPage } from './pages/AllActivity.tsx'
 import { ConnectPage } from './pages/Connect.tsx'
 import { LoginPage } from './pages/Login.tsx'
 import { ProjectPage } from './pages/Project.tsx'
@@ -17,6 +18,7 @@ import { Notice } from './ui.tsx'
 
 function Page({ pathname }: { pathname: string }) {
   if (pathname === '/') return <ProjectsPage />
+  if (pathname === '/activity') return <AllActivityPage />
   if (pathname === '/agents') return <AgentsPage />
   if (pathname === '/settings') return <SettingsPage />
   if (pathname === '/secrets') return <SecretsPage />

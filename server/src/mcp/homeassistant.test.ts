@@ -186,7 +186,7 @@ test('tools report when Home Assistant is not configured', async () => {
     ] as const) {
       const result = await other.call(name, args)
       expect(result.isError).toBe(true)
-      expect(textOf(result)).toContain('Home Assistant is not configured')
+      expect(textOf(result)).toContain('Home Assistant is not connected to this Hobwork host')
     }
   } finally {
     await other.close()

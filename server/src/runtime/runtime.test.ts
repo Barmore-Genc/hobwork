@@ -1,6 +1,6 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { randomBytes } from 'node:crypto'
@@ -25,6 +25,9 @@ import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxe
 import { rotateWebhookToken } from './webhooks.ts'
 
 const HOST_ACTOR: Actor = { kind: 'host' }
+
+// Every test builds and starts runners as host processes, which is slow when the whole suite runs in parallel.
+vi.setConfig({ testTimeout: 30_000 })
 
 let host: ReturnType<typeof createTestHost>
 let sandboxes: FakeRuntimeSandboxes

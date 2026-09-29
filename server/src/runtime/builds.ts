@@ -15,7 +15,7 @@ const BUILD_TIMEOUT_MS = 10 * 60 * 1000
 
 export class BuildError extends Error {}
 
-function projectBuildsDir(host: Host, project: string): string {
+export function projectBuildsDir(host: Host, project: string): string {
   return join(host.dataDir, 'builds', project)
 }
 

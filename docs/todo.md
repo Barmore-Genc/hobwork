@@ -19,4 +19,4 @@ Check which of HealthKit, AlarmKit and Family Controls macOS 26 supports before 
 
 ## Storage use in the projects list
 
-Show how much disk each project uses in the web UI's projects list, with the project DB broken out since it is the part that grows. Other parts worth counting: the bare repo, branch DB copies, builds and logs. Sizes can be read from the data dir; cache them or compute them in the background so the list stays fast.
+Show how much disk each project uses in the web UI's projects list, with the project DB broken out since it is the part that grows. Other parts worth counting: the bare repo, branch DB copies, builds and logs. Agents get the same numbers from the `list_projects` and `get_project` MCP tools. Sizes can be read from the data dir; cache them or compute them in the background so the list stays fast.

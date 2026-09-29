@@ -14,9 +14,11 @@ The template's `hobwork.json` should include the field with a placeholder, and t
 
 ## Device capabilities in the Apple apps
 
-Expose more of the phone to handlers through `ctx.device`, as calls over the device WebSocket or as `device` triggers. Phase 10 in `plan.md` has the order for the first ones.
+Expose more of the phone and Mac to handlers through `ctx.device`, as calls over the device WebSocket or as `device` triggers. Phase 10 in `plan.md` has the order for the first ones. Each capability goes into the macOS app too where macOS has the framework; the host should tell handlers which capabilities a device supports so they can pick a device.
 
-- NFC: read and write tags (Core NFC, NDEF). Scanning a tag can fire a trigger. Reading needs the app in the foreground, unless the tag holds a URL that opens the app.
+- NFC: read and write tags (Core NFC, NDEF). Scanning a tag can fire a trigger. Reading needs the app in the foreground, unless the tag holds a URL that opens the app. iOS only, Macs have no NFC reader.
 - Apple Health: read samples (HealthKit) for handlers to query or sync, with the person choosing which types to share.
 - Alarms and timers: create, edit, delete and turn off alarms and countdown timers (AlarmKit). This covers alarms the app made; alarms in the Clock app are out of reach.
-- Screen Time and Focus: block or allow apps and turn it on or off on a schedule or from a handler (Family Controls, Managed Settings, Device Activity). Use case: a handler that blocks certain apps on a phone at a set time. iOS has no public API to turn Focus modes on or off; check whether a Shortcuts action the app provides can do it.
+- Screen Time and Focus: block or allow apps and turn it on or off on a schedule or from a handler (Family Controls, Managed Settings, Device Activity). Use case: a handler that blocks certain apps on a phone at a set time. iOS has no public API to turn Focus modes on or off; check whether a Shortcuts action the app provides can do it. On macOS, the same for the Mac's apps and Focus.
+
+Check which of HealthKit, AlarmKit and Family Controls macOS 26 supports before planning the Mac side.

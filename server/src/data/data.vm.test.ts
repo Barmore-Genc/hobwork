@@ -85,7 +85,13 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets }),
     }
     pipelineVms = pipelineVmBackend(vmOptions)
-    workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: workspaceVmBackend(vmOptions) })
+    workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
+      startVm: workspaceVmBackend(
+        vmOptions,
+        undefined,
+        (workspace, token) => workspaces.sessionAgent(workspace.project, workspace.branch, token) !== undefined,
+      ),
+    })
     let delivery: Delivery | undefined
     runtime = createRuntime(host, {
       createSandbox: createGondolinSandbox,
@@ -145,7 +151,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
 
   test('handlers keep data in the project DB, tests get a fresh one, the workspace a copy', async () => {
     await ok('create_hob', { name: 'filament' })
-    secrets.create({ name: 'Echo key', value: SECRET_VALUE, hosts: [ECHO_HOST] }, { kind: 'host' })
+    secrets.create({ name: 'Echo key', value: SECRET_VALUE, hosts: [ECHO_HOST], headers: ['x-api-key'] }, { kind: 'host' })
     await ok('assign_secret', { hob: 'filament', secret: 'Echo key', env_name: 'ECHO_KEY' })
     await ok('create_branch', p)
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))

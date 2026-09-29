@@ -44,6 +44,13 @@ struct MainView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
         }
+        .alert(model.nfcNotice ?? "", isPresented: nfcNoticeShown) {
+            Button("OK") {}
+        }
+    }
+
+    private var nfcNoticeShown: Binding<Bool> {
+        Binding(get: { model.nfcNotice != nil && !showingSettings }, set: { if !$0 { model.nfcNotice = nil } })
     }
 }
 

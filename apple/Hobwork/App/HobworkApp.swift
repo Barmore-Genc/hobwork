@@ -27,6 +27,10 @@ struct HobworkApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: delegate.model)
+                .onOpenURL { delegate.model.open($0) }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL { delegate.model.open(url) }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

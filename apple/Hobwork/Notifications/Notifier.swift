@@ -12,6 +12,8 @@ final class Notifier: NSObject, CapabilityHandler {
         var event: DeviceEvent?
         /// Opened in the web view when the tap brings the app to the front.
         var path: String?
+        /// A tapped command push, run by the app.
+        var command: DeviceCommand?
     }
 
     private let center: UNUserNotificationCenter
@@ -63,6 +65,11 @@ final class Notifier: NSObject, CapabilityHandler {
         return .object(["id": .string(notification.id)])
     }
 
+    nonisolated static func response(to push: CommandPush, actionIdentifier: String) -> Response? {
+        guard actionIdentifier == UNNotificationDefaultActionIdentifier else { return nil }
+        return Response(event: nil, path: nil, command: push.command)
+    }
+
     nonisolated static func response(to notification: NotificationPayload?, actionIdentifier: String) -> Response? {
         guard let notification else { return nil }
         switch actionIdentifier {
@@ -90,9 +97,14 @@ extension Notifier: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let notification = NotificationPayload(userInfo: response.notification.request.content.userInfo)
-        guard let response = Self.response(to: notification, actionIdentifier: response.actionIdentifier) else { return }
-        await deliver(response)
+        let userInfo = response.notification.request.content.userInfo
+        let result = if let push = CommandPush(userInfo: userInfo) {
+            Self.response(to: push, actionIdentifier: response.actionIdentifier)
+        } else {
+            Self.response(to: NotificationPayload(userInfo: userInfo), actionIdentifier: response.actionIdentifier)
+        }
+        guard let result else { return }
+        await deliver(result)
     }
 
     private func deliver(_ response: Response) async {

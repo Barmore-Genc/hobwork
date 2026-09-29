@@ -32,6 +32,12 @@ struct SettingsView: View {
                     }
                 }
 
+                AlarmsSection(model: model)
+                ScreenTimeSection(model: model)
+                FocusSection(model: model)
+                NFCSection(model: model)
+                HealthSection(model: model)
+
                 Section {
                     Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                 } footer: {
@@ -57,8 +63,18 @@ struct SettingsView: View {
                     }
                 }
             }
-            .task { notifications = await model.notifier.authorizationStatus() }
+            .task {
+                notifications = await model.notifier.authorizationStatus()
+                await model.refreshCapabilities()
+            }
+            .alert(model.nfcNotice ?? "", isPresented: nfcNoticeShown) {
+                Button("OK") {}
+            }
         }
+    }
+
+    private var nfcNoticeShown: Binding<Bool> {
+        Binding(get: { model.nfcNotice != nil }, set: { if !$0 { model.nfcNotice = nil } })
     }
 
     private var connectionText: String {
@@ -78,6 +94,55 @@ struct SettingsView: View {
         case .denied: "Off"
         case .notDetermined: "Not set up"
         default: ""
+        }
+    }
+}
+
+private struct AlarmsSection: View {
+    let model: AppModel
+
+    var body: some View {
+        Section {
+            LabeledContent("Alarms and timers", value: model.capabilities.alarms ? "Allowed" : "Not allowed")
+            if !model.capabilities.alarms {
+                Button("Allow Alarms") { Task { await model.requestAlarms() } }
+            }
+        } footer: {
+            Text("Projects can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
+        }
+    }
+}
+
+private struct FocusSection: View {
+    let model: AppModel
+
+    @State private var labels = FocusLabels()
+
+    var body: some View {
+        Section {
+            LabeledContent("Focus", value: labels.setUp ? "Set up" : "Not set up")
+            if !labels.active.isEmpty {
+                LabeledContent("Active", value: labels.active.joined(separator: ", "))
+            }
+        } footer: {
+            Text("To let projects know when a Focus turns on or off, open Settings, go to Focus, choose a Focus, tap Add Filter, choose Hobwork and enter a label such as work.")
+        }
+        .task { labels = FocusLabels.file.read() }
+    }
+}
+
+private struct NFCSection: View {
+    let model: AppModel
+
+    var body: some View {
+        Section {
+            if model.capabilities.nfc {
+                Button("Scan Tag") { Task { await model.scanTag() } }
+            } else {
+                LabeledContent("NFC", value: "Not available")
+            }
+        } footer: {
+            Text("Scanning a tag written by a project runs that project's handler for it.")
         }
     }
 }

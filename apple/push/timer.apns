@@ -1,0 +1,22 @@
+{
+  "Simulator Target Bundle": "dev.bgenc.hobwork",
+  "aps": {
+    "alert": {
+      "title": "kitchen",
+      "body": "Timer change for this iPhone. Open Hobwork if it did not apply."
+    },
+    "mutable-content": 1,
+    "interruption-level": "passive",
+    "thread-id": "kitchen"
+  },
+  "hobwork": {
+    "project": "kitchen",
+    "command": {
+      "id": "3b0f2c1e-6f4d-4a8e-9c1b-2d7e5f6a8b90",
+      "capability": "alarms",
+      "method": "timer",
+      "args": { "title": "Tea", "seconds": 240 },
+      "expiresAt": "2099-01-01T00:00:00Z"
+    }
+  }
+}

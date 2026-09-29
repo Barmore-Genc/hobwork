@@ -36,7 +36,7 @@ const PREVIEW = `http://add-spools--filament.${TEST_APPS_DOMAIN}`
 const HOBWORK_JSON = {
   routes: { 'GET /spools': { handler: 'src/spools.ts' }, 'POST /lights': { handler: 'src/lights.ts' } },
   crons: { tick: { schedule: '0 8 * * *', handler: 'src/tick.ts' } },
-  webhooks: { scanned: { handler: 'src/scanned.ts' } },
+  webhooks: { scanned: { handler: 'src/scanned.ts' }, page: { handler: 'src/page.ts' } },
   triggers: { button: { homeassistant: { trigger: 'state', entity_id: 'input_button.desk' }, handler: 'src/tick.ts' } },
 }
 
@@ -52,6 +52,9 @@ function files(where: string, extra: Files = {}, idleTimeout?: string): Files {
     'handlers/spools.js': `export default async () => ({ where: '${where}' })`,
     'handlers/tick.js': `export default async (ctx) => ({ where: '${where}', manual: ctx.invocation.manual })`,
     'handlers/scanned.js': `export default async (ctx) => ({ where: '${where}', body: await ctx.request.text() })`,
+    'handlers/page.js': `export default async () => new Response('<script>fetch("/api/session")</script>', {
+      headers: [['Content-Type', 'text/html'], ['Content-Security-Policy', 'default-src *'], ['Set-Cookie', 'a=1'], ['set-cookie', 'b=2']],
+    })`,
     'handlers/lights.js': `export default async (ctx) => {
       const state = (await ctx.ha.getState('light.kitchen'))?.state
       try {
@@ -185,6 +188,17 @@ test('branch webhooks have their own URL and token', async () => {
   expect((await hook('nope--filament', branchToken)).status).toBe(404)
   const [latest] = listInvocations(host, { project: 'filament', branch: 'add-spools', limit: 1 })
   expect(latest).toMatchObject({ kind: 'webhook', branch: 'add-spools', manual: false })
+})
+
+test('branch webhook pages are sandboxed and cannot set cookies', async () => {
+  await start()
+  await seedBranch(host, 'filament', 'add-spools', files('branch'))
+  const token = rotateBranchWebhookToken(host, 'filament', 'add-spools', 'page')
+  const res = await fetch(`${app.base}/hooks/add-spools--filament/page/${token}`)
+  expect(await res.text()).toContain('<script>')
+  expect(res.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'")
+  expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  expect(res.headers.getSetCookie()).toEqual([])
 })
 
 test('previews use the branch DB, never production', async () => {

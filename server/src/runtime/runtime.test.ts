@@ -47,9 +47,10 @@ const HOBWORK_JSON = {
     'GET /spools': { handler: 'src/spools.ts' },
     'GET /spools/:id': { handler: 'src/spool.ts' },
     'POST /fail': { handler: 'src/fail.ts' },
+    'GET /page': { handler: 'src/page.ts' },
   },
   crons: { tick: { schedule: '0 8 * * *', handler: 'src/tick.ts' } },
-  webhooks: { scanned: { handler: 'src/scanned.ts' } },
+  webhooks: { scanned: { handler: 'src/scanned.ts' }, page: { handler: 'src/page.ts' } },
   idleTimeout: '1h',
 }
 
@@ -57,6 +58,9 @@ const HANDLERS: Files = {
   'handlers/spools.js': `export default async () => [{ id: 1, color: 'red' }]`,
   'handlers/spool.js': `export default async (ctx) => ({ id: ctx.params.id, query: new URL(ctx.request.url).search })`,
   'handlers/fail.js': `export default async () => { console.error('failing now'); throw new Error('no spools today') }`,
+  'handlers/page.js': `export default async () => new Response('<script>fetch("/api/session")</script>', {
+    headers: [['Content-Type', 'text/html'], ['Content-Security-Policy', 'default-src *'], ['X-Content-Type-Options', 'other'], ['Set-Cookie', 'a=1'], ['set-cookie', 'b=2']],
+  })`,
   'handlers/tick.js': `export default async (ctx) => { console.log('tick', ctx.invocation.manual); ctx.log.info('done') }`,
   'handlers/scanned.js': `export default async (ctx) => new Response('scanned ' + (await ctx.request.text()), { status: 202 })`,
 }
@@ -232,6 +236,36 @@ test('webhooks need their current token', async () => {
   expect(await res.text()).toBe('scanned spool 3')
   rotateWebhookToken(host, 'filament', 'scanned')
   expect((await fetch(`${base}/hooks/filament/scanned/${token}`, { method: 'POST' })).status).toBe(404)
+})
+
+test('handler pages on the Hobwork origin are sandboxed and cannot set cookies', async () => {
+  start()
+  await deploy()
+  const base = await listenApp()
+  const { token } = createAgentToken(host.db, 'claude')
+  const hook = await fetch(`${base}/hooks/filament/page/${rotateWebhookToken(host, 'filament', 'page')}`)
+  const route = await fetch(`${base}/p/filament/api/page`, { headers: { authorization: `Bearer ${token}` } })
+  for (const res of [hook, route]) {
+    expect(res.headers.get('content-type')).toBe('text/html')
+    expect(await res.text()).toContain('<script>')
+    expect(res.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'")
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.getSetCookie()).toEqual([])
+  }
+})
+
+test('app origin handler responses are not sandboxed', async () => {
+  start()
+  await deploy()
+  server = createApp(host, {
+    runtime,
+    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+  })
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const appCookie = appSessionCookie(host, signedIn(host).cookie, 'filament')
+  const res = await sendTo(base, `http://filament.${TEST_APPS_DOMAIN}/api/page`, { headers: { cookie: appCookie } })
+  expect(res.headers['content-security-policy']).not.toContain('sandbox')
 })
 
 test('a deploy starts the new version, then stops the old one', async () => {

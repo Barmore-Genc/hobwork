@@ -54,12 +54,21 @@ async function serialize(req: IncomingMessage, url: string): Promise<SerializedR
   return { method: req.method ?? 'GET', url, headers, ...(body.length ? { body: body.toString('base64') } : {}) }
 }
 
+// Handler output on the Hobwork origin is untrusted: agent-written code may
+// reflect input into HTML. `sandbox` gives the page an opaque origin, so its
+// script cannot call /api with the user's session, and cookies cannot be set.
+const SANDBOXED_HEADERS = {
+  'content-security-policy': "sandbox; default-src 'none'",
+  'x-content-type-options': 'nosniff',
+}
+
 async function invokeAndRespond(
   res: ServerResponse,
   runtime: Runtime,
   project: string,
   input: Parameters<Runtime['invoke']>[1],
   extraHeaders: Record<string, string> = {},
+  sandboxed = false,
 ): Promise<void> {
   const outcome = await runtime.invoke(project, input)
   if (!outcome.ok) {
@@ -75,9 +84,11 @@ async function invokeAndRespond(
   const out: Record<string, string | string[]> = { ...extraHeaders }
   for (const [name, value] of headers) {
     if (HOP_BY_HOP.has(name)) continue
+    if (sandboxed && (name.toLowerCase() === 'set-cookie' || name.toLowerCase() in SANDBOXED_HEADERS)) continue
     const existing = out[name]
     out[name] = existing === undefined ? value : [...(Array.isArray(existing) ? existing : [existing]), value]
   }
+  if (sandboxed) Object.assign(out, SANDBOXED_HEADERS)
   out['x-hobwork-invocation'] = String(outcome.invocationId)
   res.writeHead(status, out)
   res.end(Buffer.from(body, 'base64'))
@@ -89,9 +100,9 @@ export async function serveRoute(
   req: IncomingMessage,
   res: ServerResponse,
   runtime: Runtime,
-  options: { project: string; branch?: string; path: string; url: string; headers?: Record<string, string> },
+  options: { project: string; branch?: string; path: string; url: string; headers?: Record<string, string>; sandboxed?: boolean },
 ): Promise<void> {
-  const { project, branch, path, url, headers } = options
+  const { project, branch, path, url, headers, sandboxed } = options
   const { routes } = await runtime.route(project, branch)
   const match = matchRoute(routes, req.method ?? 'GET', path)
   if (!match) return sendJson(res, 404, { error: `No route for ${req.method} ${path}` }, headers)
@@ -105,6 +116,7 @@ export async function serveRoute(
     project,
     { kind: 'route', name: match.route.key, manual: false, branch, request, params: match.params },
     headers,
+    sandboxed,
   )
 }
 
@@ -153,7 +165,7 @@ export function createRuntimeHttp(
       })
     }
     const url = `http://${req.headers.host ?? 'localhost'}${pathname}${search}`
-    await serveRoute(req, res, runtime, { project, path: `/${rest.join('/')}`, url })
+    await serveRoute(req, res, runtime, { project, path: `/${rest.join('/')}`, url, sandboxed: true })
   }
 
   // /hooks/<project>/<name>/<token> calls the deployed version,
@@ -177,7 +189,7 @@ export function createRuntimeHttp(
       return sendJson(res, 404, { error: 'not found' })
     }
     const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${HOOKS_PREFIX}${target}/${name}${search}`)
-    await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request })
+    await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request }, {}, true)
   }
 
   return (req: IncomingMessage, res: ServerResponse, pathname: string, search: string): boolean => {

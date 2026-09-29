@@ -85,4 +85,4 @@ People limit which models a hob may use and how many requests and dollars it may
 
 Over SSH (`ssh <hob>/<branch>@<host>`), use `hobwork status|diff|commit|merge|logs|invocations`. The workspace has no git directory.
 
-Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add others with `pnpm add` only when none of them does the job.
+Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add others with `pnpm add` only when none of them does the job. Commit `pnpm-lock.yaml` with the change: merging installs from it and fails without it. Versions released in the last 3 days are not installed, and install scripts of dependencies do not run unless the package is set to `true` under `allowBuilds` in `pnpm-workspace.yaml`.

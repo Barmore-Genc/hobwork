@@ -105,6 +105,7 @@ test('workspace VMs mount the checkout with node_modules on the VM disk', async 
     egress: ['registry.npmjs.org', 'api.example.com'],
   })
   expect(vm.egress).toEqual(['registry.npmjs.org', 'api.example.com'])
+  expect(sandbox?.options.env).toEqual({ CI: 'true', pnpm_config_minimum_release_age: '4320' })
   expect(sandbox?.options.mounts?.['/opt/hobwork/cli']).toMatchObject({ readonly: true })
   // Only the CLI is installed: there are no extras.
   expect(sandbox?.commands.map((c) => c.command)).toEqual([expect.stringContaining('/usr/local/bin/hobwork')])
@@ -332,6 +333,7 @@ test('pipeline VMs only reach the registry and are stopped on shutdown', async (
   await backend.start({ dir })
   expect(sandboxes[0]?.options.egress).toEqual(['registry.npmjs.org'])
   expect(sandboxes[0]?.options.cpus).toBe(4)
+  expect(sandboxes[0]?.options.env).toMatchObject({ pnpm_config_minimum_release_age: '4320' })
   const icons = sandboxes[0]?.options.mounts?.['/opt/hobwork/icons']
   expect(icons).toMatchObject({ readonly: true })
   expect(existsSync(join(icons!.hostPath, 'main.ts'))).toBe(true)

@@ -42,3 +42,29 @@ test('a build whose icon fails is kept without icons', async () => {
   expect(readFileSync(join(dir, 'index.html'), 'utf8')).toBe('page')
   expect(existsSync(join(dir, '_hobwork'))).toBe(false)
 })
+
+test('refuses a build output that contains a symbolic link', async () => {
+  const commit = await seedMain(host, 'filament', {
+    'package.json': fakePackageJson({ build: 'mkdir -p dist && printf page > dist/index.html && ln -s /etc/passwd dist/passwd' }),
+    'hobwork.json': '{}',
+  })
+  await expect(createBuilder(host, startHostPipelineVm).ensure('filament', commit)).rejects.toThrow(/symbolic link at passwd/)
+})
+
+test('refuses a dist that is a symbolic link', async () => {
+  const commit = await seedMain(host, 'filament', {
+    'package.json': fakePackageJson({ build: 'ln -s /etc dist' }),
+    'hobwork.json': '{}',
+  })
+  await expect(createBuilder(host, startHostPipelineVm).ensure('filament', commit)).rejects.toThrow('dist must be a directory')
+})
+
+test('refuses extras without a lockfile', async () => {
+  const commit = await seedMain(host, 'filament', {
+    'package.json': JSON.stringify({ ...JSON.parse(fakePackageJson()), dependencies: { 'left-pad': '1' } }),
+    'hobwork.json': '{}',
+  })
+  await expect(createBuilder(host, startHostPipelineVm).ensure('filament', commit)).rejects.toThrow(
+    'commit pnpm-lock.yaml',
+  )
+})

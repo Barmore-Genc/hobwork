@@ -17,9 +17,8 @@ Sections are in the order to work on them.
 
 ### Supply chain
 
-- **Release age**: set pnpm's `minimumReleaseAge` in the guest image's global pnpm config, so versions published in the last few days are not installed. Most malicious releases are caught and pulled within that time. The pipeline refuses a hob whose `pnpm-workspace.yaml` lowers it.
-- **Install scripts**: pnpm runs dependency lifecycle scripts only for packages the hob's `pnpm-workspace.yaml` allows. Show changes to that list in the version diff, and keep the platform default empty.
-- **Frozen lockfile**: pipeline and build installs use `--frozen-lockfile`, so what was tested is what gets deployed.
+- **`.pnpmfile.cjs`**: a hob's pnpmfile is code that runs during install and gets around `allowBuilds`. The pipeline refuses hobs that have one, or runs installs with `--ignore-pnpmfile`.
+- **Install script changes in the UI**: a merge that changes `allowBuilds` gets a notice in its pipeline output. The web UI has no version diff to show it in; add one, or a flag on the version in `list_versions` and the versions list.
 
 ### Nothing on the host touches guest-writable files
 

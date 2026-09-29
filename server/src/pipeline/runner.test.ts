@@ -1,6 +1,9 @@
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
+import { buildDir, projectBuildsDir } from '../runtime/builds.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { FAKE_PROJECT, fakePackageJson, seedMain } from '../test-project.ts'
@@ -82,10 +85,14 @@ test('renders the project icon after the build, and a wrong icon fails the build
 
 test('installs only when the project has dependencies outside the platform set', async () => {
   const pkg = JSON.parse(fakePackageJson())
-  const withExtras = { ...FAKE_PROJECT, 'package.json': JSON.stringify({ ...pkg, dependencies: { react: '^19', 'left-pad': '1' } }) }
+  const withExtras = {
+    ...FAKE_PROJECT,
+    'package.json': JSON.stringify({ ...pkg, dependencies: { react: '^19', 'left-pad': '1' } }),
+    'pnpm-lock.yaml': 'lockfileVersion: 9\n',
+  }
   const run = await runPipeline(host, { startVm: passing }, { project: 'filament', ...(await seed(withExtras)) })
   expect(run.steps.find((s) => s.name === 'install')?.status).toBe('passed')
-  expect(commands[0]).toBe('pnpm install')
+  expect(commands[0]).toBe('pnpm install --frozen-lockfile')
 
   expect(platformPackages().has('react')).toBe(true)
   expect(platformPackages().has('@hobwork/sdk')).toBe(true)
@@ -159,4 +166,80 @@ test('marks runs interrupted by a restart as failed', async () => {
   expect(run?.steps.find((s) => s.name === 'build')?.status).toBe('skipped')
   release()
   await pending
+})
+
+const EXTRAS = JSON.stringify({ ...JSON.parse(fakePackageJson()), dependencies: { 'left-pad': '1' } })
+
+test('fails the install of extras without a lockfile and tells the agent what to do', async () => {
+  const run = await runPipeline(
+    host,
+    { startVm: passing },
+    { project: 'filament', ...(await seed({ ...FAKE_PROJECT, 'package.json': EXTRAS })) },
+  )
+  expect(run.failedStep).toBe('install')
+  expect(run.steps.find((s) => s.name === 'install')?.output).toContain(
+    'Run pnpm install in the workspace, then commit pnpm-lock.yaml',
+  )
+  expect(commands).toEqual([])
+})
+
+test('explains an outdated lockfile', async () => {
+  const outdated = recordingVm((command) =>
+    command.startsWith('pnpm install')
+      ? { exitCode: 1, stdout: ' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile"\n', stderr: '' }
+      : pass(command),
+  )
+  const run = await runPipeline(
+    host,
+    { startVm: outdated },
+    { project: 'filament', ...(await seed({ ...FAKE_PROJECT, 'package.json': EXTRAS, 'pnpm-lock.yaml': 'x: 1\n' })) },
+  )
+  expect(run.failedStep).toBe('install')
+  expect(run.steps.find((s) => s.name === 'install')?.output).toContain('then commit pnpm-lock.yaml')
+})
+
+test('refuses a hob whose pnpm-workspace.yaml weakens the install protections', async () => {
+  for (const setting of ['minimumReleaseAge: 0', 'dangerouslyAllowAllBuilds: true']) {
+    const run = await runPipeline(
+      host,
+      { startVm: passing },
+      { project: 'filament', ...(await seed({ ...FAKE_PROJECT, 'pnpm-workspace.yaml': `${setting}\n` })) },
+    )
+    expect(run.failedStep).toBe('validate')
+    expect(run.steps.find((s) => s.name === 'validate')?.output).toContain(setting.split(':')[0])
+  }
+  expect(commands).toEqual([])
+})
+
+test('shows changes to the packages allowed to run install scripts in the validate step', async () => {
+  const workspace = (builds: string[]) => ({
+    ...FAKE_PROJECT,
+    'pnpm-workspace.yaml': `allowBuilds:\n${builds.map((name) => `  ${name}: true\n`).join('')}`,
+  })
+  await seed(workspace(['esbuild']))
+  const { gitDir, commit } = await seed(workspace(['esbuild', 'sharp']))
+  const changed = await runPipeline(host, { startVm: passing }, { project: 'filament', gitDir, commit })
+  expect(changed.steps.find((s) => s.name === 'validate')?.output).toContain('now allowed: sharp')
+
+  const same = await seed({ ...workspace(['esbuild', 'sharp']), 'src/b.ts': 'export const b = 2\n' })
+  const unchanged = await runPipeline(host, { startVm: passing }, { project: 'filament', ...same })
+  expect(unchanged.steps.find((s) => s.name === 'validate')?.output).toBe('hobwork.json is valid')
+})
+
+// The VM writes into dist/ as it stops, which only ends up in the build if the copy runs afterwards.
+test('copies the build only after the VM has stopped', async () => {
+  const startVm: PipelineOptions['startVm'] = async ({ dir }) => ({
+    async stop() {
+      mkdirSync(join(dir, 'dist'), { recursive: true })
+      writeFileSync(join(dir, 'dist/written-while-stopping.txt'), 'late')
+    },
+    async exec(command, { onOutput }) {
+      onOutput?.('stdout', command)
+      return { exitCode: 0, stdout: command, stderr: '' }
+    },
+  })
+  const run = await runPipeline(host, { startVm }, { project: 'filament', ...(await seed()) })
+  expect(run.status).toBe('passed')
+  const [tree] = readdirSync(projectBuildsDir(host, 'filament')).filter((name) => !name.startsWith('.'))
+  expect(existsSync(join(buildDir(host, 'filament', tree ?? ''), 'written-while-stopping.txt'))).toBe(true)
 })

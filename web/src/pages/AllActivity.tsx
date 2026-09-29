@@ -68,6 +68,7 @@ function EventRow({ problem }: { problem: Extract<Problem, { type: 'event' }> })
           <p className="font-semibold group-hover:text-accent-fg">{PROBLEM_LABELS[event.event] ?? EVENT_LABELS[event.event] ?? event.event}</p>
           <p className="text-sm text-muted">
             In <span className="font-semibold text-fg">{event.project}</span>
+            {event.branch !== null && `, preview of ${event.branch}`}
           </p>
           <p className={`mt-1 line-clamp-2 font-mono text-[0.83rem] break-words ${event.level === 'error' ? 'text-danger' : 'text-warning'}`}>
             {event.message}

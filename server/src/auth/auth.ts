@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Allowlist } from '../config.ts'
 import { json, parseCookies, setCookie } from '../http.ts'
-import { createSession, deleteSession, findSession, SESSION_TTL_SECONDS } from './sessions.ts'
+import { createSession, deleteSession, findSessionRecord, SESSION_TTL_SECONDS, type SessionRecord } from './sessions.ts'
 import { isAllowed, type User } from './users.ts'
 
 // A request with a custom header cannot be sent cross-site without a CORS
@@ -25,12 +25,16 @@ export function createAuth(options: { db: DatabaseSync; publicUrl: string; allow
     return parseCookies(req.headers.cookie).get(cookieName)
   }
 
-  function currentUser(req: IncomingMessage): User | undefined {
+  function currentSession(req: IncomingMessage): SessionRecord | undefined {
     const token = sessionToken(req)
     if (!token) return undefined
-    const user = findSession(db, token)
+    const session = findSessionRecord(db, token)
     // Checked on every request so removing someone from the allowlist signs them out.
-    return user && isAllowed(db, allowlist, user) ? user : undefined
+    return session && isAllowed(db, allowlist, session.user) ? session : undefined
+  }
+
+  function currentUser(req: IncomingMessage): User | undefined {
+    return currentSession(req)?.user
   }
 
   function csrfError(req: IncomingMessage): string | undefined {
@@ -47,6 +51,7 @@ export function createAuth(options: { db: DatabaseSync; publicUrl: string; allow
     cookieName,
     secure,
     currentUser,
+    currentSession,
 
     // Writes a 401 or 403 and returns undefined when the request may not go on.
     // State-changing methods are also checked for CSRF.

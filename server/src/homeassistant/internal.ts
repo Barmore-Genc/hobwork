@@ -3,8 +3,10 @@ import { truncateMiddle } from '../mcp/output.ts'
 import { HomeAssistantError, type HaState, type HomeAssistant } from './client.ts'
 
 // Runtime VMs run deployed code and may change the home. Workspace VMs run
-// tests and work in progress, so they only read states.
-export type HaAccess = 'full' | 'read'
+// tests and work in progress, so they only read states. Branch previews
+// change the home only while a person allows it for that branch, which is
+// checked on every call so turning it off takes effect right away.
+export type HaAccess = 'full' | 'read' | { branch: string; allowed: () => boolean }
 
 export type HaCallLog = {
   invocation?: number
@@ -29,6 +31,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   stopped: 503,
   timeout: 504,
   read_only: 403,
+  not_approved: 403,
   bad_request: 400,
 }
 
@@ -89,7 +92,13 @@ async function run(ha: HomeAssistant, request: HaRequest, access: HaAccess): Pro
   switch (request.action) {
     case 'callService':
     case 'fireEvent':
-      if (access !== 'full') {
+      if (typeof access === 'object' && !access.allowed()) {
+        throw new HomeAssistantError(
+          'not_approved',
+          `Branch "${access.branch}" may not control Home Assistant. Ask the user to turn on "Let this branch control Home Assistant" for it on the project page in Hobwork`,
+        )
+      }
+      if (access === 'read') {
         throw new HomeAssistantError(
           'read_only',
           'Workspaces can only read Home Assistant states. Service calls and events run from deployed handlers; in tests, fake ctx.ha with createTestContext',
@@ -156,7 +165,9 @@ export async function haResponse(body: string, options: HaEndpointOptions): Prom
     if (err instanceof BadRequest) return failure('bad_request', err.message)
     const code = err instanceof HomeAssistantError ? err.code : 'unknown_error'
     const message = err instanceof Error ? err.message : String(err)
-    if (code !== 'read_only') {
+    if (code === 'not_approved') {
+      options.log?.({ invocation, level: 'warn', message: `Home Assistant: denied ${describe(request)}. ${message}` })
+    } else if (code !== 'read_only') {
       options.log?.({ invocation, level: 'warn', message: `Home Assistant: ${describe(request)} failed: ${message}` })
     }
     return failure(code, message)

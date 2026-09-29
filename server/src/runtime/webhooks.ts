@@ -38,6 +38,30 @@ export function verifyWebhookToken(host: Host, project: string, name: string, to
   return row !== undefined
 }
 
+// Branch previews have their own URLs: /hooks/<branch label>--<project>/<name>/<token>.
+export function rotateBranchWebhookToken(host: Host, project: string, branch: string, name: string): string {
+  const { id } = requireProject(host, project)
+  const token = randomBytes(32).toString('base64url')
+  host.db
+    .prepare(
+      `INSERT INTO branch_webhook_tokens (project_id, branch, name, token_hash) VALUES (?, ?, ?, ?)
+       ON CONFLICT (project_id, branch, name) DO UPDATE SET token_hash = excluded.token_hash,
+         created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+    )
+    .run(id, branch, name, hashToken(token))
+  return token
+}
+
+export function verifyBranchWebhookToken(host: Host, project: string, branch: string, name: string, token: string): boolean {
+  const row = host.db
+    .prepare(
+      `SELECT 1 FROM branch_webhook_tokens w JOIN projects p ON p.id = w.project_id
+       WHERE p.name = ? AND w.branch = ? AND w.name = ? AND w.token_hash = ?`,
+    )
+    .get(project, branch, name, hashToken(token))
+  return row !== undefined
+}
+
 export function webhookTokenCreatedAt(host: Host, project: string, name: string): string | undefined {
   const row = host.db
     .prepare(

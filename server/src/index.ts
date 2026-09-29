@@ -98,6 +98,12 @@ const backups = config.backup && createBackups(host, config.backup)
 if (backups) backups.schedule()
 else console.warn('HOBWORK_BACKUP_S3_BUCKET is not set, so nothing is backed up.')
 
+if (new URL(config.publicUrl).hostname === 'localhost') {
+  console.warn(
+    `Project apps at ${config.appsUrl} are a different site from ${config.publicUrl}, so they cannot sign in inside the Hobwork UI. Use HOBWORK_PUBLIC_URL=http://hobwork.localhost:${config.port} instead.`,
+  )
+}
+
 const server = createApp(host, {
   workspaces,
   delivery,
@@ -107,7 +113,13 @@ const server = createApp(host, {
   data,
   secrets,
   backups,
-  web: { publicUrl: config.publicUrl, allowlist: config.allowlist, oidc: config.oidc, webDist: config.webDist },
+  web: {
+    publicUrl: config.publicUrl,
+    appsUrl: config.appsUrl,
+    allowlist: config.allowlist,
+    oidc: config.oidc,
+    webDist: config.webDist,
+  },
 })
 
 server.listen(config.port, config.host, () => {

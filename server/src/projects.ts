@@ -19,7 +19,9 @@ export type Project = {
 export class ProjectError extends Error {}
 
 const PROJECT_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/
-const MAX_NAME_LENGTH = 64
+// The name is a DNS label of the project's app origin, and branch previews
+// put up to 21 more characters in front of it (63 at most).
+const MAX_NAME_LENGTH = 40
 
 export function validateProjectName(name: string): void {
   if (!PROJECT_NAME.test(name) || name.length > MAX_NAME_LENGTH) {

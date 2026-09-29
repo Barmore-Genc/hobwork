@@ -1,6 +1,6 @@
 // Client for project UIs calling their own routes with the signed-in user's
-// session. Hobwork serves a project UI at /p/<project>/ with a <base> tag for
-// that path, so "api/..." always resolves to the project's routes.
+// session. Hobwork serves each project UI at the root of its own origin, and
+// the project's routes under /api/ on that origin.
 
 // Hobwork refuses state-changing requests with a session unless this header is set.
 const CSRF_HEADER = 'x-hobwork-csrf'
@@ -17,9 +17,9 @@ export class RouteError extends Error {
   }
 }
 
-// "spools/42" or "/spools/42" -> "api/spools/42".
+// "spools/42" or "/spools/42" -> "/api/spools/42".
 export function routeUrl(path: string): string {
-  return `api/${path.replace(/^\/+/, '')}`
+  return `/api/${path.replace(/^\/+/, '')}`
 }
 
 // fetch() for a route, with the session and the CSRF header.

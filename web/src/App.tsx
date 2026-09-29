@@ -6,6 +6,7 @@ import { ConnectPage } from './pages/Connect.tsx'
 import { LoginPage } from './pages/Login.tsx'
 import { ProjectPage } from './pages/Project.tsx'
 import { ActivityPage } from './pages/project/Activity.tsx'
+import { PreviewPage } from './pages/project/Branches.tsx'
 import { LogPage } from './pages/project/Log.tsx'
 import { ProjectAppPage } from './pages/project/ProjectApp.tsx'
 import { RunPage } from './pages/project/Run.tsx'
@@ -31,6 +32,8 @@ function Page({ pathname }: { pathname: string }) {
     if (rest === '/log') return <LogPage name={name} />
     if (rest === '/secrets') return <ProjectSecretsPage name={name} />
     if (rest === '/app') return <ProjectAppPage name={name} />
+    const preview = /^\/preview\/([^/]+)$/.exec(rest)
+    if (preview) return <PreviewPage name={name} branch={decodeURIComponent(preview[1]!)} />
     const run = /^\/activity\/(\d+)$/.exec(rest)
     if (run) return <RunPage name={name} id={Number(run[1])} />
   }
@@ -63,8 +66,8 @@ export default function App() {
   useEffect(() => {
     if (!session?.user || pathname !== '/login') return
     const returnTo = search.get('returnTo') ?? '/'
-    // Project apps are served by the host, outside this app.
-    if (returnTo.startsWith('/p/')) window.location.replace(returnTo)
+    // Signing in to a project app continues on the host, outside this app.
+    if (returnTo.startsWith('/auth/') || returnTo.startsWith('/p/')) window.location.replace(returnTo)
     else navigate(returnTo, { replace: true })
   }, [session, pathname, search])
 
@@ -86,7 +89,7 @@ export default function App() {
   }
   if (connect) return <ConnectPage requestId={search.get('request')} error={null} />
   return (
-    <Shell user={session.user} pathname={pathname} onSignedOut={loadSession} wide={/^\/projects\/[^/]+\/app\/?$/.test(pathname)}>
+    <Shell user={session.user} pathname={pathname} onSignedOut={loadSession} wide={/^\/projects\/[^/]+\/(app|preview\/[^/]+)\/?$/.test(pathname)}>
       <Page pathname={pathname} />
     </Shell>
   )

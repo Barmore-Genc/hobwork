@@ -26,7 +26,8 @@ export const AI_ERROR_CODES = {
 } as const
 
 const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
-// Endpoints that report usage and cost only when asked to.
+// Endpoints that report usage and cost only when asked to. The gateway overrides whatever
+// the guest sent, since the spend limits rely on the reported cost.
 const USAGE_PATHS = /\/(chat\/)?completions$/
 
 type Refusal = { kind: RefusalKind; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
@@ -229,7 +230,7 @@ export function createAiGateway(host: Host, options: { now?: () => number } = {}
             return refusalResponse(refusal)
           }
 
-          const forward = body && USAGE_PATHS.test(url.pathname) && body.usage === undefined
+          const forward = body && USAGE_PATHS.test(url.pathname)
             ? JSON.stringify({ ...body, usage: { include: true } })
             : text
           const headers = new Headers(request.headers)

@@ -81,15 +81,21 @@ Measured the same way on `hobwork-host` (Arch Linux, AMD, 16 CPUs, 27GB RAM, KVM
 
 | | |
 |---|---|
-| Create to first command | median 2512ms (2496-2768ms) |
-| Command on a running VM | median 5ms |
-| `node -e 0` in guest | median 48ms |
+| Create to first command | median 731ms (611-955ms) |
+| Command on a running VM | median 4ms |
+| `node -e 0` in guest | median 46ms |
 | 10 concurrent `sleep 1` in one VM | 1.1s total |
-| Host RSS per VM | 171MB fresh, 277MB after running tsc and node |
-| 8 VMs in parallel | ready in 3.2s, 1.4GB host RSS total |
-| HTTPS GET through egress proxy | curl median 44ms, node fetch 165ms including node startup |
+| Host RSS per VM | 175MB fresh, 289MB after running tsc and node |
+| 8 VMs in parallel | ready in 1.4s, 1.4GB host RSS total |
+| HTTPS GET through egress proxy | curl median 44ms, node fetch 155ms including node startup |
 
-Boot is about 5x slower than on the Mac. The x86_64 `microvm` machine type boots the Alpine kernel more slowly here than HVF on Apple Silicon; the cause is not investigated. The VM test suite (`pnpm -C server test:vm`) passes on `hobwork-host` (37 tests).
+On x86_64 the host replaces Gondolin's kernel command line (`server/src/sandbox/gondolin.ts`). With the default one, create to first command took 2.5s:
+
+- QEMU's `microvm` machine has no CMOS RTC, and the kernel's `rtc_cmos` probe waits about 1.3s before it gives up (`initcall_blacklist=cmos_init`).
+- The i8042 probe costs about 80ms (`i8042.noaux i8042.nomux i8042.nopnp`).
+- Kernel and init output go to the emulated UART, and every byte is a VM exit. That is about 450ms (`quiet`, `console=tty0`). `HOBWORK_VM_CONSOLE=1` puts the console back on `ttyS0`, so Gondolin's boot error messages include the guest log.
+
+The rest is SeaBIOS (about 125ms; qboot measured no faster), the kernel, and Gondolin's init script (module loading, DHCP, sandboxfs mount, CA bundle). The VM test suite (`pnpm -C server test:vm`) passes on `hobwork-host` (55 tests).
 
 ### VM kinds
 

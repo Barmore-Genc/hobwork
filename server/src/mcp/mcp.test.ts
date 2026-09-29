@@ -168,6 +168,11 @@ test('creates a project, edits files on a branch and commits as the agent', asyn
   expect(project.entryPoints.routes).toHaveProperty(['GET /greeting'])
   expect(project.entryPoints.crons).toEqual({})
   expect(project.appUrl).toBe('http://filament.apps.localhost')
+  expect(project.ai).toMatchObject({
+    models: { host: null, project: null },
+    limits: { throttle: true, requestsPerMinute: 20 },
+    usage: { requestsLastMinute: 0, last30Days: { requests: 0, cost: 0 } },
+  })
 
   expect(await ok('read_file', { project: 'filament', branch: 'main', path: 'AGENTS.md' })).toContain(
     'Hobwork project',

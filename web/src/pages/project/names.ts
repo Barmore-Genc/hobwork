@@ -28,6 +28,7 @@ export const EVENT_LABELS: Record<string, string> = {
   db: 'Data',
   secret: 'Secret',
   project: 'Project',
+  'ai-limit': 'AI limit',
 }
 
 export const PROJECT_NAME_HINT = 'Lowercase letters, digits and single hyphens, up to 40 characters.'

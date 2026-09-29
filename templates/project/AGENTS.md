@@ -54,7 +54,9 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 
 ## LLMs
 
-`openrouter(ctx)` from `@hobwork/sdk` has `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`.
+`openrouter(ctx)` from `@hobwork/sdk` has `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Both take `{ timeout, signal }` as a second argument (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
+
+People limit which models a project may use and how many requests and dollars it may spend; `get_project` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_model_not_allowed` (pick an allowed model), or `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the project's AI page in Hobwork.
 
 ## Workflow
 

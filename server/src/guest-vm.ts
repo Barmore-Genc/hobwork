@@ -3,7 +3,7 @@ import { join, posix, resolve } from 'node:path'
 import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
-import type { EgressBlocked, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
+import type { EgressBlocked, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
 import type {
   ExecOptions,
   ExecResult,
@@ -42,6 +42,7 @@ export type VmEnvironment = {
   egress: string[]
   secrets: Record<string, Secret>
   internal?: InternalHandler
+  intercept?: Interceptor
   onEgressBlocked?: (event: EgressBlocked) => void
 }
 
@@ -110,6 +111,7 @@ function sandboxOptions(
     label,
     secrets: environment?.secrets,
     internal: environment?.internal,
+    intercept: environment?.intercept,
     onEgressBlocked: (event) => {
       options.log?.(`${label}: blocked egress to ${event.hostname || event.ip}`)
       environment?.onEgressBlocked?.(event)

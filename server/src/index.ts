@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { createAiGateway } from './ai/gateway.ts'
 import { createApp } from './app.ts'
 import { createAppOrigins } from './apps/origins.ts'
 import { createBackups } from './backup/backups.ts'
@@ -37,6 +38,7 @@ const secretKey = loadSecretKey(config.dataDir, config.secretKey)
 const secrets = createSecretStore(host, secretKey)
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
+const ai = createAiGateway(host)
 const apns = config.apns && createApns({ key: loadApnsKey(config.apns.keyFile), keyId: config.apns.keyId, teamId: config.apns.teamId })
 if (!apns) console.warn('HOBWORK_APNS_KEY_FILE is not set, so notifications only reach devices while the Hobwork app is connected.')
 const devices = createDevices({
@@ -59,7 +61,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
       image,
       createSandbox: createGondolinSandbox,
       log: (message) => console.warn(message),
-      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices }),
+      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
     }
   : undefined
 if (vmOptions) console.log(`guest image: ${image}`)
@@ -90,6 +92,7 @@ const runtime = createRuntime(host, {
   devices,
   data,
   secrets,
+  ai,
 })
 const delivery = createDelivery(host, {
   workspaces,

@@ -24,6 +24,19 @@ export type InternalHandler = (request: Request) => Response | Promise<Response>
 
 export type EgressBlocked = { hostname: string, ip: string, port: number }
 
+// Sends a request on to where it was going, with secrets filled in like any
+// other guest request.
+export type Upstream = (request: Request) => Promise<Response>
+
+// Takes the guest's requests to some hosts, which then only reach them through
+// `handle`. Hosts that are not in the egress allowlist stay blocked. The host
+// connects to these itself, without the check against internal addresses, so
+// they must be well-known public hosts.
+export type Interceptor = {
+  hosts: string[]
+  handle: (request: Request, upstream: Upstream) => Promise<Response>
+}
+
 export type SandboxOptions = {
   // Directory with the guest image (manifest.json, kernel, initramfs, rootfs).
   image: string
@@ -39,6 +52,7 @@ export type SandboxOptions = {
   // Env var name -> secret. The guest only ever sees a placeholder.
   secrets?: Record<string, Secret>
   internal?: InternalHandler
+  intercept?: Interceptor
   onEgressBlocked?: (event: EgressBlocked) => void
   label?: string
 }

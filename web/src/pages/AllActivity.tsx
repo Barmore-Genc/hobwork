@@ -20,6 +20,7 @@ const PROBLEM_LABELS: Record<string, string> = {
   migration: 'Data change failed',
   deploy: 'Update problem',
   trigger: 'Home Assistant trigger problem',
+  'ai-limit': 'AI limit reached',
 }
 
 type Filter = { view: View; project: string; kind: InvocationKind | ''; status: InvocationStatus | '' }

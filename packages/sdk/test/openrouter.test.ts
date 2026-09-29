@@ -163,3 +163,45 @@ test('explains a missing secret and accepts another one', async () => {
   await openrouter(createTestContext({ fetch }), { apiKey: 'GONDOLIN_SECRET_other' }).chat({ model: 'm', messages })
   expect(sent[0]?.headers.authorization).toBe('Bearer GONDOLIN_SECRET_other')
 })
+
+// Answers only when the request's signal aborts, like an upstream that hangs.
+const hangingFetch = (async (_url: string, init: RequestInit) =>
+  new Promise<Response>((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () => reject(init.signal!.reason))
+  })) as typeof globalThis.fetch
+
+test('a call times out with its own timeout or the client default', async () => {
+  const ai = openrouter(createTestContext({ fetch: hangingFetch, secrets }), { timeout: 20 })
+  await expect(ai.chat({ model: 'm', messages })).rejects.toMatchObject({
+    name: 'OpenRouterError',
+    code: 'timeout',
+    message: 'OpenRouter did not answer within 20 ms',
+  })
+  await expect(ai.json({ model: 'm', messages }, { timeout: 10 })).rejects.toMatchObject({ code: 'timeout' })
+})
+
+test('a call stops when its signal aborts', async () => {
+  const controller = new AbortController()
+  const ai = openrouter(createTestContext({ fetch: hangingFetch, secrets }))
+  const call = ai.json({ model: 'm', messages, schema: z.object({ color: z.string() }) }, { signal: controller.signal, timeout: 60_000 })
+  controller.abort(new Error('the person closed the page'))
+  await expect(call).rejects.toMatchObject({ code: 'aborted', cause: new Error('the person closed the page') })
+})
+
+test('Hobwork limits come back with their own codes', async () => {
+  const { fetch } = fakeFetch({
+    status: 429,
+    body: {
+      error: {
+        code: 'hobwork_rate_limit',
+        message: 'This project sent 20 requests to OpenRouter in the last minute, and Hobwork allows 20. Try again in 12 seconds.',
+        metadata: { limit: 'requestsPerMinute', retry_after_seconds: 12 },
+      },
+    },
+  })
+  const error = await openrouter(createTestContext({ fetch, secrets }))
+    .chat({ model: 'm', messages })
+    .catch((err: unknown) => err)
+  expect(error).toBeInstanceOf(OpenRouterError)
+  expect(error).toMatchObject({ status: 429, code: 'hobwork_rate_limit', metadata: { retry_after_seconds: 12 } })
+})

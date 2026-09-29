@@ -320,6 +320,44 @@ export type PairingRequest = { displayName: string; platform: 'ios' | 'macos'; n
 
 export type CreatedToken = { agent: { id: number; name: string }; token: string }
 
+export type AiLimits = {
+  throttle: boolean
+  requestsPerMinute: number | null
+  requestsPerHour: number | null
+  costPerDay: number | null
+  costPerMonth: number | null
+}
+
+export type AiUsageTotals = {
+  requests: number
+  refused: number
+  promptTokens: number
+  completionTokens: number
+  cost: number
+}
+
+export type AiSettings = {
+  models: string[] | null
+  limits: AiLimits
+  defaults: AiLimits
+  updatedAt: string | null
+  updatedBy: string | null
+  usage: (AiUsageTotals & { project: string })[]
+}
+
+export type ProjectAi = {
+  host: { models: string[] | null; limits: AiLimits }
+  project: { models: string[] | null; limits: AiLimits | null; updatedAt: string | null; updatedBy: string | null }
+  limits: AiLimits
+  usage: {
+    lastMinute: number
+    lastHour: number
+    day: AiUsageTotals
+    month: AiUsageTotals
+    models: (AiUsageTotals & { model: string | null })[]
+  }
+}
+
 export type HomeAssistantSettings = {
   // env: set in the server configuration, which wins over this page.
   source: 'env' | 'settings' | null
@@ -471,6 +509,12 @@ export const api = {
     request<{ redirectTo: string }>('POST', '/api/devices/pairing/approve', { request: query, name }),
   denyPairing: (query: Record<string, string>) =>
     request<{ redirectTo: string }>('POST', '/api/devices/pairing/deny', { request: query }),
+  aiSettings: () => request<AiSettings>('GET', '/api/settings/ai'),
+  saveAiSettings: (settings: { models: string[] | null; limits: AiLimits }) =>
+    request<AiSettings>('PUT', '/api/settings/ai', settings),
+  projectAi: (project: string) => request<ProjectAi>('GET', `/api/projects/${encodeURIComponent(project)}/ai`),
+  saveProjectAi: (project: string, settings: { models: string[] | null; limits: AiLimits | null }) =>
+    request<ProjectAi>('PUT', `/api/projects/${encodeURIComponent(project)}/ai`, settings),
   homeAssistant: () => request<HomeAssistantSettings>('GET', '/api/settings/homeassistant'),
   saveHomeAssistant: (settings: { url: string; token?: string }) =>
     request<HomeAssistantSettings>('PUT', '/api/settings/homeassistant', settings),

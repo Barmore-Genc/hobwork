@@ -14,6 +14,7 @@ import { createProjectData, type ProjectData } from './project-data.ts'
 let host: ReturnType<typeof createTestHost>
 let data: ProjectData
 let runs: number
+let lastOptions: Parameters<RunMigrationVm>[0] | undefined
 // Runs after the fake runner has written its result, to play a hostile guest.
 let tamper: ((dir: string) => void | Promise<void>) | undefined
 let during: (() => Promise<void>) | undefined
@@ -26,7 +27,9 @@ function sql(...statements: string[]): DbRequest {
 
 // What packages/sdk/src/db/migrate-main.ts does in the VM, on the host, so the
 // tests can change what comes back.
-const fakeVm: RunMigrationVm = async ({ dir }) => {
+const fakeVm: RunMigrationVm = async (options) => {
+  const { dir } = options
+  lastOptions = options
   runs++
   await during?.()
   const input = JSON.parse(readFileSync(join(dir, 'input.json'), 'utf8')) as { files: { name: string; sql: string }[] }
@@ -74,6 +77,8 @@ test('deploy migrates a copy in the VM and swaps it in, keeping the rows', async
   await data.execute({ project: 'filament' }, sql("INSERT INTO spools (color) VALUES ('red')"))
   await deploy({ 'migrations/0001_spools.sql': SPOOLS, 'migrations/0002_grams.sql': 'ALTER TABLE spools ADD COLUMN grams REAL;' })
   expect(runs).toBe(2)
+  expect(lastOptions).toMatchObject({ project: 'filament' })
+  expect(lastOptions!.quotaBytes).toBeGreaterThan(1024 * 1024 * 1024)
   expect(await data.execute({ project: 'filament' }, sql('SELECT color, grams FROM spools'))).toMatchObject({
     results: [{ rows: [{ color: 'red', grams: null }] }],
   })

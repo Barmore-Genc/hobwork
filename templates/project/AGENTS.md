@@ -19,7 +19,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 - Route `"GET /spools/:id"` answers `GET /api/spools/42` on the app origin, with `ctx.params.id`. A returned `Response` is sent as is, other values as JSON, `undefined` as 204. A thrown error answers 500.
 - Crons use 5-field syntax in the host's time zone. Webhooks are called at a secret URL on the hob's own app address (`https://<hob>.<apps host>/_hobwork/hooks/<name>/<token>`) from `rotate_webhook_token`, which returns the full URL once.
 - Handlers work like AWS Lambda functions: nothing in memory survives between invocations, and there are no servers, timers or background loops. Keep state in `ctx.db`, use a cron for recurring work.
-- `ctx.fetch` only reaches hosts in `egress` and the hosts of assigned secrets. Blocked requests get a 403 and an `egress-blocked` log line. Workspace changes to either apply from the next `bash` command.
+- `ctx.fetch` only reaches hosts in `egress` and the hosts of assigned secrets. Blocked requests get a 403 and an `egress-blocked` log line. In a workspace, changes to `egress` apply from the next `bash` command after you `commit` them, since the workspace VM is set up from the committed `hobwork.json`. Changes to a secret's hosts apply right away.
 - Delete the greeting examples once the hob has its own handlers.
 
 ## Data

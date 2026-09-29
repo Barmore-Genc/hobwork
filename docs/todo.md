@@ -17,9 +17,8 @@ Sections are in the order to work on them.
 
 ### Nothing on the host touches guest-writable files
 
-- **VM start config from git**: the workspace VM start reads `hobwork.json` and `package.json` from the checkout (egress, extras). Read them from the branch in git, or from inside the VM.
+- **Workspace migrations from the checkout**: the workspace's branch DB takes `migrations/*.sql` from the checkout on the host (`readMigrationsFromDir`, lstat then read), so a symlink swapped in between can put a host file's content into the branch DB. Read them inside the workspace VM and pass them to the migration VM, keeping uncommitted migrations testable.
 - **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.
-- **Migration disk quota**: a migration can fill the host disk through its `/migrate` mount; only the DB it returns is size-checked. Put a quota on the mount or check the dir's size while the VM runs.
 
 ### Guest privilege
 
@@ -85,8 +84,7 @@ Open questions:
 
 ### Smaller items
 
-- Migration VMs reserve from the VM budget as pipeline VMs of no hob; pass the hob so fair shares count them.
-- A VM that exits on its own keeps its budget reservation until `stop()` runs; release it from an exit event in the Gondolin wrapper.
+- `GondolinSandbox.exited` listens on the VM's private `server` for its exit; ask upstream for a public exit event (with the other Gondolin asks under Sandbox account).
 
 ## Warm VM pool
 

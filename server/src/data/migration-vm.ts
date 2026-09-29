@@ -10,17 +10,20 @@ export type MigrationRun = { exitCode: number; stdout: string; stderr: string; t
 
 // Runs the migration runner in a VM with `dir` (holding input.json and
 // db.sqlite) mounted read-write at /migrate. The VM has no network and is
-// stopped before this returns, so the host only reads `dir` afterwards.
-export type RunMigrationVm = (options: { dir: string; timeoutMs: number }) => Promise<MigrationRun>
+// stopped before this returns, so the host only reads `dir` afterwards. Writes
+// past `quotaBytes` fail inside the VM, so a migration cannot fill the host's
+// disk. `project` is the hob the migration is for, for the VM budget.
+export type RunMigrationVm = (options: { project: string; dir: string; timeoutMs: number; quotaBytes: number }) => Promise<MigrationRun>
 
 export function migrationVmBackend(options: GuestVmOptions): RunMigrationVm {
-  return async ({ dir, timeoutMs }) => {
+  return async ({ project, dir, timeoutMs, quotaBytes }) => {
     const sandbox: Sandbox = await options.createSandbox({
       image: options.image,
+      budget: { kind: 'pipeline', project },
       memory: '1G',
       cpus: 2,
       mounts: {
-        [GUEST_DIR]: { hostPath: dir },
+        [GUEST_DIR]: { hostPath: dir, maxBytes: quotaBytes },
         [RUNNER_DIR]: { hostPath: HOST_RUNNER_DIR, readonly: true },
       },
       egress: [],

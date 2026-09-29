@@ -5,6 +5,10 @@ export const INTERNAL_HOST = 'hobwork.internal'
 export type Mount = {
   hostPath: string
   readonly?: boolean
+  // Writes that would take the directory past this many bytes fail with ENOSPC.
+  // Meant for mounts whose contents the host keeps, since the guest cannot be
+  // trusted to stay small.
+  maxBytes?: number
   // Paths relative to the mount root (e.g. `node_modules`, `.env`) that the
   // guest must not see. Guest writes to them go to memory and are discarded.
   hide?: string[]
@@ -118,6 +122,9 @@ export type InteractiveProcess = {
 
 export interface Sandbox {
   readonly id: string
+  // Resolves once the VM's process has ended, whether by stop() or on its own
+  // (a crash, or the guest powering off).
+  readonly exited: Promise<void>
   // `command` runs through a login shell (`/bin/sh -lc`). Several commands can run at once.
   exec(command: string, options?: ExecOptions): SandboxProcess
   spawn(command: string, options: SpawnOptions): InteractiveProcess

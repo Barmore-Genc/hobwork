@@ -1,4 +1,4 @@
-import { basename, join, posix, resolve } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import { readRegularFile } from './files.ts'
 import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import { HeadTailOutput } from './mcp/output.ts'
@@ -84,6 +84,10 @@ export type GuestVmOptions = {
   createSandbox: SandboxFactory
   log?: (message: string) => void
   workspaceEnvironment?: WorkspaceEnvironment
+  // A file of the workspace's branch as committed, undefined when it does not
+  // exist. The VM can write the checkout, so what decides a VM's egress and
+  // resources must not come from there.
+  readBranchFile?: (workspace: Workspace, path: string) => Promise<string | undefined>
 }
 
 export type GuestWorkspaceVm = InteractiveWorkspaceVm & {
@@ -96,9 +100,10 @@ function guestCwd(cwd: string): string {
   return path
 }
 
-async function readJson(path: string, parse: (text: string) => unknown = JSON.parse): Promise<unknown> {
+async function readJson(text: string | undefined, parse: (text: string) => unknown = JSON.parse): Promise<unknown> {
+  if (text === undefined) return undefined
   try {
-    return parse(await readRegularFile(path, basename(path)))
+    return parse(text)
   } catch {
     return undefined
   }
@@ -106,22 +111,22 @@ async function readJson(path: string, parse: (text: string) => unknown = JSON.pa
 
 // Invalid files count as empty. The pipeline reports them, and the agent can
 // still run commands to fix them.
-export async function hobworkEgress(dir: string): Promise<string[]> {
-  const config = await readJson(join(dir, 'hobwork.json'), parseHobworkJson)
+export async function hobworkEgress(hobworkJson: string | undefined): Promise<string[]> {
+  const config = await readJson(hobworkJson, parseHobworkJson)
   const egress = (config as { egress?: unknown } | undefined)?.egress
   return Array.isArray(egress) ? egress.filter((host): host is string => typeof host === 'string') : []
 }
 
 // What the hob asks for, capped at the defaults. Invalid files ask for nothing.
-async function hobworkResources(dir: string, kind: ResourceKind) {
-  const config = await readJson(join(dir, 'hobwork.json'), parseHobworkJson)
+async function hobworkResources(hobworkJson: string | undefined, kind: ResourceKind) {
+  const config = await readJson(hobworkJson, parseHobworkJson)
   const requested = (config as { resources?: ResourceRequest } | undefined)?.resources
   const ask = typeof requested === 'object' && requested !== null ? requested : undefined
   return resolveResources(kind, ask, DEFAULT_RESOURCES[kind])
 }
 
-export async function hasExtraDependencies(dir: string): Promise<boolean> {
-  const pkg = await readJson(join(dir, 'package.json'))
+export async function hasExtraDependencies(packageJson: string | undefined): Promise<boolean> {
+  const pkg = await readJson(packageJson)
   return typeof pkg === 'object' && pkg !== null && extraDependencies(pkg).length > 0
 }
 
@@ -217,8 +222,9 @@ export function workspaceVmBackend(
     const fingerprint = environments?.fingerprint(workspace) ?? ''
     const environment = await environments?.start(workspace)
     // The registry is always reachable so agents can add and install extras.
-    const egress = [...new Set([NPM_REGISTRY, ...(await hobworkEgress(workspace.dir)), ...(environment?.egress ?? [])])]
-    const resources = await hobworkResources(workspace.dir, 'workspace')
+    const readBranchFile = (path: string) => options.readBranchFile?.(workspace, path)
+    const egress = [...new Set([NPM_REGISTRY, ...(await hobworkEgress(await readBranchFile('hobwork.json'))), ...(environment?.egress ?? [])])]
+    const resources = await hobworkResources(await readBranchFile('hobwork.json'), 'workspace')
     const base = sandboxOptions(
       options,
       workspace.dir,
@@ -264,7 +270,7 @@ export function workspaceVmBackend(
     }
     const vm = execVm(sandbox)
 
-    if (await hasExtraDependencies(workspace.dir)) {
+    if (await hasExtraDependencies(await readBranchFile('package.json'))) {
       // A failed install does not fail the start: the agent sees missing
       // packages and can run pnpm install itself to get the error.
       const install = await vm.exec('pnpm install', { cwd: '.', timeoutMs: INSTALL_TIMEOUT_MS })
@@ -282,7 +288,7 @@ export function workspaceVmBackend(
       },
       isStale: async () => {
         if ((environments?.fingerprint(workspace) ?? '') !== fingerprint) return true
-        const current = new Set([NPM_REGISTRY, ...(await hobworkEgress(workspace.dir)), ...(environment?.egress ?? [])])
+        const current = new Set([NPM_REGISTRY, ...(await hobworkEgress(await readBranchFile('hobwork.json'))), ...(environment?.egress ?? [])])
         return current.size !== egress.length || egress.some((host) => !current.has(host))
       },
     }
@@ -295,7 +301,9 @@ export function pipelineVmBackend(options: GuestVmOptions): { start: StartPipeli
   const running = new Set<Sandbox>()
   return {
     async start({ dir, project = '(host)', kind = 'pipeline' }) {
-      const resources = await hobworkResources(dir, 'pipeline')
+      // The checkout is fresh, so no VM has written to it yet.
+      const hobworkJson = await readRegularFile(join(dir, 'hobwork.json'), 'hobwork.json').catch(() => undefined)
+      const resources = await hobworkResources(hobworkJson, 'pipeline')
       const base = sandboxOptions(options, dir, [NPM_REGISTRY], kind, { kind, project, resources })
       const sandbox = await options.createSandbox({
         ...base,

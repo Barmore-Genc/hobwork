@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { createAgentToken } from './agents.ts'
 import { createApp } from './app.ts'
 import { createDelivery } from './delivery.ts'
+import { branchFileReader } from './files.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
@@ -16,7 +17,7 @@ import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
 
 // Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
 describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs', { timeout: 300_000 }, () => {
-  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox }
+  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox, readBranchFile: (workspace, path) => branchFileReader(host)(workspace, path) }
   const pipelineVms = pipelineVmBackend(vmOptions)
   let host: ReturnType<typeof createTestHost>
   let workspaces: ReturnType<typeof createWorkspaceManager<ExecWorkspaceVm>>
@@ -129,11 +130,13 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     expect(await ok('diff', tools)).toBe('No changes')
   })
 
-  test('egress follows hobwork.json and the VM restarts when it changes', async () => {
+  test('egress follows the committed hobwork.json and the VM restarts when it changes', async () => {
     const status = 'curl -s -o /dev/null -w "%{http_code}" https://example.com/'
     expect(await ok('bash', { ...p, command: status })).toContain('403')
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     await ok('write_file', { ...p, path: 'hobwork.json', content: JSON.stringify({ ...config, egress: ['example.com'] }) })
+    expect(await ok('bash', { ...p, command: status })).toContain('403')
+    await ok('commit', { ...p, message: 'Allow example.com' })
     expect(await ok('bash', { ...p, command: status })).toContain('200')
   })
 

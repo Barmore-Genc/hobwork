@@ -8,6 +8,7 @@ import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createDelivery, type Delivery } from '../delivery.ts'
 import { createDevices } from '../devices/devices.ts'
+import { branchFileReader } from '../files.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
@@ -19,7 +20,7 @@ import { createRuntime, type Runtime } from './runtime.ts'
 
 // Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
 describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', { timeout: 300_000 }, () => {
-  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox }
+  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox, readBranchFile: (workspace, path) => branchFileReader(host)(workspace, path) }
   const pipelineVms = pipelineVmBackend(vmOptions)
   let host: ReturnType<typeof createTestHost>
   let runtime: Runtime

@@ -8,6 +8,7 @@ import ssh2 from 'ssh2'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { ensureAgent } from '../agents.ts'
 import { createDelivery } from '../delivery.ts'
+import { branchFileReader } from '../files.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createProject } from '../projects.ts'
 import { createBranch } from '../repo.ts'
@@ -24,7 +25,7 @@ type SshRun = { stdout: string; stderr: string; code: number }
 // Boots real VMs and uses the system OpenSSH client, so it only runs with
 // HOBWORK_VM_TESTS=1 (`pnpm test:vm`). Nothing touches ~/.ssh.
 describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('SSH gateway with real VMs', { timeout: 300_000 }, () => {
-  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox }
+  const vmOptions: GuestVmOptions = { image: imageDir(), createSandbox: createGondolinSandbox, readBranchFile: (workspace, path) => branchFileReader(host)(workspace, path) }
   const pipelineVms = pipelineVmBackend(vmOptions)
   let host: ReturnType<typeof createTestHost>
   let workspaces: ReturnType<typeof createWorkspaceManager<InteractiveWorkspaceVm>>

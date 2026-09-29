@@ -1,4 +1,4 @@
-import type { IncomingMessage } from 'node:http'
+import { STATUS_CODES, type IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { DatabaseSync } from 'node:sqlite'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -31,13 +31,21 @@ export function parsePush(value: unknown): Push | null | undefined {
   return { token: token.toLowerCase(), environment }
 }
 
+export type DeviceAuth = { device: Device } | { refused: { status: 401 | 403; error: string } }
+
+export const UNKNOWN_DEVICE = { status: 401, error: 'Send a device token of a paired device as Authorization: Bearer' } as const
+// A separate answer from 401, so the app keeps its token: the device works
+// again once the owner is back on the allowlist.
+export const OWNER_NOT_ALLOWED = { status: 403, error: 'not_allowed' } as const
+
 // The device behind `Authorization: Bearer hwd_...`, while its owner may still
 // sign in.
-export function deviceFromRequest(db: DatabaseSync, allowlist: Allowlist, req: IncomingMessage): Device | undefined {
+export function deviceFromRequest(db: DatabaseSync, allowlist: Allowlist, req: IncomingMessage): DeviceAuth {
   const header = req.headers.authorization
-  if (!header?.startsWith('Bearer ')) return undefined
-  const device = verifyDeviceToken(db, header.slice('Bearer '.length).trim())
-  return device && ownerMaySignIn(db, allowlist, device) ? device : undefined
+  const device = header?.startsWith('Bearer ') ? verifyDeviceToken(db, header.slice('Bearer '.length).trim()) : undefined
+  if (!device) return { refused: UNKNOWN_DEVICE }
+  if (!ownerMaySignIn(db, allowlist, device)) return { refused: OWNER_NOT_ALLOWED }
+  return { device }
 }
 
 function ownerMaySignIn(db: DatabaseSync, allowlist: Allowlist, device: Device): boolean {
@@ -47,7 +55,7 @@ function ownerMaySignIn(db: DatabaseSync, allowlist: Allowlist, device: Device):
 function refuse(socket: Duplex, status: number, message: string) {
   const body = JSON.stringify({ error: message })
   socket.end(
-    `HTTP/1.1 ${status} ${status === 401 ? 'Unauthorized' : 'Bad Request'}\r\n` +
+    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? 'Error'}\r\n` +
       'content-type: application/json\r\n' +
       `content-length: ${Buffer.byteLength(body)}\r\n` +
       'connection: close\r\n\r\n' +
@@ -184,12 +192,12 @@ export function createDeviceSockets(options: {
     // Returns false for upgrade requests to other paths.
     handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
       if (new URL(req.url ?? '/', 'http://localhost').pathname !== DEVICE_SOCKET_PATH) return false
-      const device = deviceFromRequest(db, allowlist, req)
-      if (!device) {
-        refuse(socket, 401, 'Send a device token of a paired device as Authorization: Bearer')
+      const auth = deviceFromRequest(db, allowlist, req)
+      if ('refused' in auth) {
+        refuse(socket, auth.refused.status, auth.refused.error)
         return true
       }
-      wss.handleUpgrade(req, socket, head, (ws) => serve(ws, device))
+      wss.handleUpgrade(req, socket, head, (ws) => serve(ws, auth.device))
       return true
     },
     close() {

@@ -1,0 +1,21 @@
+{
+  "Simulator Target Bundle": "dev.bgenc.hobwork",
+  "aps": {
+    "alert": {
+      "title": "Filament running low",
+      "body": "PLA Black is down to 80 g."
+    },
+    "sound": "default",
+    "thread-id": "filament",
+    "category": "hobwork.push-test-1",
+    "mutable-content": 1
+  },
+  "hobwork": {
+    "id": "push-test-1",
+    "project": "filament",
+    "actions": [
+      { "id": "reorder", "title": "Reorder" },
+      { "id": "ignore", "title": "Ignore" }
+    ]
+  }
+}

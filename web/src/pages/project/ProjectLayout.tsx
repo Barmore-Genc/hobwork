@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { api, type ProjectDetail } from '../../api.ts'
+import { navigate, useLocation } from '../../navigation.ts'
 import { Link } from '../../router.tsx'
 import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
@@ -26,6 +27,17 @@ export function ProjectLayout({
   children: (project: ProjectDetail, reload: () => void) => ReactNode
 }) {
   const { data: project, error, reload } = useLoad(() => api.project(name), name)
+  const { pathname, search } = useLocation()
+
+  // A link with the old name of a renamed project loads the project under its new name.
+  useEffect(() => {
+    if (!project || project.name === name) return
+    const prefix = projectPath(name)
+    const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : ''
+    const query = search.toString()
+    navigate(`${projectPath(project.name, rest)}${query ? `?${query}` : ''}`, { replace: true })
+  }, [project, name, pathname, search])
+  if (project && project.name !== name) return null
 
   return (
     <div>

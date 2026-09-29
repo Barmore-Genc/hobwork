@@ -4,6 +4,7 @@ import { bytes, dayTime, exactTime, shortDate, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice } from '../ui.tsx'
 import { DeleteProjectSection } from './project/DeleteProject.tsx'
+import { RenameProjectSection } from './project/RenameProject.tsx'
 import { BranchesSection } from './project/Branches.tsx'
 import { projectPath } from './project/names.ts'
 import { ProjectLayout } from './project/ProjectLayout.tsx'
@@ -409,6 +410,7 @@ export function ProjectPage({ name }: { name: string }) {
           <BranchesSection project={project.name} />
           <HealthSection project={project} />
           <VersionsSection project={project} reload={reload} />
+          <RenameProjectSection name={project.name} />
           <DeleteProjectSection name={project.name} />
         </>
       )}

@@ -27,4 +27,11 @@ export const EVENT_LABELS: Record<string, string> = {
   migration: 'Data change',
   db: 'Data',
   secret: 'Secret',
+  project: 'Project',
+}
+
+export const PROJECT_NAME_HINT = 'Lowercase letters, digits and single hyphens, up to 40 characters.'
+
+export function validProjectName(name: string): boolean {
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) && name.length <= 40
 }

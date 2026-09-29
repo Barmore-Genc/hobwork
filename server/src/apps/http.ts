@@ -3,7 +3,7 @@ import type { Auth } from '../auth/auth.ts'
 import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
 import { parseCookies, setCookie } from '../http.ts'
-import { getProject, type Project } from '../projects.ts'
+import { getProject, renamedProject, type Project } from '../projects.ts'
 import { BuildError } from '../runtime/builds.ts'
 import { sendJson, sendRuntimeError, serveRoute } from '../runtime/http.ts'
 import { ICONS_PREFIX, MANIFEST_PATH, sendUiText, serveAppIcons, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
@@ -157,9 +157,24 @@ export function createAppHttp(options: {
     serveAppIcons(req, res, { project: app.target.project, build, pathname, hobworkOrigin: publicUrl })
   }
 
+  // Bookmarks and home screen icons of a renamed project's app lead to its new origin.
+  function renamedOrigin(hostHeader: string | undefined): string | undefined {
+    const label = origins.labelOf(hostHeader)
+    if (!label || parseLabel(label).branchLabel !== undefined) return undefined
+    const project = renamedProject(host, label)
+    return project && origins.origin({ project: project.name })
+  }
+
   async function serveApp(req: IncomingMessage, res: ServerResponse) {
     const app = await resolveHost(req.headers.host)
-    if (!app) return sendText(res, 404, 'There is no app here.', frameHeaders)
+    if (!app) {
+      const moved = SAFE_METHODS.has(req.method ?? 'GET') ? renamedOrigin(req.headers.host) : undefined
+      if (moved) {
+        const { pathname, search } = new URL(req.url ?? '/', moved)
+        return redirect(res, `${moved}${pathname}${search}`, frameHeaders)
+      }
+      return sendText(res, 404, 'There is no app here.', frameHeaders)
+    }
     const url = new URL(req.url ?? '/', app.origin)
     const { pathname, search } = url
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)

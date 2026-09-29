@@ -3,6 +3,7 @@ import { api, setSignedOutHandler, type Session } from './api.ts'
 import { AgentsPage } from './pages/Agents.tsx'
 import { AllActivityPage } from './pages/AllActivity.tsx'
 import { ConnectPage } from './pages/Connect.tsx'
+import { DeletedProjectsPage } from './pages/DeletedProjects.tsx'
 import { DeviceConnectPage } from './pages/DeviceConnect.tsx'
 import { HostRequestPage } from './pages/HostRequest.tsx'
 import { LoginPage } from './pages/Login.tsx'
@@ -25,6 +26,7 @@ function Page({ pathname }: { pathname: string }) {
   if (pathname === '/agents') return <AgentsPage />
   if (pathname === '/settings') return <SettingsPage />
   if (pathname === '/secrets') return <SecretsPage />
+  if (pathname === '/deleted') return <DeletedProjectsPage />
   const project = /^\/projects\/([^/]+)(\/[^?]*)?$/.exec(pathname)
   if (project) {
     const name = decodeURIComponent(project[1]!)

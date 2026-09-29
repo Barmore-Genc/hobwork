@@ -19,6 +19,7 @@ export type LifecycleEvent =
   | 'migration'
   | 'db'
   | 'secret'
+  | 'project'
 
 export const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
 

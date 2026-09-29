@@ -13,7 +13,7 @@ import type { Host } from '../host.ts'
 import { HttpError, json, readJson } from '../http.ts'
 import { listConnections, revokeGrant } from '../oauth/grants.ts'
 import { latestRun } from '../pipeline/runner.ts'
-import { getProject, listProjects, ProjectError, type Project } from '../projects.ts'
+import { getProject, getProjectOrRenamed, listProjects, ProjectError, renamedProject, type Project } from '../projects.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
 import { nextRun, parseCron } from '../runtime/cron.ts'
@@ -91,7 +91,10 @@ function userActor(user: User): Actor {
 
 function requireProjectByName(host: Host, name: string): Project {
   const project = getProject(host, name)
-  if (!project) throw new HttpError(404, `There is no project called "${name}"`)
+  if (!project) {
+    const renamed = renamedProject(host, name)
+    throw new HttpError(404, renamed ? `${name} is now called ${renamed.name}` : `There is no project called "${name}"`)
+  }
   return project
 }
 
@@ -300,7 +303,8 @@ export function createApiRoutes(options: {
       method: 'GET',
       pattern: /^\/api\/projects\/([^/]+)$/,
       handle: async ({ res, params }) => {
-        const project = requireProjectByName(host, params[0]!)
+        // The web UI moves links to a renamed project's old name to its new one.
+        const project = getProjectOrRenamed(host, params[0]!) ?? requireProjectByName(host, params[0]!)
         const { status, current } = projectState(project)
         json(res, 200, {
           name: project.name,

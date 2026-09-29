@@ -10,10 +10,6 @@ Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in th
 
 A WebSocket from the host that tells open pages when something changed (projects, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The project log's long poll could move onto it.
 
-## Restoring deleted projects
-
-Deleted projects sit in `<dataDir>/trash/` for 7 days, but bringing one back is a manual step on the host (move the repo and DB back, create the project row and versions). Add a trash view to the web UI that lists deleted projects with who deleted them and when they are purged, and restores one when its name is still free.
-
 ## Checking projects against a new guest image
 
 A platform set or SDK update takes effect for every project at once, on its next workspace, pipeline run or build. Before switching to a new image, run every project's pipeline against it. Projects that fail stay on the old image until an agent fixes them, which needs images to be versioned and projects to record the image they were tested with.

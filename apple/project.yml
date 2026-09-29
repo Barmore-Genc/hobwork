@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: dev.bgenc
   deploymentTarget:
     iOS: "26.0"
+    macOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
@@ -36,9 +37,33 @@ settings:
 targets:
   Hobwork:
     type: application
-    supportedDestinations: [iOS]
+    supportedDestinations: [iOS, macOS]
+    # AlarmKit, Core NFC and ManagedSettings do not exist on macOS, and Macs have
+    # no Health data.
     sources:
       - path: Hobwork
+        excludes:
+          - Shared/Alarms
+          - Shared/ScreenTime
+          - Shared/Health
+          - Capabilities/NFC
+          - Capabilities/Health
+          - Views/ScreenTimeSettings.swift
+          - Views/HealthSettings.swift
+      - path: Hobwork/Shared/Alarms
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/ScreenTime
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Health
+        destinationFilters: [iOS]
+      - path: Hobwork/Capabilities/NFC
+        destinationFilters: [iOS]
+      - path: Hobwork/Capabilities/Health
+        destinationFilters: [iOS]
+      - path: Hobwork/Views/ScreenTimeSettings.swift
+        destinationFilters: [iOS]
+      - path: Hobwork/Views/HealthSettings.swift
+        destinationFilters: [iOS]
     info:
       path: Hobwork/Info.plist
       properties:
@@ -66,13 +91,18 @@ targets:
     dependencies:
       - target: HobworkNotificationService
       - target: HobworkDeviceActivityMonitor
+        destinationFilters: [iOS]
       - target: HobworkWidgets
+        destinationFilters: [iOS]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork
         PRODUCT_NAME: Hobwork
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         CODE_SIGN_ENTITLEMENTS: Hobwork/Hobwork$(HOBWORK_FAMILY_CONTROLS_SUFFIX)$(HOBWORK_APPLINKS_SUFFIX).entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Hobwork/Hobwork-macOS.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -83,10 +113,20 @@ targets:
 
   HobworkNotificationService:
     type: app-extension
-    supportedDestinations: [iOS]
+    supportedDestinations: [iOS, macOS]
     sources:
       - path: NotificationService
       - path: Hobwork/Shared
+        excludes:
+          - Alarms
+          - ScreenTime
+          - Health
+      - path: Hobwork/Shared/Alarms
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/ScreenTime
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Health
+        destinationFilters: [iOS]
     info:
       path: NotificationService/Info.plist
       properties:
@@ -102,6 +142,8 @@ targets:
         PRODUCT_NAME: HobworkNotificationService
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
         CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService$(HOBWORK_FAMILY_CONTROLS_SUFFIX).entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": NotificationService/NotificationService-macOS.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
@@ -157,9 +199,12 @@ targets:
 
   HobworkTests:
     type: bundle.unit-test
-    supportedDestinations: [iOS]
+    supportedDestinations: [iOS, macOS]
     sources:
       - path: HobworkTests
+        excludes: [iOS]
+      - path: HobworkTests/iOS
+        destinationFilters: [iOS]
     dependencies:
       - target: Hobwork
     settings:
@@ -167,6 +212,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Hobwork.app/Hobwork"
+        "TEST_HOST[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/Hobwork.app/Contents/MacOS/Hobwork"
 
   HobworkUITests:
     type: bundle.ui-testing
@@ -185,10 +231,14 @@ schemes:
     build:
       targets:
         Hobwork: all
-        HobworkNotificationService: all
-        HobworkDeviceActivityMonitor: all
-        HobworkWidgets: all
         HobworkTests: [test]
+    test:
+      targets: [HobworkTests]
+  # Separate, since testing an iOS-only target would build it for macOS runs too.
+  HobworkUITests:
+    build:
+      targets:
+        Hobwork: all
         HobworkUITests: [test]
     test:
-      targets: [HobworkTests, HobworkUITests]
+      targets: [HobworkUITests]

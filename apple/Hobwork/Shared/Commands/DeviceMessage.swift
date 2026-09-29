@@ -11,6 +11,15 @@ struct PushRegistration: Codable, Equatable, Sendable {
 }
 
 struct Hello: Codable, Equatable, Sendable {
+    /// `platform` in pairing and `hello`.
+    static var platform: String {
+        #if os(macOS)
+            "macos"
+        #else
+            "ios"
+        #endif
+    }
+
     var appVersion: String
     var platform: String
     var capabilities: [String]

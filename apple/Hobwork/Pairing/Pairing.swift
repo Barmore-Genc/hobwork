@@ -22,7 +22,7 @@ struct Pairing: Sendable {
         var components = URLComponents(url: host.appending(path: "devices/connect"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "name", value: deviceName),
-            URLQueryItem(name: "platform", value: "ios"),
+            URLQueryItem(name: "platform", value: Hello.platform),
             URLQueryItem(name: "challenge", value: pkce.challenge),
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "redirect_uri", value: Self.redirectURI),

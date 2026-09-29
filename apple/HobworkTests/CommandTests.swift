@@ -251,8 +251,13 @@ struct CommandSummaryTests {
 struct CapabilityStatusTests {
     @Test func reportsOnlyWhatIsAllowed() {
         #expect(CapabilityStatus().reported == [])
-        #expect(CapabilityStatus(notifications: true, screenTime: true, nfc: true).reported == ["notifications", "screenTime", "nfc"])
-        #expect(CapabilityStatus(notifications: true, alarms: true, screenTime: true, focus: true, nfc: true, health: true).reported
-            == ["notifications", "alarms", "screenTime", "focus", "nfc", "health"])
+        #if os(iOS)
+            #expect(CapabilityStatus(notifications: true, screenTime: true, nfc: true).reported == ["notifications", "screenTime", "nfc"])
+            #expect(CapabilityStatus(notifications: true, alarms: true, screenTime: true, focus: true, nfc: true, health: true).reported
+                == ["notifications", "alarms", "screenTime", "focus", "nfc", "health"])
+        #else
+            #expect(CapabilityStatus(focus: true).reported == ["focus"])
+            #expect(CapabilityStatus(notifications: true, focus: true).reported == ["notifications", "focus"])
+        #endif
     }
 }

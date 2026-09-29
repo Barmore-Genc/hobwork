@@ -57,7 +57,7 @@ struct HostIntegrationTests {
 
         let connection = DeviceConnection(
             request: api.webSocketRequest,
-            hello: { Hello(appVersion: "test", platform: "ios", capabilities: ["notifications"], push: nil) },
+            hello: { Hello(appVersion: "test", platform: Hello.platform, capabilities: ["notifications"], push: nil) },
             queue: MemoryEventQueue()
         )
         var removed = false
@@ -86,7 +86,7 @@ struct HostIntegrationTests {
         let api = HostAPI(host: host, token: "hwd_not-a-real-token")
         let connection = DeviceConnection(
             request: api.webSocketRequest,
-            hello: { Hello(appVersion: "test", platform: "ios", capabilities: [], push: nil) },
+            hello: { Hello(appVersion: "test", platform: Hello.platform, capabilities: [], push: nil) },
             queue: MemoryEventQueue()
         )
         connection.start()

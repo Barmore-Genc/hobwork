@@ -34,7 +34,7 @@ struct PairingTests {
         let items = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         #expect(items == [
             "name": "Kaan's iPhone+1",
-            "platform": "ios",
+            "platform": Hello.platform,
             "challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
             "state": "state123",
             "redirect_uri": "hobwork://paired",

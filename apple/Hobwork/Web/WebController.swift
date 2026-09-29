@@ -1,5 +1,9 @@
+#if os(macOS)
+    import AppKit
+#else
+    import UIKit
+#endif
 import Observation
-import UIKit
 import WebKit
 
 /// Owns the web view that shows the Hobwork web UI and project apps, and keeps it
@@ -9,6 +13,7 @@ import WebKit
 final class WebController: NSObject {
     private(set) var loadError: String?
     private(set) var canGoBack = false
+    private(set) var title: String?
 
     @ObservationIgnored let webView: WKWebView
     @ObservationIgnored private var policy: LinkPolicy?
@@ -29,11 +34,16 @@ final class WebController: NSObject {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        let refresh = UIRefreshControl()
-        refresh.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        webView.scrollView.refreshControl = refresh
+        #if os(iOS)
+            let refresh = UIRefreshControl()
+            refresh.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
+            webView.scrollView.refreshControl = refresh
+        #endif
         observations.append(webView.observe(\.canGoBack) { [weak self] webView, _ in
             MainActor.assumeIsolated { self?.canGoBack = webView.canGoBack }
+        })
+        observations.append(webView.observe(\.title) { [weak self] webView, _ in
+            MainActor.assumeIsolated { self?.title = webView.title.flatMap { $0.isEmpty ? nil : $0 } }
         })
     }
 
@@ -51,7 +61,7 @@ final class WebController: NSObject {
         if policy.opensInApp(url) {
             webView.load(URLRequest(url: url))
         } else {
-            UIApplication.shared.open(url)
+            Self.openOutside(url)
         }
     }
 
@@ -150,8 +160,23 @@ final class WebController: NSObject {
         return components.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
     }
 
+    /// Links that leave Hobwork open in the default browser, or the app for their scheme.
+    private static func openOutside(_ url: URL) {
+        #if os(macOS)
+            NSWorkspace.shared.open(url)
+        #else
+            UIApplication.shared.open(url)
+        #endif
+    }
+
+    private func endRefreshing() {
+        #if os(iOS)
+            webView.scrollView.refreshControl?.endRefreshing()
+        #endif
+    }
+
     private func failed(_ error: Error) {
-        webView.scrollView.refreshControl?.endRefreshing()
+        endRefreshing()
         let error = error as NSError
         // Cancelled loads, and loads the navigation policy handed elsewhere
         // (WebKitErrorFrameLoadInterruptedByPolicyChange), are not failures.
@@ -168,7 +193,7 @@ extension WebController: WKNavigationDelegate {
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
         guard let url = action.request.url, let policy else { return (.allow, preferences) }
         guard let scheme = url.scheme?.lowercased(), ["http", "https", "about", "blob", "data"].contains(scheme) else {
-            await UIApplication.shared.open(url)
+            Self.openOutside(url)
             return (.cancel, preferences)
         }
         let mainFrame = action.targetFrame?.isMainFrame ?? true
@@ -177,14 +202,14 @@ extension WebController: WKNavigationDelegate {
             return (.cancel, preferences)
         }
         if mainFrame, action.navigationType == .linkActivated, !policy.opensInApp(url) {
-            await UIApplication.shared.open(url)
+            Self.openOutside(url)
             return (.cancel, preferences)
         }
         return (.allow, preferences)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        webView.scrollView.refreshControl?.endRefreshing()
+        endRefreshing()
         loadError = nil
         checkSession()
     }
@@ -215,7 +240,7 @@ extension WebController: WKUIDelegate {
             if policy?.opensInApp(url) == true {
                 webView.load(action.request)
             } else {
-                UIApplication.shared.open(url)
+                Self.openOutside(url)
             }
         }
         return nil

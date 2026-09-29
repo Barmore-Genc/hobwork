@@ -13,7 +13,14 @@ enum Keychain {
         query[kSecValueData as String] = data
         // Notification actions and commands from pushes run while the phone is locked.
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(query as CFDictionary, nil)
+        var status = SecItemAdd(query as CFDictionary, nil)
+        #if os(macOS)
+            if status == errSecMissingEntitlement {
+                var fallback = fileKeychainQuery(for: host)
+                fallback[kSecValueData as String] = data
+                status = SecItemAdd(fallback as CFDictionary, nil)
+            }
+        #endif
         guard status == errSecSuccess else { throw KeychainError(status: status) }
     }
 
@@ -21,18 +28,27 @@ enum Keychain {
     /// first load moves them to the shared one.
     static func load(for host: URL, accessGroup: String? = AppGroup.identifier) -> DeviceCredentials? {
         if let credentials = find(baseQuery(for: host, accessGroup: accessGroup)) { return credentials }
-        guard let accessGroup, let old = find(baseQuery(for: host, accessGroup: nil)) else { return nil }
-        do {
-            try save(old, for: host, accessGroup: accessGroup)
-        } catch {
-            // Keep using the old item; the next launch tries again.
+        if let accessGroup, let old = find(baseQuery(for: host, accessGroup: nil)) {
+            do {
+                try save(old, for: host, accessGroup: accessGroup)
+            } catch {
+                // Keep using the old item; the next launch tries again.
+            }
+            return old
         }
-        return old
+        #if os(macOS)
+            return find(fileKeychainQuery(for: host))
+        #else
+            return nil
+        #endif
     }
 
     /// Deletes the item in every access group this process can see.
     static func delete(for host: URL) {
         SecItemDelete(baseQuery(for: host, accessGroup: nil) as CFDictionary)
+        #if os(macOS)
+            SecItemDelete(fileKeychainQuery(for: host) as CFDictionary)
+        #endif
     }
 
     private static func find(_ query: [String: Any]) -> DeviceCredentials? {
@@ -49,10 +65,26 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: host.absoluteString,
+            // The macOS file-based keychain has no access groups, so the notification
+            // service extension could not read the item.
+            kSecUseDataProtectionKeychain as String: true,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         return query
     }
+
+    #if os(macOS)
+        /// Builds signed without a provisioning profile (`just run-mac local`) may not use the
+        /// data protection keychain. Only the app reads the item then, which is enough for
+        /// a build that gets no pushes.
+        private static func fileKeychainQuery(for host: URL) -> [String: Any] {
+            [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: host.absoluteString,
+            ]
+        }
+    #endif
 }
 
 struct KeychainError: Error, LocalizedError {

@@ -1,8 +1,10 @@
-import FamilyControls
+#if os(iOS)
+    import FamilyControls
+    import HealthKit
+    import UIKit
+#endif
 import Foundation
-import HealthKit
 import Observation
-import UIKit
 
 @MainActor
 @Observable
@@ -17,19 +19,27 @@ final class AppModel {
     private(set) var capabilities = CapabilityStatus()
     /// Shown on the pairing screen, for example after the host removed this device.
     var notice: String?
-    /// Shown over the web view after scanning a tag or opening a tag link.
-    var nfcNotice: String?
+    #if os(iOS)
+        /// Shown over the web view after scanning a tag or opening a tag link.
+        var nfcNotice: String?
+    #endif
 
     @ObservationIgnored let web = WebController()
     @ObservationIgnored let notifier = Notifier()
-    @ObservationIgnored let alarms = AlarmKitScheduler()
-    @ObservationIgnored let nfc = NDEFTagSession()
-    @ObservationIgnored let healthStore = HKHealthStore()
-    @ObservationIgnored private(set) lazy var health = HealthDelivery(store: healthStore) { [weak self] event in
-        await self?.send(event)
-    }
+    #if os(iOS)
+        @ObservationIgnored let alarms = AlarmKitScheduler()
+        @ObservationIgnored let nfc = NDEFTagSession()
+        @ObservationIgnored let healthStore = HKHealthStore()
+        @ObservationIgnored private(set) lazy var health = HealthDelivery(store: healthStore) { [weak self] event in
+            await self?.send(event)
+        }
+    #endif
     @ObservationIgnored private let events = StoredEventQueue()
     @ObservationIgnored private var pushToken: String?
+    #if os(macOS)
+        /// Opens the window again, which may be closed while the app keeps running.
+        @ObservationIgnored var showWindow: (() -> Void)?
+    #endif
 
     static var appVersion: String {
         let info = Bundle.main.infoDictionary
@@ -52,7 +62,9 @@ final class AppModel {
         if let stored = StoredPairing.load() {
             activate(Pairing(host: stored.host, credentials: stored.credentials))
         }
-        health.start()
+        #if os(iOS)
+            health.start()
+        #endif
     }
 
     var api: HostAPI? {
@@ -80,10 +92,12 @@ final class AppModel {
 
     func sceneBecameActive() {
         guard pairing != nil else { return }
-        if scanWhenActive {
-            scanWhenActive = false
-            Task { await scanTag() }
-        }
+        #if os(iOS)
+            if scanWhenActive {
+                scanWhenActive = false
+                Task { await scanTag() }
+            }
+        #endif
         if connection?.state != .connected { connection?.reconnect() }
         web.checkSession()
         Task { await refreshCapabilities() }
@@ -138,72 +152,78 @@ final class AppModel {
 
     // MARK: Capabilities
 
-    func requestAlarms() async {
-        _ = await alarms.requestAuthorization()
-        await refreshCapabilities()
-    }
+    #if os(iOS)
+        func requestAlarms() async {
+            _ = await alarms.requestAuthorization()
+            await refreshCapabilities()
+        }
 
-    func requestScreenTime() async throws {
-        try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
-        await refreshCapabilities()
-    }
+        func requestScreenTime() async throws {
+            try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+            await refreshCapabilities()
+        }
 
-    func shareHealth(_ types: Set<HealthType>) async throws {
-        try await health.share(types)
-        await refreshCapabilities()
-    }
+        func shareHealth(_ types: Set<HealthType>) async throws {
+            try await health.share(types)
+            await refreshCapabilities()
+        }
 
-    /// The "Scan Tag" button and the Scan NFC Tag action: reads a tag and sends its link to the
-    /// host, which runs the project that wrote it or the triggers for that link.
-    func scanTag() async {
-        guard pairing != nil else { return }
-        do {
-            let records = try await nfc.read()
-            guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
-                nfcNotice = "This tag has no link, so there is nothing to send to your projects."
+        /// The "Scan Tag" button and the Scan NFC Tag action: reads a tag and sends its link to the
+        /// host, which runs the project that wrote it or the triggers for that link.
+        func scanTag() async {
+            guard pairing != nil else { return }
+            do {
+                let records = try await nfc.read()
+                guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
+                    nfcNotice = "This tag has no link, so there is nothing to send to your projects."
+                    return
+                }
+                await send(event)
+                nfcNotice = "Tag scanned."
+            } catch .cancelled {
                 return
+            } catch {
+                nfcNotice = NFCCapability.callError(error).message
             }
-            await send(event)
-            nfcNotice = "Tag scanned."
-        } catch .cancelled {
-            return
-        } catch {
-            nfcNotice = NFCCapability.callError(error).message
         }
-    }
 
-    /// Scans once the app is on screen: Core NFC only starts a scan for the active app, and the
-    /// Scan NFC Tag action can run while the app is still opening.
-    func scanTagWhenActive() async {
-        if UIApplication.shared.applicationState == .active {
-            await scanTag()
-        } else {
-            scanWhenActive = true
+        /// Scans once the app is on screen: Core NFC only starts a scan for the active app, and the
+        /// Scan NFC Tag action can run while the app is still opening.
+        func scanTagWhenActive() async {
+            if UIApplication.shared.applicationState == .active {
+                await scanTag()
+            } else {
+                scanWhenActive = true
+            }
         }
-    }
 
-    @ObservationIgnored private var scanWhenActive = false
+        @ObservationIgnored private var scanWhenActive = false
 
-    /// `hobwork://nfc/<tag>` and universal links to `<host>/nfc/<tag>`.
-    func open(_ url: URL) {
-        guard pairing != nil, let tag = NFCTagLink.tag(from: url, host: pairing?.host) else { return }
-        Task {
-            await send(NFCTagLink.event(tag: tag))
-            nfcNotice = "Tag scanned."
+        /// `hobwork://nfc/<tag>` and universal links to `<host>/nfc/<tag>`.
+        func open(_ url: URL) {
+            guard pairing != nil, let tag = NFCTagLink.tag(from: url, host: pairing?.host) else { return }
+            Task {
+                await send(NFCTagLink.event(tag: tag))
+                nfcNotice = "Tag scanned."
+            }
         }
-    }
+    #endif
 
     private func activate(_ pairing: Pairing) {
         self.pairing = pairing
         let api = HostAPI(host: pairing.host, token: pairing.credentials.token)
         let runner = CommandRunner(log: FileCommandLog())
         runner.register(notifier, for: Notifier.capability)
-        runner.register(NFCCapability(session: nfc, host: { [weak self] in self?.pairing?.host }), for: NFCCapability.capability)
-        BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
+        #if os(iOS)
+            runner.register(NFCCapability(session: nfc, host: { [weak self] in self?.pairing?.host }), for: NFCCapability.capability)
+            BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
+        #else
+            BackgroundCapabilities.register(on: runner)
+        #endif
         self.runner = runner
         let connection = DeviceConnection(
             request: api.webSocketRequest,
-            hello: { [weak self] in self?.hello ?? Hello(appVersion: Self.appVersion, platform: "ios", capabilities: []) },
+            hello: { [weak self] in self?.hello ?? Hello(appVersion: Self.appVersion, platform: Hello.platform, capabilities: []) },
             queue: events,
             runner: runner
         )
@@ -227,7 +247,7 @@ final class AppModel {
     private var hello: Hello {
         Hello(
             appVersion: Self.appVersion,
-            platform: "ios",
+            platform: Hello.platform,
             capabilities: capabilities.reported,
             push: pushToken.map { PushRegistration(token: $0, environment: Self.pushEnvironment) }
         )
@@ -239,7 +259,12 @@ final class AppModel {
     }
 
     private func handle(_ response: Notifier.Response) async {
-        if let path = response.path { web.open(link: path) }
+        if let path = response.path {
+            #if os(macOS)
+                showWindow?()
+            #endif
+            web.open(link: path)
+        }
         if let command = response.command { await run(command) }
         if let event = response.event { await send(event) }
     }

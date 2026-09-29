@@ -456,6 +456,23 @@ export function createApiRoutes(options: {
     },
     {
       method: 'GET',
+      pattern: /^\/api\/secrets\/host-requests\/(\d+)$/,
+      handle: ({ res, params }) => {
+        const request = secretStore().hostRequest(positiveInt(params[0]))
+        if (!request) throw new HttpError(404, 'This request no longer exists')
+        json(res, 200, request)
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/secrets\/host-requests\/(\d+)\/(approve|deny)$/,
+      handle: ({ res, user, params }) => {
+        const approve = params[1] === 'approve'
+        json(res, 200, secretCall(() => secretStore().decideHostRequest(positiveInt(params[0]), approve, userActor(user))))
+      },
+    },
+    {
+      method: 'GET',
       pattern: /^\/api\/agents$/,
       handle: ({ res }) => {
         const keys = listSshKeys(host.db)

@@ -18,7 +18,7 @@ const ABILITIES = [
   'Read logs and go back to earlier versions',
 ]
 
-function Frame({ children }: { children: ReactNode }) {
+export function Frame({ children }: { children: ReactNode }) {
   return (
     <main className="grid min-h-dvh place-items-center px-4 py-12">
       <div className="w-full max-w-md">

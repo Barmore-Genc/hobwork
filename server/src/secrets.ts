@@ -86,6 +86,8 @@ export type SecretInfo = {
   id: number
   name: string
   hosts: string[]
+  // The newest host request that waits for an answer.
+  pendingHostRequest: { id: number; hosts: string[]; agent: string | null } | null
   createdAt: string
   updatedAt: string
   createdBy: string | null
@@ -104,10 +106,26 @@ export type ProjectSecretInfo = {
   assignedBy: ActorInfo
 }
 
+export type HostRequestDecision = 'approved' | 'denied' | 'superseded'
+
+export type HostRequest = {
+  id: number
+  secret: { id: number; name: string; hosts: string[] }
+  agent: string | null
+  hosts: string[]
+  reason: string
+  createdAt: string
+  decision: HostRequestDecision | null
+  decidedAt: string | null
+  decidedBy: string | null
+}
+
+export const MAX_HOST_REQUEST_REASON = 500
+
 export type NewSecret = {
   name: string
   value: string
-  hosts: string[]
+  hosts?: string[]
   // Assigns the new secret to a project in the same step.
   assign?: { project: string; envName: string }
 }
@@ -136,10 +154,10 @@ function normalizeName(name: unknown): string {
   return label
 }
 
+// A secret without hosts is never sent anywhere. Agents ask for hosts with a
+// host request, which a person approves.
 export function normalizeHosts(hosts: string[]): string[] {
-  if (!Array.isArray(hosts) || hosts.length === 0) {
-    throw new SecretError('Bind the secret to at least one host, like api.example.com')
-  }
+  if (!Array.isArray(hosts)) throw new SecretError('Hosts must be a list of host names, like api.example.com')
   if (hosts.length > MAX_HOSTS) throw new SecretError(`A secret can be bound to at most ${MAX_HOSTS} hosts`)
   const normalized = hosts.map((host) => String(host).trim().toLowerCase().replace(/\.$/, ''))
   for (const host of normalized) {
@@ -219,6 +237,10 @@ function actorLabel(actor: Actor): string {
   if (actor.kind === 'user') return actor.name
   if (actor.kind === 'agent') return `Agent ${actor.name}`
   return 'Someone on the Hobwork host'
+}
+
+function sentTo(hosts: string[]): string {
+  return hosts.length ? `It is only sent to ${hosts.join(', ')}` : 'It is not sent anywhere until it has hosts'
 }
 
 function logEntry(project: string, message: string): NewLogEntry {
@@ -319,11 +341,47 @@ export function createSecretStore(host: Host, key: Buffer) {
       .map((assignment) => ({ assignment, row: requireSecret(assignment.secretId) }))
   }
 
+  function pendingHostRequest(secretId: number): SecretInfo['pendingHostRequest'] {
+    const row = host.db
+      .prepare(
+        `SELECT r.id, r.hosts, a.name AS agent FROM secret_host_requests r LEFT JOIN agents a ON a.id = r.agent_id
+         WHERE r.secret_id = ? AND r.decision IS NULL ORDER BY r.id DESC LIMIT 1`,
+      )
+      .get(secretId)
+    return row ? { id: Number(row.id), hosts: JSON.parse(String(row.hosts)) as string[], agent: nullableString(row.agent) } : null
+  }
+
+  function hostRequest(id: number): HostRequest | undefined {
+    const row = host.db
+      .prepare(
+        `SELECT r.id, r.secret_id, a.name AS agent, r.hosts, r.reason, r.created_at, r.decision, r.decided_at, u.name AS decided_by
+         FROM secret_host_requests r
+         LEFT JOIN agents a ON a.id = r.agent_id
+         LEFT JOIN users u ON u.id = r.decided_by_user_id
+         WHERE r.id = ?`,
+      )
+      .get(id)
+    if (!row) return undefined
+    const secret = requireSecret(Number(row.secret_id))
+    return {
+      id: Number(row.id),
+      secret: { id: secret.id, name: secret.name, hosts: secret.hosts },
+      agent: nullableString(row.agent),
+      hosts: JSON.parse(String(row.hosts)) as string[],
+      reason: String(row.reason),
+      createdAt: String(row.created_at),
+      decision: nullableString(row.decision) as HostRequestDecision | null,
+      decidedAt: nullableString(row.decided_at),
+      decidedBy: nullableString(row.decided_by),
+    }
+  }
+
   function info(row: Row): SecretInfo {
     return {
       id: row.id,
       name: row.name,
       hosts: row.hosts,
+      pendingHostRequest: pendingHostRequest(row.id),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       createdBy: row.createdBy,
@@ -379,6 +437,41 @@ export function createSecretStore(host: Host, key: Buffer) {
       .run(projectId, row.id, envName, userId(actor), actor.kind === 'agent' ? actor.id : null)
   }
 
+  function update(row: Row, change: SecretChange, actor: Actor): SecretInfo {
+    const name = change.name === undefined ? row.name : normalizeName(change.name)
+    const hosts = change.hosts === undefined ? row.hosts : normalizeHosts(change.hosts)
+    if (change.value !== undefined) validateValue(change.value)
+    if (nameTaken(name, row.id)) throw new SecretConflictError(`A secret called "${name}" already exists`)
+    const valueChanged = change.value !== undefined
+    const hostsChanged = hosts.join('\n') !== row.hosts.join('\n')
+    if (!valueChanged && !hostsChanged && name === row.name) return info(row)
+    host.db
+      .prepare(
+        `UPDATE secrets SET name = ?, value = ?, hosts = ?, legacy_aad = ?, updated_by_user_id = ?, updated_at = ${NOW}
+         WHERE id = ?`,
+      )
+      .run(
+        name,
+        change.value === undefined ? row.value : encrypt(row.id, change.value),
+        JSON.stringify(hosts),
+        valueChanged ? null : row.legacyAad,
+        userId(actor),
+        row.id,
+      )
+    if (valueChanged || hostsChanged) {
+      const what = [valueChanged && 'new value', hostsChanged && (hosts.length ? `now only sent to ${hosts.join(', ')}` : 'no longer sent anywhere')]
+        .filter(Boolean)
+        .join(', ')
+      appendLogs(
+        host,
+        assignmentsOf(row.id).map(({ project, envName }) =>
+          logEntry(project, `${actorLabel(actor)} changed the secret "${name}" (${envName}): ${what}`),
+        ),
+      )
+    }
+    return info(requireSecret(row.id))
+  }
+
   reencryptLegacy()
 
   return {
@@ -407,7 +500,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       requirePerson(actor)
       const name = normalizeName(input.name)
       validateValue(input.value)
-      const hosts = normalizeHosts(input.hosts)
+      const hosts = normalizeHosts(input.hosts ?? [])
       const target = input.assign && { ...input.assign, projectId: requireProject(host, input.assign.project).id }
       if (target) validateEnvName(target.envName)
       if (nameTaken(name)) throw new SecretConflictError(`A secret called "${name}" already exists. Pick another name`)
@@ -428,7 +521,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         appendLogs(host, [
           logEntry(
             target.project,
-            `${actorLabel(actor)} added the secret "${name}" as ${target.envName}. It is only sent to ${hosts.join(', ')}`,
+            `${actorLabel(actor)} added the secret "${name}" as ${target.envName}. ${sentTo(hosts)}`,
           ),
         ])
       }
@@ -437,39 +530,48 @@ export function createSecretStore(host: Host, key: Buffer) {
 
     update(ref: SecretRef, change: SecretChange, actor: Actor): SecretInfo {
       requirePerson(actor)
+      return update(requireSecret(ref), change, actor)
+    },
+
+    // An agent asks for the hosts a secret may be sent to. They replace the
+    // current hosts once a person approves the request.
+    requestHosts(ref: SecretRef, hosts: string[], reason: string, actor: Actor & { kind: 'agent' }): HostRequest {
       const row = requireSecret(ref)
-      const name = change.name === undefined ? row.name : normalizeName(change.name)
-      const hosts = change.hosts === undefined ? row.hosts : normalizeHosts(change.hosts)
-      if (change.value !== undefined) validateValue(change.value)
-      if (nameTaken(name, row.id)) throw new SecretConflictError(`A secret called "${name}" already exists`)
-      const valueChanged = change.value !== undefined
-      const hostsChanged = hosts.join('\n') !== row.hosts.join('\n')
-      if (!valueChanged && !hostsChanged && name === row.name) return info(row)
+      const normalized = normalizeHosts(hosts)
+      if (normalized.length === 0) throw new SecretError('Ask for at least one host, like api.example.com')
+      const why = reason.trim()
+      if (!why) throw new SecretError('Say why the secret needs these hosts, so the user can decide')
+      if (why.length > MAX_HOST_REQUEST_REASON) throw new SecretError(`Keep the reason under ${MAX_HOST_REQUEST_REASON} characters`)
+      const id = transaction(() => {
+        host.db
+          .prepare(
+            `UPDATE secret_host_requests SET decision = 'superseded', decided_at = ${NOW}
+             WHERE secret_id = ? AND decision IS NULL`,
+          )
+          .run(row.id)
+        const inserted = host.db
+          .prepare('INSERT INTO secret_host_requests (secret_id, agent_id, hosts, reason) VALUES (?, ?, ?, ?) RETURNING id')
+          .get(row.id, actor.id, JSON.stringify(normalized), why)
+        if (!inserted) throw new Error('Host request insert returned no row')
+        return Number(inserted.id)
+      })
+      return hostRequest(id)!
+    },
+
+    hostRequest(id: number): HostRequest | undefined {
+      return hostRequest(id)
+    },
+
+    decideHostRequest(id: number, approve: boolean, actor: Actor): HostRequest {
+      requirePerson(actor)
+      const request = hostRequest(id)
+      if (!request) throw new SecretNotFoundError('This request no longer exists')
+      if (request.decision !== null) throw new SecretConflictError(`This request was already ${request.decision}`)
+      if (approve) update(requireSecret(request.secret.id), { hosts: request.hosts }, actor)
       host.db
-        .prepare(
-          `UPDATE secrets SET name = ?, value = ?, hosts = ?, legacy_aad = ?, updated_by_user_id = ?, updated_at = ${NOW}
-           WHERE id = ?`,
-        )
-        .run(
-          name,
-          change.value === undefined ? row.value : encrypt(row.id, change.value),
-          JSON.stringify(hosts),
-          valueChanged ? null : row.legacyAad,
-          userId(actor),
-          row.id,
-        )
-      if (valueChanged || hostsChanged) {
-        const what = [valueChanged && 'new value', hostsChanged && `now only sent to ${hosts.join(', ')}`]
-          .filter(Boolean)
-          .join(', ')
-        appendLogs(
-          host,
-          assignmentsOf(row.id).map(({ project, envName }) =>
-            logEntry(project, `${actorLabel(actor)} changed the secret "${name}" (${envName}): ${what}`),
-          ),
-        )
-      }
-      return info(requireSecret(row.id))
+        .prepare(`UPDATE secret_host_requests SET decision = ?, decided_at = ${NOW}, decided_by_user_id = ? WHERE id = ?`)
+        .run(approve ? 'approved' : 'denied', userId(actor), id)
+      return hostRequest(id)!
     },
 
     // Also takes the secret away from every project it is assigned to.
@@ -495,7 +597,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       appendLogs(host, [
         logEntry(
           project,
-          `${actorLabel(actor)} added the secret "${row.name}" as ${envName}. It is only sent to ${row.hosts.join(', ')}`,
+          `${actorLabel(actor)} added the secret "${row.name}" as ${envName}. ${sentTo(row.hosts)}`,
         ),
       ])
       return projectInfo(assigned(project).find(({ assignment }) => assignment.envName === envName)!)

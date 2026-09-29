@@ -36,12 +36,13 @@ await ctx.db.batch([
 
 ## Secrets
 
-Only the user creates secrets, in the Hobwork UI, and sets the hosts each one may be sent to. A secret reaches a project when it is assigned to it under an env name. `list_secrets` shows every secret with its hosts and the projects it is assigned to. When the project needs one:
+Only the user creates secrets and sets their values, in the Hobwork UI. A secret reaches a project when it is assigned to it under an env name. `list_secrets` shows every secret with its hosts and the projects it is assigned to. When the project needs one:
 
 1. If a fitting secret exists, assign it: `assign_secret` with the project, the secret's name and the env name the code uses (e.g. `SPOOL_API_KEY`).
-2. Otherwise ask the user to create it in Hobwork, with the hosts it may be sent to, then assign it.
+2. Otherwise ask the user to create it in Hobwork, then assign it.
+3. If the secret has no hosts or lacks one the code calls, ask for them with `request_secret_hosts` (every host it needs, and why). Show the user the link it returns. The hosts apply once they approve.
 
-You cannot see or change values or hosts. Handlers never see values: `ctx.secrets.SPOOL_API_KEY` is a placeholder, and Hobwork replaces it with the real value in request headers sent to one of the secret's hosts:
+You cannot see values or change hosts yourself. Handlers never see values: `ctx.secrets.SPOOL_API_KEY` is a placeholder, and Hobwork replaces it with the real value in request headers sent to one of the secret's hosts:
 
 ```ts
 await ctx.fetch('https://api.example.com/v1/spools', { headers: { authorization: `Bearer ${ctx.secrets.SPOOL_API_KEY}` } })

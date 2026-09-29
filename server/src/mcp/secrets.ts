@@ -3,7 +3,7 @@ import * as z from 'zod'
 import type { Agent } from '../agents.ts'
 import type { Host } from '../host.ts'
 import { ProjectError, requireProject } from '../projects.ts'
-import { MAX_ENV_NAME_LENGTH, type SecretStore } from '../secrets.ts'
+import { MAX_ENV_NAME_LENGTH, MAX_HOST_REQUEST_REASON, type SecretStore } from '../secrets.ts'
 
 const project = z.string().describe('Project name, e.g. "filament-tracker"')
 const envName = z
@@ -12,12 +12,12 @@ const envName = z
   .describe('Env var name the project sees, e.g. "SPOOLMAN_TOKEN". Handlers read it as ctx.secrets.SPOOLMAN_TOKEN')
 
 // Agents can see the library and assign secrets to projects. They never see
-// values and cannot create secrets or change their values or hosts: with
-// hosts under an agent's control, assigning a secret would be enough to send
-// its value anywhere.
+// values and cannot create secrets or change their values. They can only ask
+// for hosts, which a person approves: with hosts under an agent's control,
+// assigning a secret would be enough to send its value anywhere.
 export function registerSecretTools(
   server: McpServer,
-  { host, secrets, agent }: { host: Host; secrets?: SecretStore; agent: Agent },
+  { host, secrets, agent, publicUrl }: { host: Host; secrets?: SecretStore; agent: Agent; publicUrl: string },
 ) {
   function store(): SecretStore {
     if (!secrets) throw new ProjectError('This Hobwork host has no secret store')
@@ -28,7 +28,7 @@ export function registerSecretTools(
     'list_secrets',
     {
       description:
-        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, and the projects it is assigned to with the env name each project uses. With a project, only the secrets assigned to it, by env name. Values are never shown. Only the user creates secrets and sets their values and hosts, in the Hobwork UI.",
+        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, and the projects it is assigned to with the env name each project uses. With a project, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
       inputSchema: { project: project.optional().describe('Only the secrets assigned to this project') },
       annotations: { readOnlyHint: true },
     },
@@ -45,14 +45,15 @@ export function registerSecretTools(
       }
       const library = store()
         .list()
-        .map(({ name: secret, hosts, assignments }) => ({
+        .map(({ name: secret, hosts, pendingHostRequest, assignments }) => ({
           name: secret,
           hosts,
+          ...(pendingHostRequest ? { pendingHosts: pendingHostRequest.hosts } : {}),
           projects: assignments.map(({ project: p, envName: env }) => ({ project: p, envName: env })),
         }))
       const text = library.length
         ? JSON.stringify(library, null, 2)
-        : 'There are no secrets yet. Ask the user to create the one you need in Hobwork, with the hosts it may be sent to.'
+        : 'There are no secrets yet. Ask the user to create the one you need in Hobwork.'
       return { content: [{ type: 'text', text }] }
     },
   )
@@ -61,7 +62,7 @@ export function registerSecretTools(
     'assign_secret',
     {
       description:
-        "Give a project an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value in request headers to the secret's hosts), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the project log. If the secret does not exist, ask the user to create it in Hobwork with the hosts it may be sent to.",
+        "Give a project an existing secret under an env var name. Its handlers and branch workspaces get ctx.secrets.<env name> (a placeholder that Hobwork replaces with the value in request headers to the secret's hosts), and those hosts become reachable. Running VMs pick it up on their next invocation or bash command. The user sees the change in the project log. If the secret does not exist, ask the user to create it in Hobwork. If it has no hosts or lacks one, ask for them with request_secret_hosts.",
       inputSchema: {
         project,
         secret: z.string().describe('Secret name as list_secrets shows it, e.g. "Spoolman API key"'),
@@ -74,7 +75,9 @@ export function registerSecretTools(
         content: [
           {
             type: 'text',
-            text: `Assigned "${assigned.secret}" to ${name} as ${assigned.envName}. Handlers can send ctx.secrets.${assigned.envName} to ${assigned.hosts.join(', ')}.`,
+            text: assigned.hosts.length
+              ? `Assigned "${assigned.secret}" to ${name} as ${assigned.envName}. Handlers can send ctx.secrets.${assigned.envName} to ${assigned.hosts.join(', ')}.`
+              : `Assigned "${assigned.secret}" to ${name} as ${assigned.envName}. It has no hosts yet, so it is not sent anywhere. Ask for them with request_secret_hosts.`,
           },
         ],
       }
@@ -94,6 +97,37 @@ export function registerSecretTools(
         throw new ProjectError(`${name} has no secret as ${env_name}. list_secrets with the project shows its secrets`)
       }
       return { content: [{ type: 'text', text: `Unassigned ${env_name} from ${name}.` }] }
+    },
+  )
+
+  server.registerTool(
+    'request_secret_hosts',
+    {
+      description:
+        "Ask the user to approve the hosts a secret may be sent to, e.g. when they created a secret without hosts. The hosts replace the secret's current hosts once the user approves, so list every host it needs. Returns a link: show it to the user and ask them to open it and approve. A newer request for the same secret replaces an unanswered one. list_secrets shows the hosts once approved.",
+      inputSchema: {
+        secret: z.string().describe('Secret name as list_secrets shows it, e.g. "Spoolman API key"'),
+        hosts: z
+          .array(z.string())
+          .min(1)
+          .describe('Every host the value may be sent to, e.g. ["api.spools.example"]. *.example.com covers its subdomains'),
+        reason: z
+          .string()
+          .max(MAX_HOST_REQUEST_REASON)
+          .describe('One sentence for the user on why the secret goes to these hosts, e.g. "The Spoolman API lives at api.spools.example"'),
+      },
+    },
+    ({ secret, hosts, reason }) => {
+      const request = store().requestHosts(secret, hosts, reason, { kind: 'agent', id: agent.id, name: agent.name })
+      const url = new URL(`/secrets/requests/${request.id}`, publicUrl).href
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Asked to send "${request.secret.name}" to ${request.hosts.join(', ')}. Show the user this link and ask them to approve: ${url}`,
+          },
+        ],
+      }
     },
   )
 }

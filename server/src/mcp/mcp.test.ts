@@ -148,6 +148,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'merge',
       'pipeline_status',
       'read_file',
+      'request_secret_hosts',
       'restore_version',
       'revoke_ssh_key',
       'rotate_webhook_token',

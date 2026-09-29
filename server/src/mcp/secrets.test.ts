@@ -75,13 +75,13 @@ test('agents assign and unassign existing secrets, and the project log names the
   ])
 })
 
-test('no tool lets an agent create secrets or set values or hosts', async () => {
+test('no tool lets an agent create secrets, set values or set hosts without approval', async () => {
   const { tools } = await mcp.client.listTools()
   const secretTools = tools.filter((t) => t.name.includes('secret'))
-  expect(secretTools.map((t) => t.name).sort()).toEqual(['assign_secret', 'list_secrets', 'unassign_secret'])
+  expect(secretTools.map((t) => t.name).sort()).toEqual(['assign_secret', 'list_secrets', 'request_secret_hosts', 'unassign_secret'])
   for (const tool of secretTools) {
     expect(Object.keys(tool.inputSchema.properties ?? {}), tool.name).not.toContain('value')
-    expect(Object.keys(tool.inputSchema.properties ?? {}), tool.name).not.toContain('hosts')
+    if (tool.name !== 'request_secret_hosts') expect(Object.keys(tool.inputSchema.properties ?? {}), tool.name).not.toContain('hosts')
   }
 
   secrets.create({ name: 'Key', value: 'v', hosts: ['a.example'] }, HOST)
@@ -101,4 +101,35 @@ test('get_project shows reachable hosts, secret env names and DB warnings', asyn
   expect(project.egress).toEqual(['api.spools.example'])
   expect(project.secrets).toEqual(['SPOOL_API_KEY'])
   expect(project.database).toMatchObject({ sizeBytes: expect.any(Number), slowQueries: { count: 1, last: { sql: 'SELECT 1' } } })
+})
+
+test('request_secret_hosts returns a link for the user and changes nothing until approved', async () => {
+  secrets.create({ name: 'Spools', value: 'v', assign: { project: 'filament', envName: 'SPOOLS' } }, HOST)
+  expect(textOf(await mcp.call('assign_secret', { project: 'alarms', secret: 'Spools', env_name: 'SPOOLS' }))).toContain(
+    'It has no hosts yet, so it is not sent anywhere. Ask for them with request_secret_hosts.',
+  )
+  const noReason = await mcp.call('request_secret_hosts', { secret: 'Spools', hosts: ['api.spools.example'], reason: ' ' })
+  expect(noReason.isError).toBe(true)
+
+  const result = await mcp.call('request_secret_hosts', {
+    secret: 'Spools',
+    hosts: ['api.spools.example'],
+    reason: 'Spoolman lives there',
+  })
+  const pending = secrets.get('Spools')!.pendingHostRequest!
+  expect(textOf(result)).toBe(
+    `Asked to send "Spools" to api.spools.example. Show the user this link and ask them to approve: http://localhost/secrets/requests/${pending.id}`,
+  )
+  expect(secrets.forSandbox('filament')).toEqual({ SPOOLS: { value: 'v', hosts: [] } })
+  expect(JSON.parse(textOf(await mcp.call('list_secrets')))).toEqual([
+    {
+      name: 'Spools',
+      hosts: [],
+      pendingHosts: ['api.spools.example'],
+      projects: [
+        { project: 'alarms', envName: 'SPOOLS' },
+        { project: 'filament', envName: 'SPOOLS' },
+      ],
+    },
+  ])
 })

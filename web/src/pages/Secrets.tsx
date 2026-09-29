@@ -160,7 +160,6 @@ function SecretForm({
         await api.createSecret({
           name,
           value,
-          hosts: parseHosts(hosts),
           ...(project ? { assign: { project, envName } } : {}),
         })
       }
@@ -225,29 +224,30 @@ function SecretForm({
           />
         )}
       </Field>
-      <Field
-        id={`${id}-hosts`}
-        label="Sites it may be sent to"
-        hint={
-          <>
-            Separate them with commas. <span className="font-mono">*.example.com</span> covers every site under
-            example.com. Only you can change these.
-          </>
-        }
-      >
-        {(fieldId) => (
-          <input
-            id={fieldId}
-            value={hosts}
-            onChange={(e) => setHosts(e.target.value)}
-            placeholder="api.example.com"
-            required
-            autoComplete="off"
-            spellCheck={false}
-            className={`${inputClass} font-mono`}
-          />
-        )}
-      </Field>
+      {existing && (
+        <Field
+          id={`${id}-hosts`}
+          label="Sites it may be sent to"
+          hint={
+            <>
+              Separate them with commas. <span className="font-mono">*.example.com</span> covers every site under
+              example.com. Agents can ask for sites, and you approve them.
+            </>
+          }
+        >
+          {(fieldId) => (
+            <input
+              id={fieldId}
+              value={hosts}
+              onChange={(e) => setHosts(e.target.value)}
+              placeholder="api.example.com"
+              autoComplete="off"
+              spellCheck={false}
+              className={`${inputClass} font-mono`}
+            />
+          )}
+        </Field>
+      )}
     </FormFrame>
   )
 }
@@ -326,6 +326,9 @@ function AssignForm({
 }
 
 function Hosts({ label, hosts }: { label: string; hosts: string[] }) {
+  if (hosts.length === 0) {
+    return <p className="text-sm text-muted">Not sent to any site yet. Ask your agent to request the sites it needs.</p>
+  }
   return (
     <ul className="flex flex-wrap gap-2" aria-label={label}>
       {hosts.map((host) => (
@@ -402,7 +405,21 @@ function SecretCard({
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 space-y-2">
           <h2 className="text-lg font-semibold break-words">{secret.name}</h2>
-          <Hosts label={`Sites ${secret.name} may be sent to`} hosts={secret.hosts} />
+          {(secret.hosts.length > 0 || !secret.pendingHostRequest) && (
+            <Hosts label={`Sites ${secret.name} may be sent to`} hosts={secret.hosts} />
+          )}
+          {secret.pendingHostRequest && (
+            <p className="text-sm">
+              {secret.pendingHostRequest.agent ?? 'An agent'} asked to send it to{' '}
+              {secret.pendingHostRequest.hosts.length === 1 ? '1 site' : `${secret.pendingHostRequest.hosts.length} sites`}.{' '}
+              <Link
+                to={`/secrets/requests/${secret.pendingHostRequest.id}`}
+                className="font-semibold text-accent-fg underline underline-offset-4"
+              >
+                Review
+              </Link>
+            </p>
+          )}
           <p className="text-sm text-muted">
             <When iso={secret.updatedAt}>
               {secret.updatedAt === secret.createdAt ? 'Added' : 'Changed'} {timeAgo(secret.updatedAt)}

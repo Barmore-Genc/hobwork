@@ -51,6 +51,7 @@ export function createMcpHandler(options: {
   authenticate?: McpAuthenticator
   // RFC 9728: sent in the 401 challenge so OAuth clients find the authorization server.
   resourceMetadataUrl?: string
+  publicUrl: string
   ssh?: SshAddress
   homeAssistant?: HomeAssistant
   runtime?: Runtime
@@ -82,6 +83,7 @@ export function createMcpHandler(options: {
       workspaces: options.workspaces,
       delivery: options.delivery,
       agent,
+      publicUrl: options.publicUrl,
       ssh: options.ssh,
       homeAssistant: options.homeAssistant,
       runtime: options.runtime,

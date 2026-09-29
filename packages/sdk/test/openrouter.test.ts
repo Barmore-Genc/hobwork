@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { z } from 'zod'
-import { openrouter, OpenRouterError, OPENROUTER_URL } from '../src/index.ts'
+import { DEFAULT_JUDGE_MODEL, openrouter, OpenRouterError, OPENROUTER_URL } from '../src/index.ts'
 import { createTestContext } from '../src/testing.ts'
 
 type Sent = { url: string; headers: Record<string, string>; body: Record<string, unknown> }
@@ -204,4 +204,70 @@ test('Hobwork limits come back with their own codes', async () => {
     .catch((err: unknown) => err)
   expect(error).toBeInstanceOf(OpenRouterError)
   expect(error).toMatchObject({ status: 429, code: 'hobwork_rate_limit', metadata: { retry_after_seconds: 12 } })
+})
+
+test('check asks for a boolean with the data apart from the instruction', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('{"answer":true}') })
+  const ai = openrouter(createTestContext({ fetch, secrets }))
+  expect(await ai.check('Is this a shipping notice?', { input: { subject: 'Your order shipped' } })).toBe(true)
+  const body = sent[0]!.body as { model: string; temperature: number; max_tokens: number; messages: { role: string; content: string }[]; response_format: unknown; provider: unknown }
+  expect(body.model).toBe(DEFAULT_JUDGE_MODEL)
+  expect(body.temperature).toBe(0)
+  expect(body.max_tokens).toBeLessThanOrEqual(100)
+  expect(body.messages[0]!.content).toContain('Is this a shipping notice?')
+  expect(body.messages[0]!.content).not.toContain('Your order shipped')
+  expect(body.messages[1]).toEqual({ role: 'user', content: `<data>\n${JSON.stringify({ subject: 'Your order shipped' }, null, 2)}\n</data>` })
+  expect(body.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true, schema: { properties: { answer: { type: 'boolean' } } } } })
+  expect(body.provider).toEqual({ require_parameters: true })
+})
+
+test('check uses the given model and rejects an answer that is not a boolean', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('{"answer":"yes"}') })
+  const ai = openrouter(createTestContext({ fetch, secrets }))
+  await expect(ai.check('Is it?', { model: 'openai/gpt-5-mini', input: 'text' })).rejects.toMatchObject({ code: 'invalid_output' })
+  expect(sent[0]!.body.model).toBe('openai/gpt-5-mini')
+  expect(sent).toHaveLength(1)
+})
+
+test('check rejects replies that are not JSON or have no answer', async () => {
+  for (const content of ['true', '{"result":true}', 'null']) {
+    const { fetch } = fakeFetch({ body: completion(content) })
+    await expect(openrouter(createTestContext({ fetch, secrets })).check('Is it?')).rejects.toBeInstanceOf(OpenRouterError)
+  }
+})
+
+test('pick returns one of the choices and sends them as an enum', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('{"answer":"bill"}') })
+  const ai = openrouter(createTestContext({ fetch, secrets }))
+  const kind: 'bill' | 'promo' | 'other' = await ai.pick('What kind of email is this?', ['bill', 'promo', 'other'] as const, { input: 'Invoice due' })
+  expect(kind).toBe('bill')
+  expect(sent[0]!.body).toMatchObject({
+    response_format: { json_schema: { schema: { properties: { answer: { type: 'string', enum: ['bill', 'promo', 'other'] } } } } },
+  })
+})
+
+test('pick accepts an object of choices and descriptions', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('{"answer":"urgent"}') })
+  const level = await openrouter(createTestContext({ fetch, secrets })).pick('How urgent is it?', { urgent: 'needs action today', later: 'can wait' })
+  const typed: 'urgent' | 'later' = level
+  expect(typed).toBe('urgent')
+  const system = (sent[0]!.body.messages as { content: string }[])[0]!.content
+  expect(system).toContain('- urgent: needs action today')
+  expect(system).toContain('- later: can wait')
+})
+
+test('pick rejects an answer outside the choices', async () => {
+  for (const content of ['{"answer":"spam"}', '{"answer":"Bill"}', '{"answer":["bill"]}', '{"answer":null}']) {
+    const { fetch, sent } = fakeFetch({ body: completion(content) })
+    await expect(openrouter(createTestContext({ fetch, secrets })).pick('Kind?', ['bill', 'promo'])).rejects.toMatchObject({ code: 'invalid_output' })
+    expect(sent).toHaveLength(1)
+  }
+})
+
+test('pick rejects empty and duplicate choices before calling OpenRouter', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('{"answer":"a"}') })
+  const ai = openrouter(createTestContext({ fetch, secrets }))
+  await expect(ai.pick('Kind?', [])).rejects.toThrow('at least one')
+  await expect(ai.pick('Kind?', ['a', 'a'])).rejects.toThrow('unique')
+  expect(sent).toHaveLength(0)
 })

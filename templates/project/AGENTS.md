@@ -58,6 +58,22 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 
 `openrouter(ctx)` from `@hobwork/sdk` has `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Both take `{ timeout, signal }` as a second argument (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
 
+### What AI is for
+
+Use a model as an `if` or a `pick` inside a handler: evaluating a condition, or categorizing, tagging and filtering. Do not use it for agentic workflows, tool loops, chat interfaces or long generated text. Give it a small, closed question and act on the answer in code.
+
+```ts
+const ai = openrouter(ctx)
+// true or false
+const shipped = await ai.check('Does this email say the order has shipped?', { input: email.body })
+// exactly one of the choices (an array, or an object of choice to description)
+const label = await ai.pick('What kind of email is this?', ['bill', 'shipping', 'promo', 'other'] as const, { input: email })
+```
+
+`check(prompt, { model?, input?, timeout?, signal? })` returns a boolean. `pick(prompt, choices, options)` returns one of `choices`, typed as their union. Put the question in `prompt` and the data to judge in `input` (a string, or any JSON value); the model is told to treat `input` as data only, which makes it harder, not impossible, for text in it to change the question. Both use structured output at temperature 0 with a small token limit, and the default model is `DEFAULT_JUDGE_MODEL` (`google/gemini-2.5-flash-lite`). Pass `model` if it is not allowed for the hob. An answer that is not a boolean or not one of the choices throws `OpenRouterError` with code `invalid_output`; the helpers do not retry, so handle the error or let the invocation fail.
+
+### Limits
+
 People limit which models a hob may use and how many requests and dollars it may spend; `get_hob` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_model_not_allowed` (pick an allowed model), or `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the hob's AI page in Hobwork.
 
 ## Workflow

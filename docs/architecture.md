@@ -602,6 +602,8 @@ On deploy the host diffs the project's triggers against its active subscriptions
 
 Agents find device IDs, entities and trigger payloads through the HA MCP tools. `ha_listen` lets an agent subscribe a trigger temporarily and ask the user to press the button, to see the real payload before writing the handler.
 
+Home Assistant stays the source of truth for its own data. The MCP instructions and the template's `AGENTS.md` tell agents to read states, history and device details from HA instead of copying them into the project DB, unless the user asks for a copy or the feature cannot work without one.
+
 HA automations can also call a Hobwork webhook (`rest_command`), for anything easier to express on the HA side.
 
 ### Hobwork to HA (actions)

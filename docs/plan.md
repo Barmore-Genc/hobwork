@@ -81,6 +81,8 @@ Status: done, covered end to end by `pnpm -C server test:vm` (template project m
 - Projects overview, versions list with restore, invocations and logs, secrets management, agent access management.
 - Serve project UIs at `/p/<project>/` with the theme stylesheet. Theme wired into the project template's Tailwind config.
 
+Status: done are OIDC login with an allowlist, sessions and CSRF protection, the theme package served at `/theme/theme.css`, the host serving the built UI, the projects overview, versions with restore, and agent access management. Tested against Pocket ID in Docker (`dev/pocket-id/`). Project routes (`/p/<project>/api/*`) accept a signed-in user's session. Still to do: invocations and logs pages, secrets management (needs Phase 6), serving project UIs at `/p/<project>/`, and wiring the theme into the project template.
+
 ## Phase 8: Auth and access
 
 - MCP OAuth 2.1 authorization server (for claude.ai / Cowork connectors), agent identities created on approval.

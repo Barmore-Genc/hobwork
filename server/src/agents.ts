@@ -30,6 +30,60 @@ export function createAgentToken(db: DatabaseSync, agentName: string): { agent: 
   return { agent, token }
 }
 
+export type AgentToken = {
+  id: number
+  createdAt: string
+  lastUsedAt: string | null
+  revokedAt: string | null
+}
+
+export type AgentWithTokens = Agent & { createdAt: string; tokens: AgentToken[] }
+
+function nullableString(value: unknown): string | null {
+  return value === null ? null : String(value)
+}
+
+export function getAgent(db: DatabaseSync, id: number): Agent | undefined {
+  const row = db.prepare('SELECT id, name FROM agents WHERE id = ?').get(id)
+  return row ? { id: Number(row.id), name: String(row.name) } : undefined
+}
+
+export function listAgents(db: DatabaseSync): AgentWithTokens[] {
+  const tokens = new Map<number, AgentToken[]>()
+  for (const row of db
+    .prepare('SELECT id, agent_id, created_at, last_used_at, revoked_at FROM agent_tokens ORDER BY id DESC')
+    .all()) {
+    const list = tokens.get(Number(row.agent_id)) ?? []
+    list.push({
+      id: Number(row.id),
+      createdAt: String(row.created_at),
+      lastUsedAt: nullableString(row.last_used_at),
+      revokedAt: nullableString(row.revoked_at),
+    })
+    tokens.set(Number(row.agent_id), list)
+  }
+  return db
+    .prepare('SELECT id, name, created_at FROM agents ORDER BY name')
+    .all()
+    .map((row) => ({
+      id: Number(row.id),
+      name: String(row.name),
+      createdAt: String(row.created_at),
+      tokens: tokens.get(Number(row.id)) ?? [],
+    }))
+}
+
+// Returns false when the token does not exist or was already revoked.
+export function revokeAgentToken(db: DatabaseSync, tokenId: number): boolean {
+  const result = db
+    .prepare(
+      `UPDATE agent_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND revoked_at IS NULL`,
+    )
+    .run(tokenId)
+  return Number(result.changes) > 0
+}
+
 export function verifyAgentToken(db: DatabaseSync, token: string): Agent | undefined {
   if (!token.startsWith(TOKEN_PREFIX)) return undefined
   const row = db
@@ -39,7 +93,5 @@ export function verifyAgentToken(db: DatabaseSync, token: string): Agent | undef
        RETURNING agent_id`,
     )
     .get(hashToken(token))
-  if (!row) return undefined
-  const agent = db.prepare('SELECT id, name FROM agents WHERE id = ?').get(row.agent_id as number)
-  return agent ? { id: Number(agent.id), name: String(agent.name) } : undefined
+  return row ? getAgent(db, Number(row.agent_id)) : undefined
 }

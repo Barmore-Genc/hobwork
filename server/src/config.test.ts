@@ -25,6 +25,32 @@ test('Home Assistant is optional', () => {
   ).toEqual({ url: 'http://ha.local:8123', token: 'secret' })
 })
 
+test('public URL defaults to localhost and must be an origin', () => {
+  expect(loadConfig({ HOBWORK_PORT: '8000' }).publicUrl).toBe('http://localhost:8000')
+  expect(loadConfig({ HOBWORK_PUBLIC_URL: 'https://hob.example.com/' }).publicUrl).toBe('https://hob.example.com')
+  expect(() => loadConfig({ HOBWORK_PUBLIC_URL: 'https://hob.example.com/app' })).toThrow('origin')
+  expect(() => loadConfig({ HOBWORK_PUBLIC_URL: 'hob.example.com' })).toThrow('HOBWORK_PUBLIC_URL')
+})
+
+test('OIDC settings and allowlist', () => {
+  expect(loadConfig({}).oidc).toBeUndefined()
+  expect(loadConfig({}).allowlist).toEqual({ emails: [], subjects: [] })
+  expect(() => loadConfig({ HOBWORK_OIDC_ISSUER: 'https://id.example.com' })).toThrow('set together')
+  const config = loadConfig({
+    HOBWORK_OIDC_ISSUER: 'https://id.example.com',
+    HOBWORK_OIDC_CLIENT_ID: 'hobwork',
+    HOBWORK_OIDC_CLIENT_SECRET: 's3cret',
+    HOBWORK_ALLOWED_USERS: 'Kaan@Example.com, sub:abc-123 ,',
+  })
+  expect(config.oidc).toEqual({
+    issuer: 'https://id.example.com',
+    clientId: 'hobwork',
+    clientSecret: 's3cret',
+    name: 'Pocket ID',
+  })
+  expect(config.allowlist).toEqual({ emails: ['kaan@example.com'], subjects: ['abc-123'] })
+})
+
 test('rejects incomplete or invalid Home Assistant settings', () => {
   expect(() => loadConfig({ HOBWORK_HA_URL: 'http://ha.local:8123' })).toThrow('set together')
   expect(() => loadConfig({ HOBWORK_HA_URL: 'ha.local', HOBWORK_HA_TOKEN: 'x' })).toThrow('HOBWORK_HA_URL')

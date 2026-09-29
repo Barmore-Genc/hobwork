@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent } from './agents.ts'
+import type { User } from './auth/users.ts'
 import { git, GitError, HOBWORK_IDENTITY } from './git.ts'
 import { repoPath, type Host } from './host.ts'
 import { runPipeline, type PipelineOptions, type PipelineRun } from './pipeline/runner.ts'
@@ -49,6 +50,14 @@ function authorEnv(agent: Agent): Record<string, string> {
     ...HOBWORK_IDENTITY,
     GIT_AUTHOR_NAME: agent.name,
     GIT_AUTHOR_EMAIL: `agent-${agent.id}@hobwork.local`,
+  }
+}
+
+function userEnv(user: User): Record<string, string> {
+  return {
+    ...HOBWORK_IDENTITY,
+    GIT_AUTHOR_NAME: user.name,
+    GIT_AUTHOR_EMAIL: user.email ?? `user-${user.id}@hobwork.local`,
   }
 }
 
@@ -184,14 +193,16 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
   }
 
   // Commits the version's tree as a new commit on main. History is never rewritten.
-  // Without an agent (auto-revert), Hobwork is the author.
+  // Started by an agent over MCP, by a user in the web UI, or by auto-revert
+  // with neither, in which case Hobwork is the author.
   async function restore(request: {
     project: string
     version: number
     agent?: Agent
+    user?: User
     summary?: string
   }): Promise<RestoreResult> {
-    const { project, agent } = request
+    const { project, agent, user } = request
     const { id: projectId } = requireProject(host, project)
     return serialized(project, async () => {
       const target = getVersion(host, project, request.version)
@@ -205,7 +216,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
         throw new ProjectError(`${DEFAULT_BRANCH} already has the code of version ${target.number}`)
       }
       const summary = request.summary ?? `Restore version ${target.number}`
-      const env = agent ? authorEnv(agent) : HOBWORK_IDENTITY
+      const env = agent ? authorEnv(agent) : user ? userEnv(user) : HOBWORK_IDENTITY
       const commit = (await inRepo(['commit-tree', tree, '-p', main, '-F', '-'], env, summary)).trim()
       await inRepo(['update-ref', `refs/heads/${DEFAULT_BRANCH}`, commit, main])
       const version = recordVersion(host, {
@@ -213,6 +224,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
         commit,
         summary,
         agentId: agent?.id,
+        userId: user?.id,
         restoredFrom: target.number,
       })
       const deployError = await deployVersion({ project, version: version.number, commit, reason: 'restore' })

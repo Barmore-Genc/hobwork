@@ -14,8 +14,9 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024
 const PRIVATE_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization'])
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-length', 'upgrade'])
 
-// Decides who may call a project's routes. Phase 7 adds user sessions for
-// dashboards; until then only agents (bearer token) can.
+// Decides who may call a project's routes: agents with a bearer token and
+// signed-in users (project UIs), whose state-changing requests must pass the
+// CSRF check (header x-hobwork-csrf: 1).
 export type RouteAuthorizer = (req: IncomingMessage, project: string) => boolean
 
 class HttpError extends Error {
@@ -92,7 +93,7 @@ export function createRuntimeHttp(host: Host, runtime: Runtime, authorizeRoute: 
     const [project = '', api, ...rest] = segmentsOf(pathname, PROJECT_PREFIX)
     if (api !== 'api' || !getProject(host, project)) return sendJson(res, 404, { error: 'not found' })
     if (!authorizeRoute(req, project)) {
-      return sendJson(res, 401, { error: 'Send an agent token as "Authorization: Bearer <token>"' }, {
+      return sendJson(res, 401, { error: 'Sign in, or send an agent token as "Authorization: Bearer <token>"' }, {
         'www-authenticate': 'Bearer realm="Hobwork"',
       })
     }

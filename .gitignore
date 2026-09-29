@@ -19,3 +19,6 @@ xcuserdata/
 
 # Home Assistant dev instance runtime state
 /dev/homeassistant/data/
+
+# Pocket ID dev instance runtime state
+/dev/pocket-id/data/

@@ -1,0 +1,96 @@
+/*
+ * Hobwork theme. The host serves this file at /theme/theme.css for the web UI
+ * and every project UI. Pages follow the system light/dark setting unless the
+ * root element has data-theme="light" or data-theme="dark".
+ */
+
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/theme/fonts/bricolage-grotesque-latin-wght-normal.woff2) format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/theme/fonts/atkinson-hyperlegible-next-latin-wght-normal.woff2) format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url(/theme/fonts/atkinson-hyperlegible-next-latin-wght-italic.woff2) format('woff2-variations');
+}
+
+:root {
+  color-scheme: light;
+
+  --hw-bg: #e7ebe4;
+  --hw-surface: #f5f7f2;
+  --hw-surface-raised: #ffffff;
+  --hw-border: #c9d0c4;
+  --hw-fg: #22302b;
+  --hw-muted: #5b6962;
+  --hw-accent: #c8952e;
+  --hw-accent-fg: #845b0c;
+  --hw-on-accent: #1e1a10;
+  --hw-success: #357350;
+  --hw-warning: #9a5a00;
+  --hw-danger: #a63a2b;
+  --hw-on-danger: #ffffff;
+  --hw-focus: #2f6fb0;
+
+  --hw-radius-sm: 6px;
+  --hw-radius-md: 10px;
+  --hw-radius-lg: 18px;
+
+  --hw-font-sans: 'Atkinson Hyperlegible Next', ui-sans-serif, system-ui, sans-serif;
+  --hw-font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --hw-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --hw-bg: #141a18;
+    --hw-surface: #1b2320;
+    --hw-surface-raised: #232d29;
+    --hw-border: #34413b;
+    --hw-fg: #e5eae2;
+    --hw-muted: #98a59d;
+    --hw-accent: #d9a640;
+    --hw-accent-fg: #e6b95c;
+    --hw-on-accent: #1a140a;
+    --hw-success: #7fc39a;
+    --hw-warning: #e3a04a;
+    --hw-danger: #e27564;
+    --hw-on-danger: #1a0d0a;
+    --hw-focus: #7cb4ee;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --hw-bg: #141a18;
+  --hw-surface: #1b2320;
+  --hw-surface-raised: #232d29;
+  --hw-border: #34413b;
+  --hw-fg: #e5eae2;
+  --hw-muted: #98a59d;
+  --hw-accent: #d9a640;
+  --hw-accent-fg: #e6b95c;
+  --hw-on-accent: #1a140a;
+  --hw-success: #7fc39a;
+  --hw-warning: #e3a04a;
+  --hw-danger: #e27564;
+  --hw-on-danger: #1a0d0a;
+  --hw-focus: #7cb4ee;
+}

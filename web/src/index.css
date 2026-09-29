@@ -1,1 +1,52 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import '@hobwork/theme/tailwind.css';
+
+@layer base {
+  html {
+    background: var(--hw-bg);
+  }
+
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--hw-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--hw-accent) 40%, transparent);
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@utility animate-glow {
+  animation: glow 1.6s ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}

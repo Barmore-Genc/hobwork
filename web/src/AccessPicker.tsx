@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { api, type Access } from './api.ts'
 import { useLoad } from './useLoad.ts'
+import { kindChanged } from './live.ts'
 
 function Choice({
   name,
@@ -28,7 +29,7 @@ function Choice({
 
 export function AccessPicker({ access, onChange }: { access: Access; onChange: (access: Access) => void }) {
   const id = useId()
-  const { data: projects } = useLoad(api.projects)
+  const { data: projects } = useLoad(api.projects, '', kindChanged('projects'))
   const chosen = access.projects
 
   function toggle(project: string) {

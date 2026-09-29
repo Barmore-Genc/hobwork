@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      // ws: the Apple apps' device socket is /api/devices/ws.
+      // ws: the Apple apps' device socket (/api/devices/ws) and live updates (/api/live).
       '/api': { target: host, ws: true },
       '/auth': host,
       '/theme': host,

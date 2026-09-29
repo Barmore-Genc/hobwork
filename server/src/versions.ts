@@ -1,3 +1,4 @@
+import { publishChange } from './changes.ts'
 import type { Host } from './host.ts'
 
 export type Version = {
@@ -66,6 +67,8 @@ export function recordVersion(
   if (!row) throw new Error('Version insert returned no row')
   const created = host.db.prepare(`${SELECT} WHERE v.id = ?`).get(Number(row.id))
   if (!created) throw new Error('Version missing after insert')
+  const project = host.db.prepare('SELECT name FROM projects WHERE id = ?').get(version.projectId)
+  if (project) publishChange(host.db, { kind: 'project', project: String(project.name) })
   return toVersion(created)
 }
 

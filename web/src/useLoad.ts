@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLive, type LiveFilter } from './live.ts'
 
-// Loads data when `key` changes or reload() is called. Results of a load that
-// was superseded are dropped.
-export function useLoad<T>(load: () => Promise<T>, key = '') {
+// Loads data when `key` changes, reload() is called or the host reports a
+// change `live` accepts. Results of a load that was superseded are dropped.
+export function useLoad<T>(load: () => Promise<T>, key = '', live?: LiveFilter) {
   const [data, setData] = useState<T | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [generation, setGeneration] = useState(0)
@@ -10,6 +11,8 @@ export function useLoad<T>(load: () => Promise<T>, key = '') {
   useEffect(() => {
     loadRef.current = load
   })
+  const reload = () => setGeneration((g) => g + 1)
+  useLive(live, reload)
 
   useEffect(() => {
     let current = true
@@ -28,5 +31,5 @@ export function useLoad<T>(load: () => Promise<T>, key = '') {
     }
   }, [key, generation])
 
-  return { data, error, reload: () => setGeneration((g) => g + 1) }
+  return { data, error, reload }
 }

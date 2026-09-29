@@ -5,6 +5,7 @@ import { createAgentToken } from '../agents.ts'
 import { createAiGateway, OPENROUTER_HOSTS } from '../ai/gateway.ts'
 import { DEFAULT_LIMITS, saveHostAiSettings } from '../ai/settings.ts'
 import { createApp } from '../app.ts'
+import { onChange, type Change } from '../changes.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
@@ -258,6 +259,25 @@ test('starts on demand after a host restart and stops when idle', async () => {
   await until(() => sandboxes.running.size === 0)
   const stop = queryLogs(host, { project: 'filament', source: 'runtime', limit: 50 }).find((l) => l.event === 'stop')
   expect(stop?.message).toContain('idle')
+})
+
+test('tells open pages when the runtime starts and stops and when invocations run', async () => {
+  const changes: Change[] = []
+  onChange(host.db, (change) => changes.push(change))
+  await release(projectFiles({ hobwork: { ...HOBWORK_JSON, idleTimeout: '200ms' } }))
+  start()
+  await runtime.start()
+  changes.length = 0
+  const outcome = await runtime.invoke('filament', { kind: 'cron', name: 'tick', manual: false })
+  await until(() => sandboxes.running.size === 0)
+  const id = outcome.invocationId
+  expect(changes.filter((c) => c.kind !== 'logs')).toEqual([
+    { kind: 'invocations', project: 'filament', id },
+    { kind: 'project', project: 'filament' },
+    { kind: 'invocations', project: 'filament', id },
+    { kind: 'project', project: 'filament' },
+  ])
+  expect(changes).toContainEqual({ kind: 'logs', project: 'filament' })
 })
 
 test('the VM a deploy starts stops when nothing uses it', async () => {

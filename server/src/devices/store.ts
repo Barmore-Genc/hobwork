@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes, randomUUID } from 'node:crypto'
+import { publishChange } from '../changes.ts'
 import { hashSecret, newSecret, s256 } from '../oauth/secrets.ts'
 
 export const DEVICE_TOKEN_PREFIX = 'hwd_'
@@ -159,6 +160,7 @@ export function exchangePairingCode(
       .prepare('INSERT INTO devices (user_id, name, platform, token_hash, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id')
       .get(Number(row.user_id), name, String(row.platform), hashSecret(token), iso(now))
     db.exec('COMMIT')
+    publishChange(db, { kind: 'devices' })
     return { device: getDevice(db, Number(inserted!.id))!, token }
   } catch (err) {
     // A failed exchange keeps the deleted code deleted.
@@ -173,6 +175,7 @@ export function renameDevice(db: DatabaseSync, id: number, name: string): Device
   if (deviceNameTaken(db, name, id)) throw new DeviceStoreError(409, `A device called "${name}" already exists`)
   const result = db.prepare('UPDATE devices SET name = ? WHERE id = ? AND revoked_at IS NULL').run(name, id)
   if (Number(result.changes) === 0) throw new DeviceStoreError(404, 'This device does not exist')
+  publishChange(db, { kind: 'devices' })
   return getDevice(db, id)!
 }
 
@@ -185,6 +188,7 @@ export function revokeDevice(db: DatabaseSync, id: number, now = Date.now()): bo
   if (Number(result.changes) === 0) return false
   db.prepare('DELETE FROM device_sign_in_links WHERE device_id = ?').run(id)
   db.prepare('DELETE FROM sessions WHERE device_id = ?').run(id)
+  publishChange(db, { kind: 'devices' })
   return true
 }
 
@@ -201,6 +205,7 @@ export function recordHello(
     id,
   )
   if (hello.push !== undefined) setPushToken(db, id, hello.push)
+  publishChange(db, { kind: 'devices' })
 }
 
 export function touchDevice(db: DatabaseSync, id: number, now = Date.now()) {

@@ -1,5 +1,6 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { createScheduler } from '../runtime/scheduler.ts'
 import type { BackupConfig } from './config.ts'
@@ -162,6 +163,7 @@ export function createBackups(
     } finally {
       rmSync(staging, { recursive: true, force: true })
       release()
+      publishChange(host.db, { kind: 'backups' })
     }
     return getRun(id)
   }
@@ -182,6 +184,7 @@ export function createBackups(
       release()
       throw err
     }
+    publishChange(host.db, { kind: 'backups' })
     const done = execute(id, release)
     running = done
     void done.finally(() => {

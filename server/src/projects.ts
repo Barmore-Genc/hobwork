@@ -1,6 +1,7 @@
 import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { publishChange } from './changes.ts'
 import { git, HOBWORK_IDENTITY } from './git.ts'
 import { repoPath, type Host } from './host.ts'
 import { recordVersion } from './versions.ts'
@@ -130,6 +131,7 @@ export async function createProject(host: Host, name: string): Promise<Project> 
     claimName(host, name)
     // Version 1 is the template, so even the first merge can be restored away from.
     recordVersion(host, { projectId: project.id, commit, summary: TEMPLATE_COMMIT_MESSAGE })
+    publishChange(host.db, { kind: 'projects' })
     return project
   } catch (err) {
     rmSync(repo, { recursive: true, force: true })

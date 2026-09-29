@@ -1,3 +1,4 @@
+import { publishChange } from './changes.ts'
 import { git, GitError } from './git.ts'
 import { repoPath, type Host } from './host.ts'
 import { DEFAULT_BRANCH, ProjectError, requireProject } from './projects.ts'
@@ -99,6 +100,7 @@ export async function createBranch(
     throw new ProjectError(`Branch "${branch}" already exists in ${project}`)
   }
   await git(['--git-dir', repo, 'update-ref', `refs/heads/${branch}`, start, ''])
+  publishChange(host.db, { kind: 'branches', project })
   const created = (await listBranches(host, project)).find((b) => b.name === branch)
   if (!created) throw new Error(`Branch ${branch} missing after creation`)
   return created
@@ -113,6 +115,7 @@ export async function deleteBranchRef(host: Host, project: string, branch: strin
     throw new ProjectError(`Branch "${branch}" does not exist in ${project}`)
   }
   await git(['--git-dir', repo, 'update-ref', '-d', `refs/heads/${branch}`])
+  publishChange(host.db, { kind: 'branches', project })
 }
 
 export async function log(

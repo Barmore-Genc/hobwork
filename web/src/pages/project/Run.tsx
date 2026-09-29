@@ -1,4 +1,5 @@
-import { api } from '../../api.ts'
+import { api, type InvocationDetail } from '../../api.ts'
+import type { Change } from '../../live.ts'
 import { duration, exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
 import { Notice } from '../../ui.tsx'
@@ -9,7 +10,14 @@ import { ProjectLayout } from './ProjectLayout.tsx'
 import { RunStatus } from './runs.tsx'
 
 function RunDetail({ project, id }: { project: string; id: number }) {
-  const { data: run, error } = useLoad(() => api.invocation(project, id), `${project}/${id}`)
+  const { data: run, error } = useLoad<InvocationDetail>(
+    () => api.invocation(project, id),
+    `${project}/${id}`,
+    (change: Change): boolean =>
+      (change.kind === 'invocations' && change.project === project && change.id === id) ||
+      // A run's lines arrive while it runs.
+      (change.kind === 'logs' && change.project === project && run?.status === 'running'),
+  )
 
   if (error) return <div className="mt-8"><Notice tone="error">{error}</Notice></div>
   if (!run) return null

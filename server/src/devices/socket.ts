@@ -1,9 +1,11 @@
-import { STATUS_CODES, type IncomingMessage } from 'node:http'
+import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { DatabaseSync } from 'node:sqlite'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { isAllowed } from '../auth/users.ts'
+import { publishChange } from '../changes.ts'
 import type { Allowlist } from '../config.ts'
+import { refuseUpgrade } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_PROTOCOL_ERROR, CLOSE_REVOKED, CLOSE_TIMEOUT, type DeviceConnection, type HostMessage } from './registry.ts'
 import { getDevice, recordHello, touchDevice, verifyDeviceToken, type Device, type Push } from './store.ts'
@@ -50,17 +52,6 @@ export function deviceFromRequest(db: DatabaseSync, allowlist: Allowlist, req: I
 
 function ownerMaySignIn(db: DatabaseSync, allowlist: Allowlist, device: Device): boolean {
   return isAllowed(db, allowlist, { id: device.userId, name: device.owner, email: device.ownerEmail })
-}
-
-function refuse(socket: Duplex, status: number, message: string) {
-  const body = JSON.stringify({ error: message })
-  socket.end(
-    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? 'Error'}\r\n` +
-      'content-type: application/json\r\n' +
-      `content-length: ${Buffer.byteLength(body)}\r\n` +
-      'connection: close\r\n\r\n' +
-      body,
-  )
 }
 
 export type DeviceSockets = ReturnType<typeof createDeviceSockets>
@@ -180,6 +171,7 @@ export function createDeviceSockets(options: {
       clearTimeout(helloTimer)
       clearInterval(pinger)
       devices.registry.detach(connection)
+      if (helloed) publishChange(db, { kind: 'devices' })
       try {
         if (helloed && getDevice(db, deviceId)) touchDevice(db, deviceId, now())
       } catch (err) {
@@ -196,7 +188,7 @@ export function createDeviceSockets(options: {
       if (new URL(req.url ?? '/', 'http://localhost').pathname !== DEVICE_SOCKET_PATH) return false
       const auth = deviceFromRequest(db, allowlist, req)
       if ('refused' in auth) {
-        refuse(socket, auth.refused.status, auth.refused.error)
+        refuseUpgrade(socket, auth.refused.status, auth.refused.error)
         return true
       }
       wss.handleUpgrade(req, socket, head, (ws) => serve(ws, auth.device))

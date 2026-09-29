@@ -9,6 +9,7 @@ import type {
 } from '../../../packages/sdk/src/runner/protocol.ts'
 import { RUNNER_PORT } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
+import { publishChange } from '../changes.ts'
 import { dbResponse } from '../data/internal.ts'
 import { readMigrationsFromGit } from '../data/migrations.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -186,6 +187,11 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   // The deployed version's state and those of the project's previews.
   function statesOf(project: string): [string, ProjectState][] {
     return [...projects].filter(([, s]) => s.project === project)
+  }
+
+  // Whether a VM runs and which version is deployed show on the project's pages.
+  function changed(project: string, branch: string | undefined) {
+    publishChange(host.db, branch === undefined ? { kind: 'project', project } : { kind: 'branches', project })
   }
 
   function event(project: string, level: LogLevel, kind: LifecycleEvent, message: string, branch?: string) {
@@ -502,6 +508,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       }
       const old = s.instance
       s.instance = inst
+      changed(project, deployed.branch)
       event(
         project,
         'info',
@@ -531,7 +538,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     inst.stopping = true
     clearTimeout(inst.idleTimer)
     const s = state(project, inst.deployed.branch)
-    if (s.instance === inst) s.instance = undefined
+    if (s.instance === inst) {
+      s.instance = undefined
+      changed(project, inst.deployed.branch)
+    }
     if (inst.inflight.size) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, invocationTimeoutMs)
@@ -707,12 +717,14 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       // The dry run passed, so the production data changed since. The version
       // cannot run without its schema.
       s.deployed = deployed
+      changed(project, undefined)
       const message = `Version ${version} did not start: ${errorMessage(err)}`
       event(project, 'error', 'migration', message)
       const target = scheduleAutoRevert(project, deployed, 'could not migrate the hob DB')
       throw new Error(target ? `${message}\nRestoring version ${target} automatically.` : message)
     }
     s.deployed = deployed
+    changed(project, undefined)
     await applyEntryPoints(project, deployed)
     if (!options.createSandbox) return
     try {

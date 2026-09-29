@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { User } from './auth/users.ts'
+import { projectListChanges, publishChange } from './changes.ts'
 import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
 import { repoPath, type Host } from './host.ts'
@@ -135,6 +136,7 @@ async function deleteNow(
     rmSync(join(host.dataDir, 'workspaces', name), { recursive: true, force: true })
     host.db.prepare('DELETE FROM projects WHERE id = ?').run(project.id)
     deps.storage?.forget(project.id)
+    publishChange(host.db, ...projectListChanges(name), { kind: 'trash' })
     return { trash, purgeAfter }
   } finally {
     runtime?.forget(name)
@@ -224,6 +226,7 @@ export function purgeTrash(host: Host, now = Date.now()): string[] {
     rmSync(path, { recursive: true, force: true })
     purged.push(entry)
   }
+  if (purged.length) publishChange(host.db, { kind: 'trash' })
   return purged
 }
 
@@ -308,6 +311,7 @@ async function restoreNow(deps: ProjectRestoreDeps, dir: string, info: TrashInfo
     throw err
   }
   rmSync(dir, { recursive: true, force: true })
+  publishChange(host.db, ...projectListChanges(name), { kind: 'trash' })
   const formerly = name === info.project ? '' : ` (it was called ${info.project})`
   appendLog(host, {
     project: name,

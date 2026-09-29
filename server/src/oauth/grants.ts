@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes } from 'node:crypto'
 import { FULL_ACCESS, loadAccess, loadAllAccess, saveAccess, type Access } from '../access.ts'
 import { createAgent, getAgent, type Agent, type AuthenticatedAgent } from '../agents.ts'
+import { publishChange } from '../changes.ts'
 import type { OAuthClient } from './clients.ts'
 import { hashSecret, newSecret, s256 } from './secrets.ts'
 
@@ -154,6 +155,7 @@ export function revokeGrant(db: DatabaseSync, grantId: number, now = Date.now())
     .run(iso(now), grantId)
   db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL').run(iso(now), grantId)
   db.prepare('UPDATE agent_ssh_keys SET revoked_at = ? WHERE added_by_grant_id = ? AND revoked_at IS NULL').run(iso(now), grantId)
+  if (Number(result.changes) > 0) publishChange(db, { kind: 'agents' })
   return Number(result.changes) > 0
 }
 

@@ -4,6 +4,7 @@ import { exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
 import { ConfirmDialog, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
+import { branchesChanged } from '../../live.ts'
 import { previewPath, projectPath } from './names.ts'
 import { RunStatus } from './runs.tsx'
 
@@ -149,7 +150,7 @@ function BranchRow({ project, branch, onChange }: { project: string; branch: Bra
 }
 
 export function BranchesSection({ project }: { project: string }) {
-  const { data: branches, error, reload } = useLoad(() => api.branches(project), project)
+  const { data: branches, error, reload } = useLoad(() => api.branches(project), project, branchesChanged(project))
   if (!branches?.length && !error) return null
   return (
     <section className="mt-12" aria-labelledby="branches">
@@ -176,7 +177,7 @@ export function BranchesSection({ project }: { project: string }) {
 }
 
 export function PreviewPage({ name, branch }: { name: string; branch: string }) {
-  const { data: branches, error } = useLoad(() => api.branches(name), name)
+  const { data: branches, error } = useLoad(() => api.branches(name), name, branchesChanged(name))
   const found = branches?.find((b) => b.name === branch)
   return (
     <div>

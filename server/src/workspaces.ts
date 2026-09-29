@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Agent } from './agents.ts'
+import { publishChange } from './changes.ts'
 import { git, GitError, HOBWORK_IDENTITY, type GitOptions } from './git.ts'
 import { repoPath, workspaceDir, type Host } from './host.ts'
 import { ProjectError, requireProject } from './projects.ts'
@@ -378,6 +379,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
         env: { ...HOBWORK_IDENTITY, GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email },
       })
       await workspaceGit(project, branch, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`])
+      publishChange(host.db, { kind: 'branches', project })
       return (await workspaceGit(project, branch, ['rev-parse', 'HEAD'])).trim()
     })
   }
@@ -401,6 +403,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
         if (err instanceof GitError) return false
         throw err
       }
+      publishChange(host.db, { kind: 'branches', project })
       if (workspace) {
         const remote = `refs/remotes/origin/${branch}`
         await workspaceGit(project, branch, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${remote}`])

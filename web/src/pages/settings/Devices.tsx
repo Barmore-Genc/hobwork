@@ -3,6 +3,7 @@ import { api, ApiError, type Device } from '../../api.ts'
 import { exactTime, shortDate, timeAgo } from '../../format.ts'
 import { Button, ConfirmDialog, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
+import { kindChanged } from '../../live.ts'
 
 const CAPABILITY_NAMES: Record<string, string> = {
   notifications: 'Notifications',
@@ -131,7 +132,7 @@ function DeviceRow({
 }
 
 export function DevicesSection() {
-  const { data, error, reload } = useLoad(api.devices)
+  const { data, error, reload } = useLoad(api.devices, '', kindChanged('devices'))
   const [renaming, setRenaming] = useState<number | null>(null)
   const [removing, setRemoving] = useState<Device | null>(null)
   const [removeBusy, setRemoveBusy] = useState(false)

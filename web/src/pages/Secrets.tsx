@@ -4,6 +4,7 @@ import { exactTime, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { kindChanged } from '../live.ts'
 import { projectPath } from './project/names.ts'
 import { ProjectLayout } from './project/ProjectLayout.tsx'
 
@@ -487,8 +488,8 @@ function SecretCard({
 }
 
 export function SecretsPage() {
-  const secrets = useLoad(() => api.secrets())
-  const projects = useLoad(() => api.projects())
+  const secrets = useLoad(() => api.secrets(), '', kindChanged('secrets'))
+  const projects = useLoad(() => api.projects(), '', kindChanged('projects'))
   const [editing, setEditing] = useState<{ id: number | 'new'; mode: 'secret' | 'assign' } | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const deleting = useDelete<Secret>((secret) => api.deleteSecret(secret.id), secrets.reload)
@@ -609,8 +610,8 @@ function ProjectSecretRow({ secret, onRemove }: { secret: ProjectSecret; onRemov
 }
 
 function ProjectSecrets({ project }: { project: string }) {
-  const assigned = useLoad(() => api.projectSecrets(project), project)
-  const library = useLoad(() => api.secrets())
+  const assigned = useLoad(() => api.projectSecrets(project), project, kindChanged('secrets'))
+  const library = useLoad(() => api.secrets(), '', kindChanged('secrets'))
   const [adding, setAdding] = useState<'existing' | 'new' | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const removing = useDelete<ProjectSecret>((secret) => api.unassignSecret(project, secret.envName), assigned.reload)

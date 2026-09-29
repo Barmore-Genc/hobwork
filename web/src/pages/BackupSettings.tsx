@@ -3,6 +3,7 @@ import { api, ApiError, type BackupRun } from '../api.ts'
 import { bytes, dayTime, duration, exactTime, timeAgo } from '../format.ts'
 import { Button, Notice } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { kindChanged } from '../live.ts'
 
 const POLL_MS = 3000
 
@@ -16,7 +17,7 @@ function runSummary(run: BackupRun): string {
 }
 
 export function BackupSettings() {
-  const { data: status, error, reload } = useLoad(api.backups)
+  const { data: status, error, reload } = useLoad(api.backups, '', kindChanged('backups'))
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const running = status?.configured === true && status.running

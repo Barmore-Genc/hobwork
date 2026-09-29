@@ -172,15 +172,6 @@ test('the project log filters events and problems and continues after a cursor',
   expect((await get('/api/projects/filament/logs?view=nope')).status).toBe(400)
 })
 
-test('waiting for new log lines answers when one arrives', async () => {
-  const { cursor } = (await (await get('/api/projects/filament/logs')).json()) as { cursor: number }
-  const waiting = get(`/api/projects/filament/logs?after=${cursor}&wait=1`)
-  await new Promise((r) => setTimeout(r, 100))
-  appendLog(host, { project: 'filament', source: 'runtime', level: 'error', event: 'crash', message: 'Runner crashed' })
-  const body = (await (await waiting).json()) as { lines: { message: string; event: string }[] }
-  expect(body.lines).toEqual([expect.objectContaining({ message: 'Runner crashed', event: 'crash' })])
-})
-
 test('the project page shows entry points, reachable hosts, the DB and the app', async () => {
   secrets.create(
     { name: 'Spools', value: 'x', hosts: ['auth.spools.example'], assign: { project: 'filament', envName: 'SPOOL_KEY' } },

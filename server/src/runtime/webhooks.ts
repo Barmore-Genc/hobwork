@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { requireProject } from '../projects.ts'
 
@@ -25,6 +26,7 @@ export function rotateWebhookToken(host: Host, project: string, name: string): s
          created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
     )
     .run(id, name, hashToken(token))
+  publishChange(host.db, { kind: 'project', project })
   return token
 }
 

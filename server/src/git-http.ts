@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
 import { allowsProject } from './access.ts'
 import { verifyAgentToken, type AuthenticatedAgent } from './agents.ts'
+import { publishChange } from './changes.ts'
 import { gitEnv } from './git.ts'
 import { reposDir, type Host } from './host.ts'
 import { getProject, renamedProject } from './projects.ts'
@@ -95,6 +96,7 @@ export function handleGit(
     if (code !== 0) {
       console.error(`git http-backend exited with ${code}: ${Buffer.concat(stderr).toString('utf8')}`)
     }
+    if (push && req.method === 'POST') publishChange(host.db, { kind: 'branches', project })
     if (!res.headersSent) plain(res, 500, 'git backend failed')
   })
 

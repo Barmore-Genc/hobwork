@@ -5,6 +5,7 @@ import { api, ApiError, type Access, type Agent, type AgentToken, type Connectio
 import { exactTime, shortDate, timeAgo } from '../format.ts'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { kindChanged } from '../live.ts'
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err)
@@ -336,7 +337,7 @@ function accessSummary(agent: Agent): string {
 type Removal = { title: string; confirmLabel: string; body: ReactNode; run: () => Promise<void> }
 
 export function AgentsPage() {
-  const { data: agents, error, reload } = useLoad(api.agents)
+  const { data: agents, error, reload } = useLoad(api.agents, '', kindChanged('agents'))
   const [name, setName] = useState('')
   const [access, setAccess] = useState<Access>(FULL_ACCESS)
   const [creating, setCreating] = useState(false)

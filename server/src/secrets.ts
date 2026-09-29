@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { publishChange } from './changes.ts'
 import type { Host } from './host.ts'
 import { ProjectError, requireProject } from './projects.ts'
 import { appendLogs, type NewLogEntry } from './runtime/logs.ts'
@@ -437,6 +438,10 @@ export function createSecretStore(host: Host, key: Buffer) {
       .run(projectId, row.id, envName, userId(actor), actor.kind === 'agent' ? actor.id : null)
   }
 
+  function changed(): void {
+    publishChange(host.db, { kind: 'secrets' })
+  }
+
   function update(row: Row, change: SecretChange, actor: Actor): SecretInfo {
     const name = change.name === undefined ? row.name : normalizeName(change.name)
     const hosts = change.hosts === undefined ? row.hosts : normalizeHosts(change.hosts)
@@ -458,6 +463,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         userId(actor),
         row.id,
       )
+    changed()
     if (valueChanged || hostsChanged) {
       const what = [valueChanged && 'new value', hostsChanged && (hosts.length ? `now only sent to ${hosts.join(', ')}` : 'no longer sent anywhere')]
         .filter(Boolean)
@@ -517,6 +523,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         if (target) insertAssignment(target.projectId, requireSecret(newId), target.envName, actor)
         return newId
       })
+      changed()
       if (target) {
         appendLogs(host, [
           logEntry(
@@ -555,6 +562,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         if (!inserted) throw new Error('Host request insert returned no row')
         return Number(inserted.id)
       })
+      changed()
       return hostRequest(id)!
     },
 
@@ -571,6 +579,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       host.db
         .prepare(`UPDATE secret_host_requests SET decision = ?, decided_at = ${NOW}, decided_by_user_id = ? WHERE id = ?`)
         .run(approve ? 'approved' : 'denied', userId(actor), id)
+      changed()
       return hostRequest(id)!
     },
 
@@ -581,6 +590,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       if (!row) return false
       const assignments = assignmentsOf(row.id)
       host.db.prepare('DELETE FROM secrets WHERE id = ?').run(row.id)
+      changed()
       appendLogs(
         host,
         assignments.map(({ project, envName }) =>
@@ -594,6 +604,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       const projectId = requireProject(host, project).id
       const row = requireSecret(ref)
       insertAssignment(projectId, row, envName, actor)
+      changed()
       appendLogs(host, [
         logEntry(
           project,
@@ -609,6 +620,7 @@ export function createSecretStore(host: Host, key: Buffer) {
         .prepare('DELETE FROM secret_assignments WHERE project_id = ? AND env_name = ? RETURNING secret_id')
         .get(projectId, envName)
       if (!removed) return false
+      changed()
       const secret = find(Number(removed.secret_id))
       appendLogs(host, [logEntry(project, `${actorLabel(actor)} removed the secret "${secret?.name}" (${envName})`)])
       return true

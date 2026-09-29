@@ -6,6 +6,7 @@ import {
   createShadowPathPredicate,
   ReadonlyProvider,
   RealFSProvider,
+  SandboxVfsProvider,
   ShadowProvider,
   VM,
 } from '@earendil-works/gondolin'
@@ -27,6 +28,7 @@ import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 import { hostMatches } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 import { qemuPath } from './qemu.ts'
+import { mountQuota } from './quota.ts'
 import { systemEnv } from './system-env.ts'
 
 const KILL_GRACE_MS = 2000
@@ -208,6 +210,7 @@ function relativePaths(paths: string[] | undefined): string[] {
 
 function toProvider(mount: Mount): VirtualProvider {
   let provider: VirtualProvider = new RealFSProvider(mount.hostPath)
+  if (mount.maxBytes !== undefined) provider = new SandboxVfsProvider(provider, mountQuota(mount.hostPath, mount.maxBytes))
   if (mount.readonly) provider = new ReadonlyProvider(provider)
   const hidden = [...relativePaths(mount.hide), ...relativePaths(mount.vmDisk)]
   if (hidden.length) {
@@ -240,12 +243,17 @@ done
 
 class GondolinSandbox implements Sandbox {
   readonly id: string
+  readonly exited: Promise<void>
   #vm: VM
   #ingressUrl: Promise<string> | undefined
 
   constructor(vm: VM) {
     this.#vm = vm
     this.id = vm.id
+    // Gondolin's VM has no exit event of its own, but the server it owns emits
+    // one when QEMU ends (Gondolin never restarts it, autoRestart is off).
+    const server = (vm as unknown as { server?: { once(event: 'exit', listener: () => void): unknown } }).server
+    this.exited = new Promise((resolve) => server?.once('exit', () => resolve()))
   }
 
   exec(command: string, options: ExecOptions = {}): SandboxProcess {

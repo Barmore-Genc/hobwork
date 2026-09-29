@@ -39,6 +39,7 @@ const MIGRATION_TIMEOUT_MS = 5 * 60 * 1000
 // A migrated DB may grow to this many times the size it started at, and is never limited below the floor.
 const MIGRATED_DB_GROWTH = 2
 const MIGRATED_DB_MIN_LIMIT_BYTES = 512 * 1024 * 1024
+const MIGRATION_DIR_SLACK_BYTES = 1024 * 1024
 
 export type DbTarget = { project: string; branch?: string }
 
@@ -255,6 +256,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
   // when the host has one, and moves the DB that comes back into `work` once it
   // passes the checks in db-file.ts. The snapshot file is consumed.
   async function migrateCopy(
+    project: string,
     work: string,
     snapshot: string | undefined,
     migrations: Migration[],
@@ -269,8 +271,11 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       const failure = applyOnHost(input, migrations, emptyCheck)
       if (failure) return { ok: false, ...failure }
     } else {
-      writeFileSync(join(dir, 'input.json'), JSON.stringify({ files: migrations.map(({ name, sql }) => ({ name, sql })), emptyCheck }))
-      const run = await runMigrationVm({ dir, timeoutMs: MIGRATION_TIMEOUT_MS })
+      const inputJson = JSON.stringify({ files: migrations.map(({ name, sql }) => ({ name, sql })), emptyCheck })
+      writeFileSync(join(dir, 'input.json'), inputJson)
+      // The rollback journal or WAL can be as big as the DB again.
+      const quotaBytes = 2 * maxBytes + Buffer.byteLength(inputJson) + MIGRATION_DIR_SLACK_BYTES
+      const run = await runMigrationVm({ project, dir, timeoutMs: MIGRATION_TIMEOUT_MS, quotaBytes })
       if (run.timedOut) {
         return { ok: false, stage: 'copy', error: `The migrations did not finish within ${MIGRATION_TIMEOUT_MS / 60_000} minutes` }
       }
@@ -307,10 +312,10 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
 
   // The DB at `path` after `migrations`, migrated in a copy that replaces it.
   // Nothing else may write to it meanwhile.
-  async function migrateInPlace(path: string, migrations: Migration[]): Promise<void> {
+  async function migrateInPlace(project: string, path: string, migrations: Migration[]): Promise<void> {
     const work = mkdtempSync(join(workRoot(), 'migrate-'))
     try {
-      const result = await migrateCopy(work, await snapshotOf(path, work), migrations, false)
+      const result = await migrateCopy(project, work, await snapshotOf(path, work), migrations, false)
       if (!result.ok) throw new MigrationError(result.error)
       await replaceDb(path, result.db)
     } finally {
@@ -330,7 +335,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       const done = await appliedIn(path)
       const pending = migrations.filter((m) => !done.has(m.version))
       if (!pending.length) return []
-      await paused(project, () => migrateInPlace(path, migrations))
+      await paused(project, () => migrateInPlace(project, path, migrations))
       log(project, 'info', `Applied migrations: ${pending.map((m) => m.name).join(', ')}`)
       return pending
     } catch (err) {
@@ -373,7 +378,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       const started = performance.now()
       let result
       try {
-        result = await migrateCopy(work, snapshot, migrations, true)
+        result = await migrateCopy(candidate.project, work, snapshot, migrations, true)
       } catch (err) {
         return { status: 'failed', output: `The migrations could not run: ${(err as Error).message}` }
       }
@@ -452,7 +457,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       await copyProduction(project, branch)
       done = await appliedIn(path)
     }
-    if (migrations.some((m) => !done.has(m.version))) await migrateInPlace(path, migrations)
+    if (migrations.some((m) => !done.has(m.version))) await migrateInPlace(project, path, migrations)
     syncedBranches.set(path, fingerprint)
   }
 

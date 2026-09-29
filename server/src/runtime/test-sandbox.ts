@@ -74,6 +74,7 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
 
     const sandbox: FakeSandbox = {
       id: randomUUID(),
+      exited: new Promise(() => {}),
       options,
       spawn() {
         throw new Error('fake sandbox does not run interactive processes')

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createFileTools, readRegularFile } from './files.ts'
+import { branchFileReader, createFileTools, readRegularFile } from './files.ts'
 import { createProject } from './projects.ts'
 import { createBranch } from './repo.ts'
 import { createTestHost } from './test-host.ts'
@@ -122,6 +122,19 @@ test('a committed workspace reads from git again', async () => {
   const before = started.length
   expect(await files.read('filament', 'work', 'src/a.ts', WRITE)).toMatchObject({ content: 'export const a = 99\n' })
   expect(started).toHaveLength(before)
+})
+
+test('branchFileReader reads the committed branch head, not the checkout', async () => {
+  const { files, workspaces } = tools()
+  const read = branchFileReader(host)
+  const work = { project: 'filament', branch: 'work' }
+  expect(await read(work, 'hobwork.json')).toBe('{}')
+  await files.write('filament', 'work', 'hobwork.json', '{ "egress": ["a.example.com"] }')
+  expect(await read(work, 'hobwork.json')).toBe('{}')
+  await workspaces.commit('filament', 'work', 'Allow a', { id: 1, name: 'Agent' })
+  expect(await read(work, 'hobwork.json')).toBe('{ "egress": ["a.example.com"] }')
+  expect(await read(work, 'missing.json')).toBeUndefined()
+  expect(await read({ project: 'filament', branch: 'gone' }, 'hobwork.json')).toBeUndefined()
 })
 
 test('the VM refuses to follow symlinks out of the workspace', async () => {

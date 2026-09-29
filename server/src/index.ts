@@ -9,6 +9,7 @@ import { migrationVmBackend } from './data/migration-vm.ts'
 import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
+import { branchFileReader } from './files.ts'
 import { createApns, loadApnsKey } from './devices/apns.ts'
 import { createDevices } from './devices/devices.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
@@ -69,6 +70,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
       image,
       createSandbox: budgetedSandboxFactory(createGondolinSandbox, vmScheduler),
       log: (message) => console.warn(message),
+      readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
     }
   : undefined

@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { budgetedSandboxFactory, DEFAULT_RESOURCES, loadVmBudget, memoryMbOf, resolveResources } from './budget.ts'
 import type { Sandbox } from './sandbox.ts'
 import { createVmScheduler } from './scheduler.ts'
@@ -29,8 +29,8 @@ test('the default budget always fits the biggest VM', () => {
   expect(loadVmBudget({}, { totalMemoryMb: 2048, cpuCount: 1 })).toMatchObject({ memoryMb: 2048, cpus: 4 })
 })
 
-function fakeSandbox(): Sandbox {
-  return { id: 'vm', stop: async () => {} } as unknown as Sandbox
+function fakeSandbox(exited: Promise<void> = new Promise(() => {})): Sandbox {
+  return { id: 'vm', exited, stop: async () => {} } as unknown as Sandbox
 }
 
 test('reserves on create and releases on stop or a failed boot', async () => {
@@ -45,4 +45,19 @@ test('reserves on create and releases on stop or a failed boot', async () => {
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 2048, cpus: 4 })
   await sandbox.stop()
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 0, cpus: 0 })
+})
+
+test('releases the reservation when the VM exits on its own', async () => {
+  const scheduler = createVmScheduler({ memoryMb: 4096, cpus: 8, waitMs: 1000 })
+  let exit: () => void = () => {}
+  const exited = new Promise<void>((resolve) => (exit = resolve))
+  const create = budgetedSandboxFactory(async (options) => fakeSandbox(options.env?.LIVE ? undefined : exited), scheduler)
+  const sandbox = await create({ image: 'x', memory: '2G', cpus: 4 })
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 2048, cpus: 4 })
+  exit()
+  await vi.waitFor(() => expect(scheduler.snapshot().used).toEqual({ memoryMb: 0, cpus: 0 }))
+  const other = await create({ image: 'x', memory: '1G', cpus: 1, env: { LIVE: '1' } })
+  await sandbox.stop()
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 1024, cpus: 1 })
+  await other.stop()
 })

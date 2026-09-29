@@ -11,6 +11,7 @@ import { FAKE_PROJECT, seedMain, type Files } from '../test-project.ts'
 import { migrationVmBackend } from './migration-vm.ts'
 import { createProjectData, type ProjectData } from './project-data.ts'
 
+const QUOTA_BYTES = 8 * 1024 * 1024
 const SPOOLS = 'CREATE TABLE spools (id INTEGER PRIMARY KEY, color TEXT NOT NULL) STRICT;'
 
 function sql(statement: string): DbRequest {
@@ -27,7 +28,8 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('migrations in a VM', { tim
     if (!imageExists(image)) throw new Error(`no guest image at ${image}, run images/build.sh`)
     host = createTestHost()
     const vmOptions: GuestVmOptions = { image, createSandbox: createGondolinSandbox }
-    data = createProjectData(host, { runMigrationVm: migrationVmBackend(vmOptions) })
+    const runMigration = migrationVmBackend(vmOptions)
+    data = createProjectData(host, { runMigrationVm: (options) => runMigration({ ...options, quotaBytes: QUOTA_BYTES }) })
     await createProject(host, 'filament')
   })
 
@@ -75,5 +77,13 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('migrations in a VM', { tim
     expect(await data.execute({ project: 'filament' }, sql('SELECT count(*) AS n FROM spools'))).toMatchObject({
       results: [{ rows: [{ n: 1 }] }],
     })
+  })
+
+  test('a migration cannot write past the quota of its directory', async () => {
+    const fill =
+      'CREATE TABLE blobs (b BLOB) STRICT;\nWITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100) INSERT INTO blobs SELECT zeroblob(1000000) FROM n;'
+    const commit = await seed({ 'migrations/0001_spools.sql': SPOOLS, 'migrations/0005_fill.sql': fill })
+    const outcome = await data.dryRun({ project: 'filament', gitDir: repoPath(host, 'filament'), commit })
+    expect(outcome).toMatchObject({ status: 'failed', output: expect.stringMatching(/full|ENOSPC|disk/i) })
   })
 })

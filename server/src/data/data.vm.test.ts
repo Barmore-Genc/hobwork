@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createDelivery, type Delivery } from '../delivery.ts'
+import { branchFileReader } from '../files.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createRuntime, type Runtime } from '../runtime/runtime.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
@@ -84,6 +85,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
     const vmOptions: GuestVmOptions = {
       image,
       createSandbox: createGondolinSandbox,
+      readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets }),
     }
     data.useMigrationVm(migrationVmBackend(vmOptions))

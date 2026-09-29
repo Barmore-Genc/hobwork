@@ -28,10 +28,15 @@ const SESSION = { 'x-hobwork-session': 'good' }
 const hasSession = (_workspace: unknown, token: string) => token === 'good'
 
 let sandboxes: FakeSandbox[]
+// What the branch has committed. The checkout in `dir` is never read for these.
+let committed: Record<string, string>
+const readBranchFile = async (_workspace: Workspace, path: string) => committed[path]
+const vmOptions = () => ({ image: '/image', createSandbox, readBranchFile })
 
 async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
   const sandbox: FakeSandbox = {
     id: String(sandboxes.length),
+    exited: new Promise(() => {}),
     options,
     commands: [],
     stopped: false,
@@ -87,7 +92,7 @@ function workspace(): Workspace {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'hobwork-guest-vm-test-'))
   sandboxes = []
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: {} }))
+  committed = { 'package.json': JSON.stringify({ scripts: {} }) }
 })
 
 afterEach(() => {
@@ -95,8 +100,8 @@ afterEach(() => {
 })
 
 test('workspace VMs mount the checkout with node_modules on the VM disk', async () => {
-  writeFileSync(join(dir, 'hobwork.json'), '{\n  // Spoolman\n  "egress": ["api.example.com",],\n}\n')
-  const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  committed['hobwork.json'] = '{\n  // Spoolman\n  "egress": ["api.example.com",],\n}\n'
+  const vm = await workspaceVmBackend(vmOptions())(workspace())
   const [sandbox] = sandboxes
   expect(sandbox?.options).toMatchObject({
     image: '/image',
@@ -116,8 +121,8 @@ test('workspace VMs mount the checkout with node_modules on the VM disk', async 
 })
 
 test('workspace VMs get the resources hobwork.json asks for, up to the defaults', async () => {
-  writeFileSync(join(dir, 'hobwork.json'), '{ "resources": { "workspace": { "memoryMb": 1024, "cpus": 16 } } }')
-  await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  committed['hobwork.json'] = '{ "resources": { "workspace": { "memoryMb": 1024, "cpus": 16 } } }'
+  await workspaceVmBackend(vmOptions())(workspace())
   expect(sandboxes[0]?.options).toMatchObject({
     memory: '1G',
     cpus: 4,
@@ -126,7 +131,7 @@ test('workspace VMs get the resources hobwork.json asks for, up to the defaults'
 })
 
 test('exec maps cwd into the guest and returns streamed output', async () => {
-  const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  const vm = await workspaceVmBackend(vmOptions())(workspace())
   const chunks: string[] = []
   const result = await vm.exec('pnpm test', {
     cwd: 'src/lib',
@@ -143,19 +148,19 @@ test('exec maps cwd into the guest and returns streamed output', async () => {
 })
 
 test('installs extras on start', async () => {
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { react: '19.3.0', 'left-pad': '1.3.0' } }))
-  await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  committed['package.json'] = JSON.stringify({ dependencies: { react: '19.3.0', 'left-pad': '1.3.0' } })
+  await workspaceVmBackend(vmOptions())(workspace())
   expect(sandboxes[0]?.commands.slice(1).map((c) => [c.command, c.options.cwd])).toEqual([['pnpm install', '/workspace']])
 })
 
 test('platform packages alone are not installed', async () => {
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { react: '19.3.0', '@hobwork/sdk': '0.0.0' } }))
-  await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  committed['package.json'] = JSON.stringify({ dependencies: { react: '19.3.0', '@hobwork/sdk': '0.0.0' } })
+  await workspaceVmBackend(vmOptions())(workspace())
   expect(sandboxes[0]?.commands).toHaveLength(1)
 })
 
 test('spawned processes keep the VM busy and report signals as exit codes', async () => {
-  const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  const vm = await workspaceVmBackend(vmOptions())(workspace())
   const output: string[] = []
   const proc = vm.spawn('bash', {
     cwd: '.',
@@ -176,7 +181,7 @@ test('spawned processes keep the VM busy and report signals as exit codes', asyn
 
 test('the internal handler is bound to the workspace', async () => {
   const seen: string[] = []
-  await workspaceVmBackend({ image: '/image', createSandbox }, (w) => {
+  await workspaceVmBackend(vmOptions(), (w) => {
     seen.push(`${w.project}/${w.branch}`)
     return () => new Response('ok')
   })(workspace())
@@ -196,7 +201,7 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     writeFileSync(join(dir, 'migrations', '0001_spools.sql'), 'CREATE TABLE spools (color TEXT) STRICT;')
     const workspaceEnvironment = createWorkspaceEnvironment(host, { data, secrets })
     const vm = await workspaceVmBackend(
-      { image: '/image', createSandbox, workspaceEnvironment },
+      { ...vmOptions(), workspaceEnvironment },
       () => () => new Response('cli'),
       hasSession,
     )(workspace())
@@ -244,7 +249,7 @@ test('workspace VMs refuse DB, Home Assistant and device calls without a valid s
   const host = createTestHost()
   try {
     const workspaceEnvironment = createWorkspaceEnvironment(host, { devices: { info: () => [] } as unknown as Devices })
-    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'), hasSession)(
+    await workspaceVmBackend({ ...vmOptions(), workspaceEnvironment }, () => () => new Response('cli'), hasSession)(
       workspace(),
     )
     const internal = sandboxes[0]!.options.internal!
@@ -256,7 +261,7 @@ test('workspace VMs refuse DB, Home Assistant and device calls without a valid s
     }
     expect((await call('/v1/devices', SESSION)).status).toBe(200)
 
-    const noCheck = await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment })(workspace())
+    const noCheck = await workspaceVmBackend({ ...vmOptions(), workspaceEnvironment })(workspace())
     expect((await sandboxes[1]!.options.internal!(new Request('http://hobwork.internal/v1/devices', { method: 'POST', headers: SESSION, body: '{}' }))).status).toBe(401)
     await noCheck.stop()
   } finally {
@@ -275,7 +280,7 @@ test('workspace VMs read Home Assistant states but cannot call services', async 
     } as unknown as HomeAssistant
     const workspaceEnvironment = createWorkspaceEnvironment(host, { homeAssistant })
     await workspaceVmBackend(
-      { image: '/image', createSandbox, workspaceEnvironment },
+      { ...vmOptions(), workspaceEnvironment },
       () => () => new Response('cli'),
       hasSession,
     )(workspace())
@@ -309,7 +314,7 @@ test('workspace VMs list devices but cannot notify them', async () => {
     } as unknown as Devices
     const workspaceEnvironment = createWorkspaceEnvironment(host, { devices })
     await workspaceVmBackend(
-      { image: '/image', createSandbox, workspaceEnvironment },
+      { ...vmOptions(), workspaceEnvironment },
       () => () => new Response('cli'),
       hasSession,
     )(workspace())
@@ -329,17 +334,24 @@ test('workspace VMs list devices but cannot notify them', async () => {
 })
 
 test('a workspace VM is stale once the egress allowlist changes', async () => {
-  const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  const vm = await workspaceVmBackend(vmOptions())(workspace())
   expect(await vm.isStale?.()).toBe(false)
-  writeFileSync(join(dir, 'hobwork.json'), JSON.stringify({ egress: ['api.example.com'] }))
+  committed['hobwork.json'] = JSON.stringify({ egress: ['api.example.com'] })
   expect(await vm.isStale?.()).toBe(true)
-  writeFileSync(join(dir, 'hobwork.json'), '{ not json')
+  committed['hobwork.json'] = '{ not json'
+  expect(await vm.isStale?.()).toBe(false)
+})
+
+test('uncommitted hobwork.json edits in the checkout do not widen egress', async () => {
+  writeFileSync(join(dir, 'hobwork.json'), JSON.stringify({ egress: ['evil.example.com'] }))
+  const vm = await workspaceVmBackend(vmOptions())(workspace())
+  expect(vm.egress).toEqual(['registry.npmjs.org'])
   expect(await vm.isStale?.()).toBe(false)
 })
 
 test('pipeline VMs only reach the registry and are stopped on shutdown', async () => {
   writeFileSync(join(dir, 'hobwork.json'), JSON.stringify({ egress: ['api.example.com'] }))
-  const backend = pipelineVmBackend({ image: '/image', createSandbox })
+  const backend = pipelineVmBackend(vmOptions())
   const first = await backend.start({ dir })
   await backend.start({ dir })
   expect(sandboxes[0]?.options.egress).toEqual(['registry.npmjs.org'])

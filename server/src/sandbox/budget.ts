@@ -72,7 +72,7 @@ export function loadVmBudget(
 }
 
 // Reserves the VM's memory and vCPUs before it boots and gives them back when
-// it stops or fails to boot.
+// it stops, exits or fails to boot.
 export function budgetedSandboxFactory(create: SandboxFactory, scheduler: VmScheduler): SandboxFactory {
   return async (options) => {
     const { kind = 'pipeline', project = '(host)', branch } = options.budget ?? {}
@@ -90,12 +90,15 @@ export function budgetedSandboxFactory(create: SandboxFactory, scheduler: VmSche
       lease.release()
       throw err
     }
+    // A VM that dies on its own would otherwise keep its share until someone calls stop().
+    void sandbox.exited.then(() => lease.release())
     // Delegates by hand: the Gondolin sandbox has private fields, so its
     // methods must run with the real instance as `this`.
     return {
       get id() {
         return sandbox.id
       },
+      exited: sandbox.exited,
       exec: (command, execOptions) => sandbox.exec(command, execOptions),
       spawn: (command, spawnOptions) => sandbox.spawn(command, spawnOptions),
       ingress: (port) => sandbox.ingress(port),

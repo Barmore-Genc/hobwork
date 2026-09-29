@@ -301,5 +301,13 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     expect(s.hostPid()).toBeTypeOf('number')
     await s.stop()
     expect(s.hostPid()).toBeNull()
+    await s.exited
+  })
+
+  test('exited resolves when the VM process dies without stop', async () => {
+    const s = await start({})
+    process.kill(s.hostPid()!, 'SIGKILL')
+    await s.exited
+    await s.stop()
   })
 })

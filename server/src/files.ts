@@ -17,8 +17,8 @@ function isErrno(err: unknown, code: string): boolean {
 
 export const MAX_CONFIG_FILE_BYTES = 1024 * 1024
 
-// For the few files the host reads out of a checkout itself (hobwork.json and
-// package.json, when a workspace VM starts). O_NONBLOCK keeps a FIFO from
+// For the one file the host reads out of a fresh pipeline checkout before the
+// VM boots (hobwork.json, for the VM's resources). O_NONBLOCK keeps a FIFO from
 // blocking the open, and the size cap keeps the guest from making the host
 // read an unbounded file.
 export async function readRegularFile(path: string, label: string, maxBytes = MAX_CONFIG_FILE_BYTES): Promise<string> {
@@ -44,6 +44,23 @@ export async function readRegularFile(path: string, label: string, maxBytes = MA
     return buffer.toString('utf8', 0, length)
   } finally {
     await handle.close()
+  }
+}
+
+// Reads a file of a workspace's branch as committed in the project repo. The
+// checkout is writable by the VM, so what decides a VM's egress and resources
+// comes from here. Undefined when the file is missing, binary or too big.
+export function branchFileReader(host: Host): (workspace: { project: string; branch: string }, path: string) => Promise<string | undefined> {
+  return async ({ project, branch }, path) => {
+    const commit = await branchHead(host, project, branch)
+    if (!commit) return undefined
+    try {
+      const result = await readCommittedFile(repoPath(host, project), commit, path)
+      return result.binary || result.size > MAX_CONFIG_FILE_BYTES ? undefined : result.content
+    } catch (err) {
+      if (err instanceof ProjectError) return undefined
+      throw err
+    }
   }
 }
 

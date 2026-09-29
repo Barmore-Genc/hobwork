@@ -72,7 +72,7 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   }
 
   const vm = await VM.create({
-    sandbox: { imagePath: options.image },
+    sandbox: { imagePath: options.image, append: KERNEL_APPEND },
     memory: options.memory ?? '1G',
     cpus: options.cpus ?? 2,
     rootfs: { mode: 'cow', size: options.diskSize },
@@ -91,6 +91,16 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   }
   return new GondolinSandbox(vm)
 }
+
+// QEMU's microvm machine has no CMOS RTC or i8042, and the kernel spends about 1.3s probing them.
+// Every byte written to the emulated UART is a VM exit, so boot output goes to tty0 unless
+// HOBWORK_VM_CONSOLE=1 is set for debugging.
+const KERNEL_APPEND = process.platform === 'linux' && process.arch === 'x64'
+  ? [
+      process.env.HOBWORK_VM_CONSOLE === '1' ? 'console=ttyS0' : 'console=tty0 quiet',
+      'initramfs_async=1 initcall_blacklist=cmos_init i8042.noaux i8042.nomux i8042.nopnp',
+    ].join(' ')
+  : undefined
 
 function toProviders(mounts: Record<string, Mount>): Record<string, VirtualProvider> {
   return Object.fromEntries(Object.entries(mounts).map(([guestPath, mount]) => [guestPath, toProvider(mount)]))

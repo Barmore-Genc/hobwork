@@ -47,6 +47,26 @@ enum JSONValue: Codable, Equatable, Sendable {
         return nil
     }
 
+    var numberValue: Double? {
+        if case let .number(value) = self { return value }
+        return nil
+    }
+
+    var arrayValue: [JSONValue]? {
+        if case let .array(value) = self { return value }
+        return nil
+    }
+
+    var objectValue: [String: JSONValue]? {
+        if case let .object(value) = self { return value }
+        return nil
+    }
+
+    /// Encodes a value, leaving out nil properties as `JSONEncoder` does.
+    init(encoding value: some Encodable) throws {
+        self = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
+    }
+
     /// Converts to Foundation property list types, for `userInfo` dictionaries.
     var foundationValue: Any {
         switch self {

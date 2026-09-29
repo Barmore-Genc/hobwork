@@ -1,0 +1,18 @@
+name: hobwork-backups
+services:
+  minio:
+    # MinIO no longer publishes images on Docker Hub or Quay; this is Bitnami's last build.
+    image: bitnamilegacy/minio:2025.5.24-debian-12-r5
+    container_name: hobwork-minio
+    ports:
+      - '127.0.0.1:19000:9000'
+      - '127.0.0.1:19001:9001'
+    environment:
+      # Development only. This instance is bound to localhost and holds test data.
+      MINIO_ROOT_USER: hobwork
+      MINIO_ROOT_PASSWORD: hobwork-dev-secret
+      MINIO_DEFAULT_BUCKETS: hobwork
+    healthcheck:
+      test: ['CMD', 'curl', '-fs', 'http://localhost:9000/minio/health/live']
+      interval: 2s
+      retries: 30

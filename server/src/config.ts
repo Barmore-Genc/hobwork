@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 
 export type HomeAssistantConnection = {
   url: string
@@ -34,6 +35,8 @@ export type Config = {
   sshPort?: number
   // Key for secrets at rest. Without it, <dataDir>/secret.key is used.
   secretKey?: string
+  // Undefined when backups are off.
+  backup?: BackupConfig
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -123,5 +126,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workspaceIdleTimeoutMs: idleMinutes * 60_000,
     sshPort: env.HOBWORK_SSH_PORT === 'off' ? undefined : loadPort('HOBWORK_SSH_PORT', env.HOBWORK_SSH_PORT, 2222),
     ...(env.HOBWORK_SECRET_KEY ? { secretKey: env.HOBWORK_SECRET_KEY } : {}),
+    backup: loadBackupConfig(env),
   }
 }

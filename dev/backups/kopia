@@ -1,0 +1,41 @@
+#!/bin/sh
+# Runs Kopia in Docker as if it were installed, for development and tests:
+# HOBWORK_KOPIA_BIN=dev/backups/kopia. Kopia's config, cache and log dirs and
+# every absolute path argument are mounted at the same path in the container.
+# Credentials are passed through by name, so their values never appear in the
+# docker command line.
+set -eu
+
+nl='
+'
+mounts=''
+add_mount() {
+  p=$1
+  while [ ! -e "$p" ]; do p=$(dirname "$p"); done
+  [ -d "$p" ] || p=$(dirname "$p")
+  case "$nl$mounts" in *"$nl$p$nl"*) return ;; esac
+  mounts="$mounts$p$nl"
+}
+for dir in "${KOPIA_CONFIG_PATH:-}" "${KOPIA_CACHE_DIRECTORY:-}" "${KOPIA_LOG_DIR:-}"; do
+  [ -n "$dir" ] && add_mount "$(dirname "$dir")"
+done
+for arg in "$@"; do
+  case "$arg" in /*) add_mount "$arg" ;; esac
+done
+
+# Appends the docker options after Kopia's arguments, then rotates Kopia's
+# arguments to the end, since POSIX sh has no arrays.
+count=$#
+set -- "$@" run --rm -i --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -e KOPIA_PASSWORD -e KOPIA_CHECK_FOR_UPDATES -e KOPIA_CONFIG_PATH -e KOPIA_CACHE_DIRECTORY -e KOPIA_LOG_DIR \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN
+IFS=$nl
+for m in $mounts; do set -- "$@" -v "$m:$m"; done
+unset IFS
+set -- "$@" "${HOBWORK_KOPIA_IMAGE:-kopia/kopia:0.17.0}"
+while [ "$count" -gt 0 ]; do
+  set -- "$@" "$1"
+  shift
+  count=$((count - 1))
+done
+exec docker "$@"

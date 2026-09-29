@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { createApp } from './app.ts'
+import { createBackups } from './backup/backups.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
 import { createProjectData } from './data/project-data.ts'
@@ -88,6 +89,10 @@ if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
   )
 }
 
+const backups = config.backup && createBackups(host, config.backup)
+if (backups) backups.schedule()
+else console.warn('HOBWORK_BACKUP_S3_BUCKET is not set, so nothing is backed up.')
+
 const server = createApp(host, {
   workspaces,
   delivery,
@@ -95,6 +100,7 @@ const server = createApp(host, {
   runtime,
   data,
   secrets,
+  backups,
   web: { publicUrl: config.publicUrl, allowlist: config.allowlist, oidc: config.oidc, webDist: config.webDist },
 })
 
@@ -110,6 +116,7 @@ ssh?.listen(sshPort, config.host, () => {
 
 async function shutdown() {
   homeAssistant.stop()
+  backups?.stop()
   ssh?.close()
   await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
   await data.stop()

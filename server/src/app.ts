@@ -4,6 +4,8 @@ import { createAuth } from './auth/auth.ts'
 import { createOidcLogin } from './auth/oidc.ts'
 import { createPasskeys } from './auth/passkeys.ts'
 import { createAuthRoutes } from './auth/routes.ts'
+import type { Backups } from './backup/backups.ts'
+import { createBackupRoutes } from './backup/routes.ts'
 import type { Allowlist, OidcConfig } from './config.ts'
 import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
@@ -40,6 +42,7 @@ export function createApp(
     runtime?: Runtime
     data?: ProjectData
     secrets?: SecretStore
+    backups?: Backups
     web?: WebOptions
   } = {},
 ): Server {
@@ -86,6 +89,7 @@ export function createApp(
     data: options.data,
     secrets: options.secrets,
   })
+  const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
   const handleRuntime =
     options.runtime &&
     createRuntimeHttp(
@@ -112,6 +116,7 @@ export function createApp(
     try {
       if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
+      if (await handleBackups(req, res, pathname)) return
       if (await handleApi(req, res, pathname, new URLSearchParams(search))) return
       if (!pathname.startsWith('/api/') && handleStatic(req, res, pathname)) return
       json(res, 404, { error: 'not found' })

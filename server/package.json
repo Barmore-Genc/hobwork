@@ -11,6 +11,7 @@
     "add-ssh-key": "node src/cli/add-ssh-key.ts",
     "sign-in-link": "node src/cli/sign-in-link.ts",
     "secret": "node src/cli/secret.ts",
+    "backup": "node src/cli/backup.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

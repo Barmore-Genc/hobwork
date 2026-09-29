@@ -108,13 +108,13 @@ function issuePath(issue: SchemaIssue): string {
 
 // Calls OpenRouter through ctx.fetch. The API key is the secret's placeholder,
 // which Hobwork replaces on the way to openrouter.ai, so the secret must be
-// bound to that host.
+// allowed to go to that host.
 export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: OpenRouterOptions = {}): OpenRouter {
   async function complete(body: Record<string, unknown>): Promise<ChatResult> {
     const apiKey = options.apiKey ?? ctx.secrets[OPENROUTER_SECRET]
     if (!apiKey) {
       throw new OpenRouterError(
-        `The ${OPENROUTER_SECRET} secret does not exist. Ask the user to add it in Hobwork, bound to openrouter.ai`,
+        `The project has no ${OPENROUTER_SECRET} secret. Assign an OpenRouter key to it as ${OPENROUTER_SECRET} with assign_secret, or ask the user to create one in Hobwork that may be sent to openrouter.ai`,
         undefined,
         'missing_secret',
       )

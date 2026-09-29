@@ -9,7 +9,7 @@ import { LogPage } from './pages/project/Log.tsx'
 import { ProjectAppPage } from './pages/project/ProjectApp.tsx'
 import { RunPage } from './pages/project/Run.tsx'
 import { ProjectsPage } from './pages/Projects.tsx'
-import { ProjectSecretsPage, SharedSecretsPage } from './pages/Secrets.tsx'
+import { ProjectSecretsPage, SecretsPage } from './pages/Secrets.tsx'
 import { SettingsPage } from './pages/Settings.tsx'
 import { navigate, useLocation } from './navigation.ts'
 import { Shell } from './Shell.tsx'
@@ -19,7 +19,7 @@ function Page({ pathname }: { pathname: string }) {
   if (pathname === '/') return <ProjectsPage />
   if (pathname === '/agents') return <AgentsPage />
   if (pathname === '/settings') return <SettingsPage />
-  if (pathname === '/secrets') return <SharedSecretsPage />
+  if (pathname === '/secrets') return <SecretsPage />
   const project = /^\/projects\/([^/]+)(\/[^?]*)?$/.exec(pathname)
   if (project) {
     const name = decodeURIComponent(project[1]!)

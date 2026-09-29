@@ -36,13 +36,18 @@ await ctx.db.batch([
 
 ## Secrets
 
-Users add secrets in Hobwork and bind each one to the hosts it may be sent to. `list_secrets` shows which exist. Handlers never see values: `ctx.secrets.NAME` is a placeholder, and Hobwork replaces it with the real value in request headers sent to a bound host:
+Only the user creates secrets, in the Hobwork UI, and sets the hosts each one may be sent to. A secret reaches a project when it is assigned to it under an env name. `list_secrets` shows every secret with its hosts and the projects it is assigned to. When the project needs one:
+
+1. If a fitting secret exists, assign it: `assign_secret` with the project, the secret's name and the env name the code uses (e.g. `SPOOL_API_KEY`).
+2. Otherwise ask the user to create it in Hobwork, with the hosts it may be sent to, then assign it.
+
+You cannot see or change values or hosts. Handlers never see values: `ctx.secrets.SPOOL_API_KEY` is a placeholder, and Hobwork replaces it with the real value in request headers sent to one of the secret's hosts:
 
 ```ts
 await ctx.fetch('https://api.example.com/v1/spools', { headers: { authorization: `Bearer ${ctx.secrets.SPOOL_API_KEY}` } })
 ```
 
-The placeholder is only replaced in headers, not in the URL or body. Hosts a secret is bound to are reachable without listing them in `egress`. If a secret is missing, ask the user to add it.
+The placeholder is only replaced in headers, not in the URL or body. The hosts of assigned secrets are reachable without listing them in `egress`. `unassign_secret` takes a secret away from the project. Assignments show up in the project log.
 
 ## Home Assistant
 
@@ -79,7 +84,7 @@ const { response } = await ctx.ha.callService('weather', 'get_forecasts', { type
 
 ## LLMs (OpenRouter)
 
-`openrouter(ctx)` from `@hobwork/sdk` calls models through OpenRouter. It needs the `OPENROUTER_API_KEY` secret: ask the user to create it in Hobwork, bound to `openrouter.ai`.
+`openrouter(ctx)` from `@hobwork/sdk` calls models through OpenRouter. It needs an OpenRouter key assigned to the project as `OPENROUTER_API_KEY`. Look for one with `list_secrets`; if there is none, ask the user to create it in Hobwork with `openrouter.ai` as its host.
 
 ```ts
 import { openrouter } from '@hobwork/sdk'
@@ -115,5 +120,5 @@ In a shell in the workspace (over SSH, `ssh <project>/<branch>@<hobwork host>`),
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them. Older versions must keep working after a restore.
 - Debug with `get_logs` and `list_invocations`. Do not guess. Console output and `ctx.log` lines are stored per invocation.
 - If a merged version fails completely (its runtime does not start, or every invocation fails for several minutes), Hobwork restores the previous version and logs why. Check `get_logs` for `auto-revert` events.
-- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` and hosts bound to secrets. Use `ctx.fetch`. Blocked requests get a 403 and an `egress-blocked` line in `get_logs`. In the branch workspace, a change to `egress` or to secrets applies from the next `bash` command, which restarts the workspace VM.
+- Outgoing HTTP only reaches hosts listed in `egress` in `hobwork.json` and the hosts of secrets assigned to the project. Use `ctx.fetch`. Blocked requests get a 403 and an `egress-blocked` line in `get_logs`. In the branch workspace, a change to `egress` or to the assigned secrets applies from the next `bash` command, which restarts the workspace VM.
 - Prefer the platform packages: React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns. Add another npm package only when none of these does the job, with `pnpm add <package>` in `bash`. Extra packages are installed again every time the workspace VM starts.

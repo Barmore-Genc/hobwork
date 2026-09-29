@@ -105,7 +105,7 @@ test("OpenRouter errors throw with OpenRouter's message and status", async () =>
 test('explains a missing secret and accepts another one', async () => {
   const { fetch, sent } = fakeFetch({ body: completion('hi') })
   await expect(openrouter(createTestContext({ fetch })).chat({ model: 'm', messages })).rejects.toThrow(
-    'The OPENROUTER_API_KEY secret does not exist',
+    'The project has no OPENROUTER_API_KEY secret',
   )
   await openrouter(createTestContext({ fetch }), { apiKey: 'GONDOLIN_SECRET_other' }).chat({ model: 'm', messages })
   expect(sent[0]?.headers.authorization).toBe('Bearer GONDOLIN_SECRET_other')

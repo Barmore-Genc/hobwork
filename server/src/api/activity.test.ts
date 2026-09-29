@@ -7,7 +7,7 @@ import { createProject } from '../projects.ts'
 import { appendLog, finishInvocation, startInvocation, type InvocationKind } from '../runtime/logs.ts'
 import { createRuntime, type Runtime } from '../runtime/runtime.ts'
 import { verifyWebhookToken } from '../runtime/webhooks.ts'
-import { createSecretStore } from '../secrets.ts'
+import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
 import { signedIn, startTestApp, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
@@ -20,6 +20,7 @@ let app: Awaited<ReturnType<typeof startTestApp>>
 let runtime: Runtime
 let data: ProjectData
 let cookie: string
+let secrets: SecretStore
 
 const HOBWORK_JSON = {
   routes: { 'GET /spools': { handler: 'src/spools.ts' } },
@@ -55,14 +56,13 @@ function projectFiles(build = BUILD): Files {
 
 beforeEach(async () => {
   host = createTestHost()
-  const secrets = createSecretStore(host, randomBytes(32))
+  secrets = createSecretStore(host, randomBytes(32))
   data = createProjectData(host)
   runtime = createRuntime(host, { startBuildVm: startHostPipelineVm, data, secrets })
   app = await startTestApp(host, { runtime, data, secrets })
   cookie = signedIn(host).cookie
   await createProject(host, 'filament')
   await createProject(host, 'sleep')
-  secrets.set({ project: 'filament', name: 'SPOOL_KEY', value: 'x', hosts: ['auth.spools.example'] })
 })
 
 afterEach(async () => {
@@ -182,6 +182,10 @@ test('waiting for new log lines answers when one arrives', async () => {
 })
 
 test('the project page shows entry points, reachable hosts, the DB and the app', async () => {
+  secrets.create(
+    { name: 'Spools', value: 'x', hosts: ['auth.spools.example'], assign: { project: 'filament', envName: 'SPOOL_KEY' } },
+    { kind: 'host' },
+  )
   await release(projectFiles())
   const failed = invocation('cron', 'weigh', 'error')
   const body = (await (await get('/api/projects/filament')).json()) as any

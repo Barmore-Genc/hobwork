@@ -174,7 +174,8 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
   try {
     await createProject(host, 'filament')
     const secrets = createSecretStore(host, randomBytes(32))
-    secrets.set({ project: 'filament', name: 'API_KEY', value: 'real', hosts: ['api.spools.example'] })
+    const secret = secrets.create({ name: 'Spools', value: 'real', hosts: ['api.spools.example'] }, { kind: 'host' })
+    secrets.assign('filament', secret.id, 'API_KEY', { kind: 'host' })
     mkdirSync(join(dir, 'migrations'))
     writeFileSync(join(dir, 'migrations', '0001_spools.sql'), 'CREATE TABLE spools (color TEXT) STRICT;')
     const workspaceEnvironment = createWorkspaceEnvironment(host, { data, secrets })
@@ -203,11 +204,15 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     expect(await cli.text()).toBe('cli')
 
     options.onEgressBlocked?.({ hostname: 'tracker.example', ip: '', port: 443 })
-    const [blocked] = queryLogs(host, { project: 'filament', limit: 10 })
+    const blocked = queryLogs(host, { project: 'filament', limit: 10 }).find((line) => line.event === 'egress-blocked')
     expect(blocked).toMatchObject({ event: 'egress-blocked', message: expect.stringContaining('Workspace spools: blocked') })
 
     expect(vm.isStale?.()).toBe(false)
-    secrets.set({ project: 'filament', name: 'API_KEY', value: 'rotated' })
+    secrets.create({ name: 'Other', value: 'o', hosts: ['o.example'], assign: { project: 'filament', envName: 'OTHER' } }, { kind: 'host' })
+    expect(vm.isStale?.()).toBe(true)
+    secrets.unassign('filament', 'OTHER', { kind: 'host' })
+    expect(vm.isStale?.()).toBe(false)
+    secrets.update(secret.id, { value: 'rotated' }, { kind: 'host' })
     expect(vm.isStale?.()).toBe(true)
     await vm.stop()
   } finally {

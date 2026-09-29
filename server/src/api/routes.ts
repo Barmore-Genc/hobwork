@@ -27,7 +27,14 @@ import {
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { rotateWebhookToken, webhookPath, webhookTokenCreatedAt } from '../runtime/webhooks.ts'
-import { SecretError, type SecretStore } from '../secrets.ts'
+import {
+  SecretConflictError,
+  SecretError,
+  SecretNotFoundError,
+  type Actor,
+  type SecretChange,
+  type SecretStore,
+} from '../secrets.ts'
 import { addSshKey, deleteSshKey, listSshKeys, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
 
@@ -68,6 +75,10 @@ function versionView(version: Version) {
     restoredFrom: version.restoredFrom,
     createdAt: version.createdAt,
   }
+}
+
+function userActor(user: User): Actor {
+  return { kind: 'user', id: user.id, name: user.name }
 }
 
 function requireProjectByName(host: Host, name: string): Project {
@@ -196,29 +207,36 @@ export function createApiRoutes(options: {
     return options.secrets
   }
 
-  // Values go in and never come out: responses only name the secret and its hosts.
-  async function putSecret(req: IncomingMessage, res: ServerResponse, project: string | undefined, name: string) {
-    const body = (await readJson(req)) as { value?: unknown; hosts?: unknown } | null
-    if (typeof body !== 'object' || body === null) throw new HttpError(400, 'Send an object with value and hosts')
-    if (body.value !== undefined && typeof body.value !== 'string') throw new HttpError(400, 'value must be a string')
-    if (body.hosts !== undefined && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) {
-      throw new HttpError(400, 'hosts must be a list of host names')
-    }
-    const store = secretStore()
-    let created: boolean
+  function secretCall<T>(fn: () => T): T {
     try {
-      ;({ created } = store.set({ project, name, value: body.value, hosts: body.hosts as string[] | undefined }))
+      return fn()
     } catch (err) {
+      if (err instanceof SecretNotFoundError) throw new HttpError(404, err.message)
+      if (err instanceof SecretConflictError) throw new HttpError(409, err.message)
       if (err instanceof SecretError) throw new HttpError(400, err.message)
       throw err
     }
-    const secret = store.list(project).find((s) => s.name === name)
-    json(res, created ? 201 : 200, secret)
   }
 
-  function deleteSecret(res: ServerResponse, project: string | undefined, name: string) {
-    if (!secretStore().remove(project, name)) throw new HttpError(404, `There is no secret called ${name}`)
-    res.writeHead(204).end()
+  async function readObject(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const body = (await readJson(req)) as unknown
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new HttpError(400, 'Send a JSON object')
+    return body as Record<string, unknown>
+  }
+
+  // Values go in and never come out: responses only name the secret and its hosts.
+  function secretChange(body: Record<string, unknown>): SecretChange {
+    for (const field of ['name', 'value'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') throw new HttpError(400, `${field} must be a string`)
+    }
+    if (body.hosts !== undefined && !(Array.isArray(body.hosts) && body.hosts.every((h) => typeof h === 'string'))) {
+      throw new HttpError(400, 'hosts must be a list of host names')
+    }
+    return {
+      name: body.name as string | undefined,
+      value: body.value as string | undefined,
+      hosts: body.hosts as string[] | undefined,
+    }
   }
 
   // The deployed version can lag behind the newest one while a deploy runs or
@@ -358,20 +376,32 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects\/([^/]+)\/secrets$/,
-      handle: ({ res, params }) => {
-        const project = requireProjectByName(host, params[0]!)
-        json(res, 200, secretStore().effective(project.name))
-      },
+      handle: ({ res, params }) => json(res, 200, secretStore().assigned(requireProjectByName(host, params[0]!).name)),
     },
     {
+      // Assigns an existing secret under the env name in the path. Values and
+      // hosts are only set through /api/secrets.
       method: 'PUT',
       pattern: /^\/api\/projects\/([^/]+)\/secrets\/([^/]+)$/,
-      handle: ({ req, res, params }) => putSecret(req, res, requireProjectByName(host, params[0]!).name, params[1]!),
+      handle: async ({ req, res, user, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const { secretId } = await readObject(req)
+        if (typeof secretId !== 'number' || !Number.isSafeInteger(secretId)) {
+          throw new HttpError(400, 'secretId must be the ID of a secret')
+        }
+        json(res, 201, secretCall(() => secretStore().assign(project.name, secretId, params[1]!, userActor(user))))
+      },
     },
     {
       method: 'DELETE',
       pattern: /^\/api\/projects\/([^/]+)\/secrets\/([^/]+)$/,
-      handle: ({ res, params }) => deleteSecret(res, requireProjectByName(host, params[0]!).name, params[1]!),
+      handle: ({ res, user, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        if (!secretStore().unassign(project.name, params[1]!, userActor(user))) {
+          throw new HttpError(404, `${project.name} has no secret called ${params[1]}`)
+        }
+        res.writeHead(204).end()
+      },
     },
     {
       method: 'GET',
@@ -379,14 +409,41 @@ export function createApiRoutes(options: {
       handle: ({ res }) => json(res, 200, secretStore().list()),
     },
     {
-      method: 'PUT',
-      pattern: /^\/api\/secrets\/([^/]+)$/,
-      handle: ({ req, res, params }) => putSecret(req, res, undefined, params[0]!),
+      // With assign ({ project, envName }) the new secret is assigned in the same step.
+      method: 'POST',
+      pattern: /^\/api\/secrets$/,
+      handle: async ({ req, res, user }) => {
+        const body = await readObject(req)
+        const { name, value, hosts } = secretChange(body)
+        const assign = body.assign as { project?: unknown; envName?: unknown } | undefined
+        if (assign !== undefined && (typeof assign?.project !== 'string' || typeof assign.envName !== 'string')) {
+          throw new HttpError(400, 'assign needs a project and an envName')
+        }
+        const target = assign && {
+          project: requireProjectByName(host, assign.project as string).name,
+          envName: assign.envName as string,
+        }
+        const created = secretCall(() =>
+          secretStore().create({ name: name ?? '', value: value ?? '', hosts: hosts ?? [], assign: target }, userActor(user)),
+        )
+        json(res, 201, created)
+      },
+    },
+    {
+      method: 'PATCH',
+      pattern: /^\/api\/secrets\/(\d+)$/,
+      handle: async ({ req, res, user, params }) => {
+        const change = secretChange(await readObject(req))
+        json(res, 200, secretCall(() => secretStore().update(positiveInt(params[0]), change, userActor(user))))
+      },
     },
     {
       method: 'DELETE',
-      pattern: /^\/api\/secrets\/([^/]+)$/,
-      handle: ({ res, params }) => deleteSecret(res, undefined, params[0]!),
+      pattern: /^\/api\/secrets\/(\d+)$/,
+      handle: ({ res, user, params }) => {
+        if (!secretStore().remove(positiveInt(params[0]), userActor(user))) throw new HttpError(404, 'This secret no longer exists')
+        res.writeHead(204).end()
+      },
     },
     {
       method: 'GET',

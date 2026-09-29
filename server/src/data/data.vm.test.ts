@@ -145,7 +145,8 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
 
   test('handlers keep data in the project DB, tests get a fresh one, the workspace a copy', async () => {
     await ok('create_project', { name: 'filament' })
-    secrets.set({ project: 'filament', name: 'ECHO_KEY', value: SECRET_VALUE, hosts: [ECHO_HOST] })
+    secrets.create({ name: 'Echo key', value: SECRET_VALUE, hosts: [ECHO_HOST] }, { kind: 'host' })
+    await ok('assign_secret', { project: 'filament', secret: 'Echo key', env_name: 'ECHO_KEY' })
     await ok('create_branch', p)
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     config.routes['POST /hits'] = { handler: 'src/hits.ts' }

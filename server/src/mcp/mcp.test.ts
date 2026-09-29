@@ -121,6 +121,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
   const { tools } = await client.listTools()
   expect(tools.map((t) => t.name).sort()).toEqual(
     [
+      'assign_secret',
       'bash',
       'commit',
       'create_branch',
@@ -145,6 +146,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'rotate_webhook_token',
       'search',
       'tail_logs',
+      'unassign_secret',
       'write_file',
     ].sort(),
   )

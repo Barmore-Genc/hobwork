@@ -93,12 +93,43 @@ export type InvocationFilter = { kind?: InvocationKind; status?: InvocationStatu
 
 export type LogView = 'all' | 'events' | 'problems'
 
+// Null when it was not done in the web UI or by an agent.
+export type ChangedBy = { kind: 'user' | 'agent'; name: string } | null
+
+export type SecretAssignment = {
+  project: string
+  envName: string
+  assignedAt: string
+  assignedBy: ChangedBy
+}
+
 export type Secret = {
+  id: number
   name: string
-  scope: 'project' | 'global'
   hosts: string[]
   createdAt: string
   updatedAt: string
+  createdBy: string | null
+  updatedBy: string | null
+  assignments: SecretAssignment[]
+}
+
+// A secret as one project uses it.
+export type ProjectSecret = {
+  envName: string
+  secretId: number
+  secret: string
+  hosts: string[]
+  updatedAt: string
+  assignedAt: string
+  assignedBy: ChangedBy
+}
+
+export type NewSecret = {
+  name: string
+  value: string
+  hosts: string[]
+  assign?: { project: string; envName: string }
 }
 
 export type AgentToken = {
@@ -170,8 +201,8 @@ function query(params: Record<string, string | number | undefined>): string {
   return text ? `?${text}` : ''
 }
 
-function secretsPath(project: string | null): string {
-  return project === null ? '/api/secrets' : `/api/projects/${encodeURIComponent(project)}/secrets`
+function projectSecretsPath(project: string): string {
+  return `/api/projects/${encodeURIComponent(project)}/secrets`
 }
 
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -224,12 +255,16 @@ export const api = {
       'POST',
       `/api/projects/${encodeURIComponent(project)}/webhooks/${encodeURIComponent(name)}/token`,
     ),
-  // Without a project: the secrets shared by every project.
-  secrets: (project: string | null) => request<Secret[]>('GET', secretsPath(project)),
-  saveSecret: (project: string | null, name: string, secret: { value?: string; hosts?: string[] }) =>
-    request<Secret>('PUT', `${secretsPath(project)}/${encodeURIComponent(name)}`, secret),
-  deleteSecret: (project: string | null, name: string) =>
-    request<void>('DELETE', `${secretsPath(project)}/${encodeURIComponent(name)}`),
+  secrets: () => request<Secret[]>('GET', '/api/secrets'),
+  createSecret: (secret: NewSecret) => request<Secret>('POST', '/api/secrets', secret),
+  updateSecret: (id: number, change: { name?: string; value?: string; hosts?: string[] }) =>
+    request<Secret>('PATCH', `/api/secrets/${id}`, change),
+  deleteSecret: (id: number) => request<void>('DELETE', `/api/secrets/${id}`),
+  projectSecrets: (project: string) => request<ProjectSecret[]>('GET', projectSecretsPath(project)),
+  assignSecret: (project: string, envName: string, secretId: number) =>
+    request<ProjectSecret>('PUT', `${projectSecretsPath(project)}/${encodeURIComponent(envName)}`, { secretId }),
+  unassignSecret: (project: string, envName: string) =>
+    request<void>('DELETE', `${projectSecretsPath(project)}/${encodeURIComponent(envName)}`),
   agents: () => request<Agent[]>('GET', '/api/agents'),
   createAgent: (name: string) => request<CreatedToken>('POST', '/api/agents', { name }),
   createToken: (agentId: number) => request<CreatedToken>('POST', `/api/agents/${agentId}/tokens`),

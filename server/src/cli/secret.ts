@@ -2,27 +2,35 @@ import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { loadConfig } from '../config.ts'
 import { openHostDb } from '../db.ts'
-import { createSecretStore, loadSecretKey } from '../secrets.ts'
+import { createSecretStore, loadSecretKey, type Actor } from '../secrets.ts'
 
 const USAGE = `Usage:
-  pnpm --filter @hobwork/server secret list [<project> | --global]
-  pnpm --filter @hobwork/server secret set (<project> | --global) <NAME> --host <host> [--host <host>...]
-  pnpm --filter @hobwork/server secret delete (<project> | --global) <NAME>
+  pnpm --filter @hobwork/server secret list [<project>]
+  pnpm --filter @hobwork/server secret create "<name>" --host <host> [--host <host>...]
+  pnpm --filter @hobwork/server secret update "<name>" [--host <host>...]
+  pnpm --filter @hobwork/server secret delete "<name>"
+  pnpm --filter @hobwork/server secret assign <project> "<name>" <ENV_NAME>
+  pnpm --filter @hobwork/server secret unassign <project> <ENV_NAME>
 
-set reads the value from stdin, e.g. printf %s "$KEY" | pnpm ... secret set filament API_KEY --host api.example.com
-Leave stdin empty to change only the hosts of an existing secret.`
+create and update read the value from stdin, e.g.
+  printf %s "$KEY" | pnpm ... secret create "Spoolman API key" --host api.example.com
+Leave stdin empty on update to change only the hosts.`
+
+const HOST: Actor = { kind: 'host' }
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { global: { type: 'boolean' }, host: { type: 'string', multiple: true } },
+  options: { host: { type: 'string', multiple: true } },
 })
-const [command, ...rest] = positionals
-const scoped = values.global ? rest : rest.slice(1)
-const project = values.global ? undefined : rest[0]
+const [command, ...args] = positionals
 
 function fail(message: string): never {
   console.error(message)
   process.exit(1)
+}
+
+function arg(index: number): string {
+  return args[index] ?? fail(USAGE)
 }
 
 async function readStdin(): Promise<string> {
@@ -32,23 +40,40 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '')
 }
 
-if (!command || (command !== 'list' && !values.global && !project)) fail(USAGE)
+if (!command) fail(USAGE)
+
+const APPLIES = 'Handlers and workspaces use the change from their next invocation or command.'
 
 const config = loadConfig()
 const db = openHostDb(join(config.dataDir, 'hobwork.db'))
 try {
   const store = createSecretStore({ db, dataDir: config.dataDir }, loadSecretKey(config.dataDir, config.secretKey))
   if (command === 'list') {
-    for (const secret of store.list(project)) console.log(`${secret.name}\t${secret.hosts.join(', ')}`)
-  } else if (command === 'set') {
-    const name = scoped[0] ?? fail(USAGE)
+    const project = args[0]
+    if (project) {
+      for (const secret of store.assigned(project)) console.log(`${secret.envName}\t${secret.secret}\t${secret.hosts.join(', ')}`)
+    } else {
+      for (const secret of store.list()) {
+        const projects = secret.assignments.map((a) => `${a.project}:${a.envName}`).join(', ')
+        console.log(`${secret.name}\t${secret.hosts.join(', ')}\t${projects}`)
+      }
+    }
+  } else if (command === 'create') {
+    const secret = store.create({ name: arg(0), value: await readStdin(), hosts: values.host ?? [] }, HOST)
+    console.log(`Created "${secret.name}". Assign it to a project with: secret assign <project> "${secret.name}" <ENV_NAME>`)
+  } else if (command === 'update') {
     const value = await readStdin()
-    const { created } = store.set({ project, name, value: value || undefined, hosts: values.host })
-    console.log(`${created ? 'Created' : 'Updated'} ${name}. Handlers and workspaces use the change from their next invocation or command.`)
+    const secret = store.update(arg(0), { value: value || undefined, hosts: values.host }, HOST)
+    console.log(`Updated "${secret.name}". ${APPLIES}`)
   } else if (command === 'delete') {
-    const name = scoped[0] ?? fail(USAGE)
-    if (!store.remove(project, name)) fail(`There is no secret called ${name}`)
-    console.log(`Deleted ${name}`)
+    if (!store.remove(arg(0), HOST)) fail(`There is no secret called "${arg(0)}"`)
+    console.log(`Deleted "${arg(0)}"`)
+  } else if (command === 'assign') {
+    const assigned = store.assign(arg(0), arg(1), arg(2), HOST)
+    console.log(`Assigned "${assigned.secret}" to ${arg(0)} as ${assigned.envName}. ${APPLIES}`)
+  } else if (command === 'unassign') {
+    if (!store.unassign(arg(0), arg(1), HOST)) fail(`${arg(0)} has no secret called ${arg(1)}`)
+    console.log(`Unassigned ${arg(1)} from ${arg(0)}. ${APPLIES}`)
   } else fail(USAGE)
 } catch (err) {
   fail((err as Error).message)

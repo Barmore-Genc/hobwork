@@ -14,6 +14,7 @@ import {
 } from '../files.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
+import type { Runtime } from '../runtime/runtime.ts'
 import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
 import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
@@ -21,6 +22,7 @@ import { runBash } from './bash.ts'
 import { registerDeliveryTools } from './delivery.ts'
 import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
+import { registerRuntimeTools } from './runtime.ts'
 
 export type McpContext = {
   host: Host
@@ -28,6 +30,7 @@ export type McpContext = {
   delivery: Delivery
   agent: Agent
   homeAssistant?: HomeAssistant
+  runtime?: Runtime
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
@@ -88,7 +91,7 @@ function formatReadResult(content: string, offset: number, limit: number): strin
   return notes.length ? `${body}\n\n[${notes.join(' ')}]` : body
 }
 
-export function createMcpServer({ host, workspaces, delivery, agent, homeAssistant }: McpContext): McpServer {
+export function createMcpServer({ host, workspaces, delivery, agent, homeAssistant, runtime }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
   // main is never written through a workspace, so its checkout is refreshed to
@@ -127,6 +130,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
     },
     async ({ name }) => {
       const created = await createProject(host, name)
+      await runtime?.load(created.name)
       return json({ name: created.name, defaultBranch: created.defaultBranch })
     },
   )
@@ -420,6 +424,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
 
   registerDeliveryTools(server, { host, delivery, agent })
   if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
+  registerRuntimeTools(server, { host, runtime })
 
   return server
 }

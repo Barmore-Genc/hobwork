@@ -6,6 +6,8 @@ import morningGreeting from '../src/morning-greeting.ts'
 
 function testContext(): Context {
   return {
+    invocation: { id: 1, kind: 'cron', name: 'morning-greeting', manual: false },
+    params: {},
     fetch: vi.fn<typeof fetch>(),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   }

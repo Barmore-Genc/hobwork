@@ -4,6 +4,7 @@ import { verifyAgentToken, type Agent } from '../agents.ts'
 import type { Delivery } from '../delivery.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
+import type { Runtime } from '../runtime/runtime.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { createMcpServer } from './server.ts'
 
@@ -32,6 +33,7 @@ export function createMcpHandler(options: {
   delivery: Delivery
   authenticate?: McpAuthenticator
   homeAssistant?: HomeAssistant
+  runtime?: Runtime
 }) {
   const authenticate = options.authenticate ?? bearerTokenAuth(options.host)
 
@@ -54,6 +56,7 @@ export function createMcpHandler(options: {
       delivery: options.delivery,
       agent,
       homeAssistant: options.homeAssistant,
+      runtime: options.runtime,
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {

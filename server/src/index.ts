@@ -5,9 +5,12 @@ import { openHostDb } from './db.ts'
 import { createDelivery } from './delivery.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
+import { createTriggerRegistry } from './homeassistant/triggers.ts'
 import { repoPath, type Host } from './host.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
+import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
+import { createRuntime } from './runtime/runtime.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
@@ -23,7 +26,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? { image, createSandbox: createGondolinSandbox, log: (message) => console.warn(message) }
   : undefined
 if (vmOptions) console.log(`guest image: ${image}`)
-else console.warn(`No guest image at ${image}, so bash and merge are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
+else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
 
 const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
@@ -32,12 +35,35 @@ const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
 })
 workspaces.resetStatuses()
 failInterruptedRuns(host)
-const delivery = createDelivery(host, { workspaces, pipeline: pipelineVms && { startVm: pipelineVms.start } })
 
-const homeAssistant = createHomeAssistant({ connection: () => config.homeAssistant })
+const homeAssistant = createHomeAssistant({
+  connection: () => config.homeAssistant,
+  logger: homeAssistantClientLogger(host, () =>
+    listProjects(host).map((p) => p.name).filter((name) => triggers.active(name).length > 0)),
+})
+const triggers = createTriggerRegistry({
+  ha: homeAssistant,
+  invoke: async (project, name, variables) => {
+    await runtime.invoke(project, { kind: 'trigger', name, manual: false, payload: variables })
+  },
+  logger: triggerRegistryLogger(host),
+})
+const runtime = createRuntime(host, {
+  createSandbox: vmOptions?.createSandbox,
+  image: vmOptions?.image,
+  startBuildVm: pipelineVms?.start,
+  revert: (request) => delivery.restore(request),
+  triggers,
+})
+const delivery = createDelivery(host, {
+  workspaces,
+  pipeline: pipelineVms && { startVm: pipelineVms.start },
+  deploy: runtime.deploy,
+})
 homeAssistant.start()
+await runtime.start()
 
-const server = createApp(host, { workspaces, delivery, homeAssistant })
+const server = createApp(host, { workspaces, delivery, homeAssistant, runtime })
 
 server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)
@@ -45,7 +71,7 @@ server.listen(config.port, config.host, () => {
 
 async function shutdown() {
   homeAssistant.stop()
-  await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll()])
+  await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
   server.close(() => {
     host.db.close()
     process.exit(0)

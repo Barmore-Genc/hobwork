@@ -10,6 +10,7 @@ import { LoginPage } from './pages/Login.tsx'
 import { ProjectPage } from './pages/Project.tsx'
 import { ActivityPage } from './pages/project/Activity.tsx'
 import { ProjectAiPage } from './pages/project/Ai.tsx'
+import { ProjectHomeAssistantPage } from './pages/project/HomeAssistant.tsx'
 import { PreviewPage } from './pages/project/Branches.tsx'
 import { LogPage } from './pages/project/Log.tsx'
 import { ProjectAppPage } from './pages/project/ProjectApp.tsx'
@@ -37,6 +38,7 @@ function Page({ pathname }: { pathname: string }) {
     if (rest === '/log') return <LogPage name={name} />
     if (rest === '/secrets') return <ProjectSecretsPage name={name} />
     if (rest === '/ai') return <ProjectAiPage name={name} />
+    if (rest === '/home-assistant') return <ProjectHomeAssistantPage name={name} />
     if (rest === '/app') return <ProjectAppPage name={name} />
     const preview = /^\/preview\/([^/]+)$/.exec(rest)
     if (preview) return <PreviewPage name={name} branch={decodeURIComponent(preview[1]!)} />

@@ -20,10 +20,11 @@ import { devicesResponse } from '../devices/internal.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import { getBranchHaApproval } from '../homeassistant/approvals.ts'
 import { haResponse, type HaAccess } from '../homeassistant/internal.ts'
+import { getHaServices } from '../homeassistant/services.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
-import { DEFAULT_BRANCH, listProjects, ProjectError } from '../projects.ts'
+import { DEFAULT_BRANCH, getProject, listProjects, ProjectError } from '../projects.ts'
 import { branchHead } from '../repo.ts'
 import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
@@ -375,6 +376,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       return haResponse(body, {
         ha: options.homeAssistant,
         access,
+        services: () => getHaServices(host.db, getProject(host, project)?.id ?? -1),
         log: ({ invocation, level, message }) => {
           const lines = invocationLines(project, branch, instance())
           lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })

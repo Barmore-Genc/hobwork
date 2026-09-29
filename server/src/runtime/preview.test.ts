@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
+import { setHaServices } from '../homeassistant/services.ts'
 import { createHomeAssistant, type HomeAssistant } from '../homeassistant/client.ts'
 import { startFakeHomeAssistant, type FakeHomeAssistant } from '../homeassistant/fake-ha.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
@@ -243,6 +244,7 @@ test('branch handlers call Home Assistant services only while a person allows it
   ha.start()
   await ha.waitUntilConnected()
   await start({ homeAssistant: ha })
+  setHaServices(host, 'filament', ['light'], { kind: 'user', name: 'Kaan' })
   await seedBranch(host, 'filament', 'add-spools', files('branch'))
   const lights = async () => {
     const outcome = await runtime.invoke('filament', { kind: 'route', name: 'POST /lights', manual: true, branch: 'add-spools' })

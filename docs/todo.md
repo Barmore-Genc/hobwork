@@ -14,7 +14,6 @@ Sections are in the order to work on them.
 ### Limiting a compromised hob
 
 - **Default CSP for hob UIs**: app origins serve hob UIs and route responses with a strict CSP (`script-src 'self'`, no inline scripts, `object-src 'none'`, `base-uri 'none'`) and `nosniff`, so most XSS bugs in agent-written UIs cannot run script. `hobwork.json` can loosen it for a hob that needs to.
-- **HA service calls**: see Home Assistant below. It is the main limit on what a compromised handler can do in the house.
 
 ### Supply chain
 
@@ -39,7 +38,7 @@ Sections are in the order to work on them.
 
 ### Home Assistant, AI and secrets
 
-- **HA service calls**: a per-hob list of the HA domains and services handlers may call, changeable in the UI and over MCP. Empty by default, so a hob calls no services until its list names them. Hobs deployed before this get a list of the domains they already call. Supervisor and core admin services (`hassio.*`, `homeassistant.*`, `recorder.purge`) stay blocked on the host.
+- **HA events**: `fireEvent` is not limited by the services list, and events can trigger HA automations. Give hobs a list of event types they may fire, like the services list.
 - **AI endpoints**: refuse gateway paths it does not recognize, and estimate the cost from tokens when OpenRouter returns none.
 - **AI over https only**: the interceptor refuses plain http.
 - **Secret substitution**: only into named headers (`Authorization` and those a secret lists) over https.
@@ -71,7 +70,6 @@ The Gondolin VFS provider runs in the host's Node process and QEMU is its child,
 
 ### Smaller items
 
-- Hide the `ha_*` tools from credentials limited to some hobs.
 - Read-only tools read from git instead of opening a workspace.
 
 ## Warm VM pool

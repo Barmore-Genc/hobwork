@@ -7,7 +7,7 @@ import { useLoad } from '../../useLoad.ts'
 import { projectChanged } from '../../live.ts'
 import { projectPath } from './names.ts'
 
-export type ProjectTab = 'overview' | 'activity' | 'log' | 'secrets' | 'ai' | 'app'
+export type ProjectTab = 'overview' | 'activity' | 'log' | 'secrets' | 'ai' | 'home-assistant' | 'app'
 
 const TABS: { tab: ProjectTab; label: string; path: string }[] = [
   { tab: 'overview', label: 'Overview', path: '' },
@@ -15,6 +15,7 @@ const TABS: { tab: ProjectTab; label: string; path: string }[] = [
   { tab: 'log', label: 'Log', path: '/log' },
   { tab: 'secrets', label: 'Secrets', path: '/secrets' },
   { tab: 'ai', label: 'AI', path: '/ai' },
+  { tab: 'home-assistant', label: 'Home Assistant', path: '/home-assistant' },
 ]
 
 // Heading, status and tabs shared by every project page. The page itself gets

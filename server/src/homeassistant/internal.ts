@@ -1,6 +1,7 @@
 import type { HaRequest, HaResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { HomeAssistantError, type HaState, type HomeAssistant } from './client.ts'
+import { isBlockedService, servicesAllow, WHERE_TO_CHANGE } from './services.ts'
 
 // Runtime VMs run deployed code and may change the home. Workspace VMs run
 // tests and work in progress, so they only read states. Branch previews
@@ -17,6 +18,8 @@ export type HaCallLog = {
 export type HaEndpointOptions = {
   ha?: HomeAssistant
   access: HaAccess
+  // The services the hob may call, read on every call. Without it none is allowed.
+  services?: () => string[]
   log?: (entry: HaCallLog) => void
 }
 
@@ -32,6 +35,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   timeout: 504,
   read_only: 403,
   not_approved: 403,
+  not_allowed: 403,
   bad_request: 400,
 }
 
@@ -88,7 +92,8 @@ function filterStates(states: HaState[], filter: Record<string, unknown> | undef
   )
 }
 
-async function run(ha: HomeAssistant, request: HaRequest, access: HaAccess): Promise<unknown> {
+async function run(request: HaRequest, options: HaEndpointOptions & { ha: HomeAssistant }): Promise<unknown> {
+  const { ha, access } = options
   switch (request.action) {
     case 'callService':
     case 'fireEvent':
@@ -110,9 +115,23 @@ async function run(ha: HomeAssistant, request: HaRequest, access: HaAccess): Pro
         }
         return ha.fireEvent(request.eventType, optionalObject(request.data, 'data'))
       }
+      const domain = name(request.domain, 'domain')
+      const service = name(request.service, 'service')
+      if (isBlockedService(domain, service)) {
+        throw new HomeAssistantError(
+          'not_allowed',
+          `Hobwork does not let any hob call the Home Assistant service ${domain}.${service}, because it changes Home Assistant itself`,
+        )
+      }
+      if (!servicesAllow(options.services?.() ?? [], domain, service)) {
+        throw new HomeAssistantError(
+          'not_allowed',
+          `This hob may not call the Home Assistant service ${domain}.${service}. ${WHERE_TO_CHANGE}`,
+        )
+      }
       return ha.callService(
-        name(request.domain, 'domain'),
-        name(request.service, 'service'),
+        domain,
+        service,
         optionalObject(request.data, 'data'),
         optionalObject(request.target, 'target'),
         { returnResponse: request.returnResponse === true },
@@ -158,14 +177,14 @@ export async function haResponse(body: string, options: HaEndpointOptions): Prom
     )
   }
   try {
-    const result = await run(ha, request, options.access)
+    const result = await run(request, { ...options, ha })
     options.log?.({ invocation, level: reads ? 'debug' : 'info', message: `Home Assistant: ${describe(request)}` })
     return answer({ ok: true, result })
   } catch (err) {
     if (err instanceof BadRequest) return failure('bad_request', err.message)
     const code = err instanceof HomeAssistantError ? err.code : 'unknown_error'
     const message = err instanceof Error ? err.message : String(err)
-    if (code === 'not_approved') {
+    if (code === 'not_approved' || code === 'not_allowed') {
       options.log?.({ invocation, level: 'warn', message: `Home Assistant: denied ${describe(request)}. ${message}` })
     } else if (code !== 'read_only') {
       options.log?.({ invocation, level: 'warn', message: `Home Assistant: ${describe(request)} failed: ${message}` })

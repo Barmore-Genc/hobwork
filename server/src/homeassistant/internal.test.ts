@@ -13,13 +13,21 @@ const STATES = [
   { entity_id: 'sensor.temperature', state: '21.5', attributes: {}, last_changed: '', last_updated: '' },
 ]
 
+let services = ['light']
+
 async function call(request: object, access: HaAccess = 'full', client: HomeAssistant | undefined = ha) {
-  const res = await haResponse(JSON.stringify(request), { ha: client, access, log: (entry) => logged.push(entry) })
+  const res = await haResponse(JSON.stringify(request), {
+    ha: client,
+    access,
+    services: () => services,
+    log: (entry) => logged.push(entry),
+  })
   return { status: res.status, body: (await res.json()) as { ok: boolean; result?: unknown; error?: { code: string; message: string } } }
 }
 
 beforeEach(async () => {
   logged = []
+  services = ['light']
   fake = await startFakeHomeAssistant()
   fake.responses.set('get_states', () => STATES)
   fake.responses.set('call_service', () => ({ context: { id: 'c1', parent_id: null, user_id: null } }))
@@ -58,6 +66,54 @@ test('calls a service with data and target and logs it with the invocation', asy
   expect(logged).toEqual([
     { invocation: 7, level: 'info', message: 'Home Assistant: light.turn_on {"brightness":100} target {"entity_id":"light.kitchen"}' },
   ])
+})
+
+test('refuses services that are not on the hob list and logs why', async () => {
+  const refused = await call({ action: 'callService', domain: 'lock', service: 'unlock', invocation: 4 })
+  expect(refused.status).toBe(403)
+  expect(refused.body.error?.code).toBe('not_allowed')
+  expect(refused.body.error?.message).toBe(
+    "This hob may not call the Home Assistant service lock.unlock. People change this on the hob's Home Assistant page in Hobwork",
+  )
+  expect(logged).toEqual([
+    {
+      invocation: 4,
+      level: 'warn',
+      message: "Home Assistant: denied lock.unlock. This hob may not call the Home Assistant service lock.unlock. People change this on the hob's Home Assistant page in Hobwork",
+    },
+  ])
+  expect(fake.received.some((m) => m.type === 'call_service')).toBe(false)
+})
+
+test('a list entry allows a domain or one service', async () => {
+  services = ['lock.lock', 'switch']
+  expect((await call({ action: 'callService', domain: 'lock', service: 'lock' })).body.ok).toBe(true)
+  expect((await call({ action: 'callService', domain: 'lock', service: 'unlock' })).body.error?.code).toBe('not_allowed')
+  expect((await call({ action: 'callService', domain: 'switch', service: 'toggle' })).body.ok).toBe(true)
+  expect((await call({ action: 'callService', domain: 'light', service: 'turn_on' })).body.error?.code).toBe('not_allowed')
+})
+
+test('no list means no service calls', async () => {
+  const res = await haResponse(JSON.stringify({ action: 'callService', domain: 'light', service: 'turn_on' }), { ha, access: 'full' })
+  expect(res.status).toBe(403)
+})
+
+test('blocks admin services even when listed', async () => {
+  services = ['hassio', 'homeassistant', 'recorder', 'shell_command', 'light']
+  for (const [domain, service] of [
+    ['hassio', 'host_reboot'],
+    ['homeassistant', 'restart'],
+    ['homeassistant', 'turn_off'],
+    ['recorder', 'purge'],
+    ['recorder', 'purge_entities'],
+    ['shell_command', 'anything'],
+  ]) {
+    const res = await call({ action: 'callService', domain, service })
+    expect(res.body.error?.code, `${domain}.${service}`).toBe('not_allowed')
+    expect(res.body.error?.message).toContain('changes Home Assistant itself')
+  }
+  expect((await call({ action: 'callService', domain: 'recorder', service: 'enable' })).body.ok).toBe(true)
+  expect(fake.received.filter((m) => m.type === 'call_service')).toHaveLength(1)
 })
 
 test('reads one state, filtered states and a missing entity', async () => {

@@ -22,6 +22,7 @@ const PROBLEM_LABELS: Record<string, string> = {
   deploy: 'Update problem',
   trigger: 'Home Assistant trigger problem',
   'ai-limit': 'AI limit reached',
+  'home-assistant': 'Home Assistant services',
 }
 
 type Filter = { view: View; project: string; kind: InvocationKind | ''; status: InvocationStatus | '' }

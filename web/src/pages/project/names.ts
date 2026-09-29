@@ -29,6 +29,7 @@ export const EVENT_LABELS: Record<string, string> = {
   secret: 'Secret',
   project: 'Hob',
   'ai-limit': 'AI limit',
+  'home-assistant': 'Home Assistant services',
 }
 
 export const PROJECT_NAME_HINT = 'Lowercase letters, digits and single hyphens, up to 40 characters.'

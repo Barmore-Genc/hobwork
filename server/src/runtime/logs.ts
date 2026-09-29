@@ -22,6 +22,7 @@ export type LifecycleEvent =
   | 'secret'
   | 'project'
   | 'ai-limit'
+  | 'home-assistant'
 
 export const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
 

@@ -13,6 +13,7 @@ import { createDevices } from '../devices/devices.ts'
 import type { DeviceConnection } from '../devices/registry.ts'
 import { createPairingCode, exchangePairingCode, recordHello } from '../devices/store.ts'
 import { pkce } from '../devices/test-devices.ts'
+import { setHaServices } from '../homeassistant/services.ts'
 import { createHomeAssistant } from '../homeassistant/client.ts'
 import { startFakeHomeAssistant } from '../homeassistant/fake-ha.ts'
 import { git } from '../git.ts'
@@ -571,6 +572,7 @@ test('handlers call Home Assistant through the host, logged with their invocatio
     ha.start()
     await ha.waitUntilConnected()
     start({ homeAssistant: ha })
+    setHaServices(host, 'filament', ['light'], { kind: 'user', name: 'Kaan' })
     await deploy(
       projectFiles({
         handlers: {
@@ -617,6 +619,19 @@ test('handlers call Home Assistant through the host, logged with their invocatio
     expect(queryLogs(host, { project: 'other', limit: 10 })).toEqual([])
     const unattributed = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.message.includes('light.turn_off'))
     expect(unattributed?.invocationId).toBeNull()
+
+    setHaServices(host, 'filament', ['switch'], { kind: 'user', name: 'Kaan' })
+    const refused = await route()
+    expect(bodyOf(refused)).toEqual({
+      error: [
+        'HomeAssistantError',
+        'not_allowed',
+        "This hob may not call the Home Assistant service light.turn_on. People change this on the hob's Home Assistant page in Hobwork",
+      ],
+    })
+    const refusal = queryLogs(host, { project: 'filament', invocationId: refused.invocationId, limit: 10 })
+    expect(refusal.map((l) => l.level)).toEqual(['warn'])
+    expect(refusal[0]!.message).toContain('Home Assistant: denied light.turn_on')
   } finally {
     ha.stop()
     await fake.close()

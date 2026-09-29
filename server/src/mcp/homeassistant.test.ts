@@ -147,6 +147,48 @@ test('lists device triggers', async () => {
   ])
 })
 
+test('shows an automation with its config and state', async () => {
+  fake.responses.set('get_states', () => [
+    {
+      entity_id: 'automation.coffee_back',
+      state: 'on',
+      attributes: { friendly_name: 'Coffee came back', last_triggered: '2026-09-28T08:00:00+00:00' },
+      last_changed: '',
+      last_updated: '',
+    },
+  ])
+  const config = { alias: 'Coffee came back', triggers: [{ trigger: 'device', device_id: 'd1' }], actions: [] }
+  fake.responses.set('automation/config', (m) => {
+    expect(m.entity_id).toBe('automation.coffee_back')
+    return { config }
+  })
+  expect(await ok('ha_get_automation', { entity_id: 'automation.coffee_back' })).toEqual({
+    entity_id: 'automation.coffee_back',
+    name: 'Coffee came back',
+    state: 'on',
+    last_triggered: '2026-09-28T08:00:00+00:00',
+    config,
+  })
+
+  expect(textOf(await mcp.call('ha_get_automation', { entity_id: 'light.kitchen' }))).toContain('automation.* or script.*')
+  fake.responses.delete('automation/config')
+  fake.failures.set('automation/config', { code: 'not_found', message: 'Entity not found' })
+  const missing = await mcp.call('ha_get_automation', { entity_id: 'automation.nope' })
+  expect(missing.isError).toBe(true)
+  expect(textOf(missing)).toContain('ha_list_entities')
+})
+
+test('finds related items', async () => {
+  fake.responses.set('search/related', (m) => {
+    expect(m).toMatchObject({ item_type: 'device', item_id: 'd1' })
+    return { automation: ['automation.coffee_back'], entity: ['sensor.desk_battery'] }
+  })
+  expect(await ok('ha_find_related', { item_type: 'device', item_id: 'd1' })).toEqual({
+    automation: ['automation.coffee_back'],
+    entity: ['sensor.desk_battery'],
+  })
+})
+
 test('ha_listen returns the variables of the first fire and unsubscribes', async () => {
   const trigger = { trigger: 'state', entity_id: 'input_boolean.guest_mode' }
   const listening = mcp.call('ha_listen', { trigger, timeout_seconds: 5 })

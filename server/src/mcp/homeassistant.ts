@@ -210,6 +210,59 @@ export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant)
   )
 
   server.registerTool(
+    'ha_get_automation',
+    {
+      description:
+        'Show a Home Assistant automation or script: its config (triggers, conditions and actions, as in the YAML editor), whether it is on and when it last ran. Find them with ha_list_entities and domain "automation" or "script", or with ha_find_related.',
+      inputSchema: { entity_id: z.string().describe('Entity ID, e.g. "automation.coffee_came_back" or "script.announce"') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ entity_id }) => {
+      const domain = entity_id.split('.')[0]
+      if (domain !== 'automation' && domain !== 'script') {
+        throw new HomeAssistantError('invalid_input', 'Pass an automation.* or script.* entity ID')
+      }
+      const client = connected()
+      const [state, config] = await Promise.all([
+        client.getState(entity_id),
+        client.getConfig(entity_id).catch((err: unknown) => {
+          if (err instanceof HomeAssistantError && err.code === 'not_found') {
+            throw new HomeAssistantError(
+              'not_found',
+              `Home Assistant has no ${domain} "${entity_id}". Find them with ha_list_entities and domain "${domain}"`,
+            )
+          }
+          throw err
+        }),
+      ])
+      const name = state?.attributes.friendly_name
+      return json({
+        entity_id,
+        name: typeof name === 'string' ? name : null,
+        state: state?.state ?? null,
+        last_triggered: state?.attributes.last_triggered ?? null,
+        config,
+      })
+    },
+  )
+
+  server.registerTool(
+    'ha_find_related',
+    {
+      description:
+        'Find what in Home Assistant is related to an item, e.g. the automations and scripts that use a device or entity, or the devices and entities an automation uses. Returns IDs grouped by type (automation, script, device, entity, area, ...).',
+      inputSchema: {
+        item_type: z
+          .enum(['device', 'entity', 'automation', 'script', 'area', 'scene', 'group', 'label', 'floor', 'config_entry', 'integration'])
+          .describe('Type of the item'),
+        item_id: z.string().describe('Its ID: a device ID, entity ID (also for automations and scripts), area ID, ...'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ item_type, item_id }) => json(await connected().searchRelated(item_type, item_id)),
+  )
+
+  server.registerTool(
     'ha_listen',
     {
       description: `Subscribe a Home Assistant trigger temporarily and wait until it fires, then return the variables a hobwork.json trigger with the same definition passes to its handler. Use it to see the real payload before writing a handler: ask the user to press the button or cause the change, then call this. Waits up to timeout_seconds (default ${DEFAULT_LISTEN_SECONDS}, max ${MAX_LISTEN_SECONDS}).`,

@@ -11,9 +11,6 @@ The principle for the larger items: the host never reads, writes or runs git on 
 
 Sections are in the order to work on them.
 
-### Quick fixes
-
-
 ### Limiting a compromised hob
 
 - **Default CSP for hob UIs**: app origins serve hob UIs and route responses with a strict CSP (`script-src 'self'`, no inline scripts, `object-src 'none'`, `base-uri 'none'`) and `nosniff`, so most XSS bugs in agent-written UIs cannot run script. `hobwork.json` can loosen it for a hob that needs to.

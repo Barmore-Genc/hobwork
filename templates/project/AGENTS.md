@@ -54,6 +54,8 @@ The placeholder is only replaced in headers, not in the URL or body. The hosts o
 
 Hobwork is connected to the household's Home Assistant. Find entities, services and device triggers with the `ha_*` tools; `ha_listen` shows the real payload of a trigger.
 
+Do not copy data that Home Assistant already has (states, history, device details) into the project DB. Read it from Home Assistant when it is needed, and store a copy only when the user asks for one or the feature cannot work without it.
+
 Triggers go in `hobwork.json`, in HA automation syntax. The handler gets HA's trigger variables as `ctx.payload`:
 
 ```json

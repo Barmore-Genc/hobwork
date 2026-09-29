@@ -42,7 +42,7 @@ export type EntryPoints = {
   triggers: {
     name: string
     homeassistant: Record<string, unknown> | null
-    device: { capability: string; event: string } | null
+    device: { capability: string; event: string; device?: string } | null
     lastRun: LastRun
   }[]
 }

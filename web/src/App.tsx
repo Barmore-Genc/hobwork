@@ -68,8 +68,8 @@ export default function App() {
   useEffect(() => {
     if (!session?.user || pathname !== '/login') return
     const returnTo = search.get('returnTo') ?? '/'
-    // Signing in to a project app continues on the host, outside this app.
-    if (returnTo.startsWith('/auth/') || returnTo.startsWith('/p/')) window.location.replace(returnTo)
+    // Signing in to a project app or for an NFC tag continues on the host, outside this app.
+    if (returnTo.startsWith('/auth/') || returnTo.startsWith('/p/') || returnTo.startsWith('/nfc/')) window.location.replace(returnTo)
     else navigate(returnTo, { replace: true })
   }, [session, pathname, search])
 

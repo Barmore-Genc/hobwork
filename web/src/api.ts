@@ -1,8 +1,15 @@
+import {
+  startAuthentication,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser'
+
 export type SessionUser = { name: string; email: string | null }
 
 export type Session = {
   user: SessionUser | null
-  signIn: { oidc: { name: string } | null }
+  signIn: { oidc: { name: string } | null; passkey: boolean }
 }
 
 export type ProjectStatus = 'ready' | 'running' | 'updating'
@@ -38,7 +45,44 @@ export type AgentToken = {
   revokedAt: string | null
 }
 
-export type Agent = { id: number; name: string; createdAt: string; tokens: AgentToken[] }
+// An app the user connected through OAuth, such as Claude.
+export type Connection = {
+  id: number
+  clientName: string
+  redirectHost: string
+  connectedBy: string | null
+  createdAt: string
+  lastUsedAt: string | null
+  revokedAt: string | null
+}
+
+export type SshKey = {
+  id: number
+  algorithm: string
+  fingerprint: string
+  comment: string
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export type Agent = {
+  id: number
+  name: string
+  createdAt: string
+  tokens: AgentToken[]
+  connections: Connection[]
+  sshKeys: SshKey[]
+}
+
+export type Passkey = { id: number; name: string; createdAt: string; lastUsedAt: string | null }
+
+export type ConnectRequest = {
+  // domain is set when the app proved it belongs to that domain.
+  client: { name: string; uri: string | null; domain: string | null }
+  redirectHost: string
+  loopback: boolean
+  agentName: string
+}
 
 export type CreatedToken = { agent: { id: number; name: string }; token: string }
 
@@ -90,4 +134,32 @@ export const api = {
   createAgent: (name: string) => request<CreatedToken>('POST', '/api/agents', { name }),
   createToken: (agentId: number) => request<CreatedToken>('POST', `/api/agents/${agentId}/tokens`),
   revokeToken: (tokenId: number) => request<void>('POST', `/api/tokens/${tokenId}/revoke`),
+  revokeConnection: (id: number) => request<void>('POST', `/api/connections/${id}/revoke`),
+  addSshKey: (agentId: number, publicKey: string) => request<SshKey>('POST', `/api/agents/${agentId}/ssh-keys`, { publicKey }),
+  removeSshKey: (id: number) => request<void>('DELETE', `/api/ssh-keys/${id}`),
+  connectRequest: (id: string) => request<ConnectRequest>('GET', `/api/oauth/requests/${encodeURIComponent(id)}`),
+  approveConnect: (id: string, agentName: string) =>
+    request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, { agentName }),
+  denyConnect: (id: string) =>
+    request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/deny`),
+  passkeys: () => request<Passkey[]>('GET', '/api/passkeys'),
+  deletePasskey: (id: number) => request<void>('DELETE', `/api/passkeys/${id}`),
+
+  // Both throw the browser's error when the person cancels the passkey prompt.
+  async addPasskey(name: string): Promise<Passkey> {
+    const { flowId, options } = await request<{ flowId: string; options: PublicKeyCredentialCreationOptionsJSON }>(
+      'POST',
+      '/api/passkeys/options',
+    )
+    const response = await startRegistration({ optionsJSON: options })
+    return request<Passkey>('POST', '/api/passkeys', { flowId, name, response })
+  },
+  async signInWithPasskey(): Promise<void> {
+    const { flowId, options } = await request<{ flowId: string; options: PublicKeyCredentialRequestOptionsJSON }>(
+      'POST',
+      '/auth/passkey/options',
+    )
+    const response = await startAuthentication({ optionsJSON: options })
+    await request<unknown>('POST', '/auth/passkey', { flowId, response })
+  },
 }

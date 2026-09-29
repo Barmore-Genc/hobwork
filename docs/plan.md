@@ -89,7 +89,7 @@ Status: done are OIDC login with an allowlist, sessions and CSRF protection, the
 - Passkey login.
 - SSH gateway into workspaces, `hobwork` CLI inside workspace VMs.
 
-Status: the SSH gateway and the `hobwork` CLI are done, covered by `pnpm -C server test:vm` (the OpenSSH client runs `pnpm test`, an interactive shell, and `hobwork status`, `commit` and `merge` in a workspace VM). SSH keys are managed through the API and the `add-ssh-key` script; the Agent access page does not show them yet. Git over SSH is not supported.
+Status: done. The SSH gateway and the `hobwork` CLI are covered by `pnpm -C server test:vm` (the OpenSSH client runs `pnpm test`, an interactive shell, and `hobwork status`, `commit` and `merge` in a workspace VM). SSH keys are managed on the Agent access page, through the API and with the `add-ssh-key` script. Git over SSH is not supported. The MCP OAuth server (metadata documents and dynamic registration, consent page, rotating refresh tokens) is tested with the MCP SDK client and was verified with Claude Code (`claude mcp add` then `claude mcp login`, which identifies with its metadata document); claude.ai connectors need the host on public https, which is not tested yet. Passkeys (settings page, sign-in with discoverable credentials) are tested with a software authenticator and with Chromium's virtual authenticator. People without pocket-id enroll their first passkey through a `sign-in-link` URL. Deferred: rate limits on registration and authorization, per-project or read-only scopes, renaming passkeys.
 
 ## Phase 9: Integrations
 

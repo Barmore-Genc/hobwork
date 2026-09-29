@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { randomBytes } from 'node:crypto'
 import type { Allowlist } from '../config.ts'
 
 export type User = { id: number; name: string; email: string | null }
@@ -36,13 +37,20 @@ function identityAllowed(allowlist: Allowlist, identity: OidcIdentity): boolean 
   )
 }
 
+export function findUserByEmail(db: DatabaseSync, email: string): User | undefined {
+  const row = db.prepare('SELECT id, name, email FROM users WHERE lower(email) = lower(?) ORDER BY id LIMIT 1').get(email)
+  return row ? toUser(row) : undefined
+}
+
 // Returns undefined when the identity is not on the allowlist. Name and email
 // follow the provider, so changes there show up on the next sign-in.
 export function signInOidcUser(db: DatabaseSync, allowlist: Allowlist, identity: OidcIdentity): User | undefined {
   if (!identityAllowed(allowlist, identity)) return undefined
-  const existing = db
-    .prepare('SELECT user_id FROM user_identities WHERE issuer = ? AND subject = ?')
-    .get(identity.issuer, identity.subject)
+  // A new identity with a verified email joins the user who already has that
+  // email, for example one who started with a sign-in link and a passkey.
+  const existing =
+    db.prepare('SELECT user_id FROM user_identities WHERE issuer = ? AND subject = ?').get(identity.issuer, identity.subject) ??
+    linkIdentityByEmail(db, identity)
   if (existing) {
     const row = db
       .prepare(
@@ -74,4 +82,42 @@ export function signInOidcUser(db: DatabaseSync, allowlist: Allowlist, identity:
     db.exec('ROLLBACK')
     throw err
   }
+}
+
+function linkIdentityByEmail(db: DatabaseSync, identity: OidcIdentity): { user_id: number } | undefined {
+  if (!identity.email) return undefined
+  const user = findUserByEmail(db, identity.email)
+  if (!user) return undefined
+  db.prepare('INSERT INTO user_identities (user_id, issuer, subject) VALUES (?, ?, ?)').run(
+    user.id,
+    identity.issuer,
+    identity.subject,
+  )
+  return { user_id: user.id }
+}
+
+// For people without an identity provider: the sign-in-link command vouches
+// for the email address, which must be on the allowlist.
+export function findOrCreateEmailUser(db: DatabaseSync, allowlist: Allowlist, email: string, name?: string): User | undefined {
+  if (!allowlist.emails.includes(email.toLowerCase())) return undefined
+  const existing = findUserByEmail(db, email)
+  if (existing) return existing
+  const row = db
+    .prepare('INSERT INTO users (name, email) VALUES (?, ?) RETURNING id, name, email')
+    .get(name?.trim() || email.split('@')[0]!, email)
+  if (!row) throw new Error('User insert returned no row')
+  return toUser(row)
+}
+
+export function markSignedIn(db: DatabaseSync, userId: number) {
+  db.prepare(`UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(userId)
+}
+
+// The WebAuthn user handle, created on first use.
+export function webauthnUserId(db: DatabaseSync, userId: number): string {
+  const row = db.prepare('SELECT webauthn_id FROM users WHERE id = ?').get(userId)
+  if (row?.webauthn_id) return String(row.webauthn_id)
+  const id = randomBytes(32).toString('base64url')
+  db.prepare('UPDATE users SET webauthn_id = ? WHERE id = ?').run(id, userId)
+  return id
 }

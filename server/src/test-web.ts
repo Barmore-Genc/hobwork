@@ -1,4 +1,4 @@
-import type { AddressInfo } from 'node:net'
+import { createServer, type AddressInfo } from 'node:net'
 import { CSRF_HEADER } from './auth/auth.ts'
 import { createSession } from './auth/sessions.ts'
 import { signInOidcUser, type User } from './auth/users.ts'
@@ -8,19 +8,37 @@ import type { Host } from './host.ts'
 
 export const TEST_PUBLIC_URL = 'http://hobwork.test'
 
-export async function startTestApp(host: Host, options: { web?: Partial<WebOptions>; delivery?: Delivery } = {}) {
+export async function freePort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  await new Promise((resolve) => server.close(resolve))
+  return port
+}
+
+// With selfPublicUrl, the public URL is the address the app listens on, so
+// URLs in OAuth metadata and redirects work from the test.
+export async function startTestApp(
+  host: Host,
+  options: { web?: Partial<WebOptions>; delivery?: Delivery; selfPublicUrl?: boolean } = {},
+) {
+  const port = options.selfPublicUrl ? await freePort() : 0
   const server = createApp(host, {
     delivery: options.delivery,
     web: {
-      publicUrl: TEST_PUBLIC_URL,
+      publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },
       ...options.web,
     },
   })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
   return {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections()
+        server.close(() => resolve())
+      }),
   }
 }
 
@@ -36,11 +54,11 @@ export function signedIn(host: Host, email = 'kaan@example.com'): { user: User; 
 }
 
 // Headers the web UI sends with state-changing requests.
-export function writeHeaders(cookie: string): Record<string, string> {
+export function writeHeaders(cookie: string, origin = TEST_PUBLIC_URL): Record<string, string> {
   return {
     cookie,
     [CSRF_HEADER]: '1',
-    origin: TEST_PUBLIC_URL,
+    origin,
     'content-type': 'application/json',
   }
 }

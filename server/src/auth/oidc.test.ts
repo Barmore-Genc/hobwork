@@ -57,8 +57,8 @@ async function session(cookie: string) {
   return (await fetch(`${app.base}/api/session`, { headers: { cookie } })).json()
 }
 
-test('session endpoint reports the sign-in method when signed out', async () => {
-  expect(await session('')).toEqual({ user: null, signIn: { oidc: { name: 'Pocket ID' } } })
+test('session endpoint reports the sign-in methods when signed out', async () => {
+  expect(await session('')).toEqual({ user: null, signIn: { oidc: { name: 'Pocket ID' }, passkey: true } })
 })
 
 test('authorization code flow with PKCE signs the user in', async () => {

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createApiRoutes } from './api/routes.ts'
 import { createAuth } from './auth/auth.ts'
 import { createOidcLogin } from './auth/oidc.ts'
+import { createPasskeys } from './auth/passkeys.ts'
 import { createAuthRoutes } from './auth/routes.ts'
 import type { Allowlist, OidcConfig } from './config.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
@@ -9,7 +10,9 @@ import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import type { Host } from './host.ts'
 import { json } from './http.ts'
-import { bearerTokenAuth, createMcpHandler, MCP_PATH, type McpAuthenticator } from './mcp/http.ts'
+import { bearerTokenAuth, createMcpHandler, MCP_PATH, mcpAuth, type McpAuthenticator } from './mcp/http.ts'
+import type { FetchedDocument } from './oauth/metadata-fetch.ts'
+import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import { createStaticRoutes } from './static.ts'
@@ -20,6 +23,9 @@ export type WebOptions = {
   allowlist: Allowlist
   oidc?: OidcConfig
   webDist?: string
+  // Tests replace how client ID metadata documents are fetched and the clock.
+  fetchClientMetadata?: (url: URL) => Promise<FetchedDocument>
+  now?: () => number
 }
 
 export function createApp(
@@ -35,20 +41,34 @@ export function createApp(
 ): Server {
   const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
   const delivery = options.delivery ?? createDelivery(host, { workspaces })
+  const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
+  const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
+  const oauth = createOAuthServer({
+    db: host.db,
+    publicUrl: web.publicUrl,
+    auth,
+    mcpPath: MCP_PATH,
+    fetchDocument: web.fetchClientMetadata,
+    now: web.now,
+  })
+  // OAuth access tokens are bound to the MCP endpoint (RFC 8707), so project
+  // routes accept static agent tokens only.
   const authenticate = options.authenticate ?? bearerTokenAuth(host)
   const handleMcp = createMcpHandler({
     host,
     workspaces,
     delivery,
-    authenticate,
+    authenticate: options.authenticate ?? mcpAuth(host, oauth.verifyAccessToken),
+    resourceMetadataUrl: oauth.resourceMetadataUrl,
     homeAssistant: options.homeAssistant,
     runtime: options.runtime,
   })
 
-  const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
-  const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
   const handleAuth = createAuthRoutes({
+    db: host.db,
+    allowlist: web.allowlist,
     auth,
+    passkeys: createPasskeys({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist, auth, now: web.now }),
     oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
   })
   const handleApi = createApiRoutes({ host, auth, delivery, runtime: options.runtime })
@@ -71,6 +91,7 @@ export function createApp(
       return json(res, 200, { ok: true })
     }
     try {
+      if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
       if (await handleApi(req, res, pathname)) return
       if (!pathname.startsWith('/api/') && handleStatic(req, res, pathname)) return

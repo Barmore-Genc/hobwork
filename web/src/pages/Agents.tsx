@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { api, ApiError, type AgentToken, type CreatedToken } from '../api.ts'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import { api, ApiError, type Agent, type AgentToken, type Connection, type CreatedToken, type SshKey } from '../api.ts'
 import { exactTime, shortDate, timeAgo } from '../format.ts'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
@@ -80,15 +80,141 @@ function KeyRow({ token, onRevoke }: { token: AgentToken; onRevoke: (token: Agen
   )
 }
 
+function ConnectionRow({ connection, onRevoke }: { connection: Connection; onRevoke: (c: Connection) => void }) {
+  const revoked = connection.revokedAt !== null
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+      <div className={revoked ? 'text-muted' : ''}>
+        <p>
+          Signed in through {connection.clientName}
+          {connection.connectedBy && <> by {connection.connectedBy}</>}
+        </p>
+        <p className="text-sm text-muted">
+          <span title={exactTime(connection.createdAt)}>Connected {shortDate(connection.createdAt)}</span>
+          {' · '}
+          {revoked ? (
+            <>revoked {timeAgo(connection.revokedAt!)}</>
+          ) : connection.lastUsedAt ? (
+            <span title={exactTime(connection.lastUsedAt)}>last used {timeAgo(connection.lastUsedAt)}</span>
+          ) : (
+            'not used yet'
+          )}
+        </p>
+      </div>
+      {!revoked && (
+        <Button variant="quiet-danger" onClick={() => onRevoke(connection)}>
+          Revoke
+        </Button>
+      )}
+    </li>
+  )
+}
+
+function SshKeyRow({ sshKey, onRemove }: { sshKey: SshKey; onRemove: (key: SshKey) => void }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+      <div className="min-w-0">
+        <p>
+          SSH key{sshKey.comment && <> “{sshKey.comment}”</>}
+        </p>
+        <p className="font-mono text-[0.8rem] break-all text-muted">{sshKey.fingerprint}</p>
+        <p className="text-sm text-muted">
+          <span title={exactTime(sshKey.createdAt)}>Added {shortDate(sshKey.createdAt)}</span>
+          {' · '}
+          {sshKey.lastUsedAt ? (
+            <span title={exactTime(sshKey.lastUsedAt)}>last used {timeAgo(sshKey.lastUsedAt)}</span>
+          ) : (
+            'not used yet'
+          )}
+        </p>
+      </div>
+      <Button variant="quiet-danger" onClick={() => onRemove(sshKey)}>
+        Remove
+      </Button>
+    </li>
+  )
+}
+
+function AddSshKey({ agent, onAdded, onCancel }: { agent: Agent; onAdded: () => void; onCancel: () => void }) {
+  const [publicKey, setPublicKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const id = `ssh-key-${agent.id}`
+
+  async function add(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await api.addSshKey(agent.id, publicKey.trim())
+      onAdded()
+    } catch (err) {
+      setError(message(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={add} className="mt-4 rounded-lg border border-border bg-surface p-4 sm:p-5">
+      <label htmlFor={id} className="font-semibold">
+        Public SSH key for {agent.name}
+      </label>
+      <p className="mt-1 text-sm text-muted">
+        Paste the contents of the <span className="font-mono">.pub</span> file, such as{' '}
+        <span className="font-mono">~/.ssh/id_ed25519.pub</span>.
+      </p>
+      <textarea
+        id={id}
+        value={publicKey}
+        onChange={(e) => setPublicKey(e.target.value)}
+        rows={3}
+        required
+        spellCheck={false}
+        placeholder="ssh-ed25519 AAAA… agent@laptop"
+        className="mt-3 w-full rounded-md border border-border bg-surface-raised px-3 py-2 font-mono text-sm text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
+      />
+      {error && (
+        <div className="mt-3">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap justify-end gap-3">
+        <Button variant="quiet" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" disabled={busy || !publicKey.trim()}>
+          {busy ? 'Adding…' : 'Add SSH key'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function accessSummary(agent: Agent): string {
+  const keys = agent.tokens.filter((t) => t.revokedAt === null).length
+  const apps = agent.connections.filter((c) => c.revokedAt === null).length
+  const ssh = agent.sshKeys.length
+  const parts = [
+    ...(keys ? [keys === 1 ? '1 working key' : `${keys} working keys`] : []),
+    ...(apps ? [apps === 1 ? '1 working sign-in' : `${apps} working sign-ins`] : []),
+    ...(ssh ? [ssh === 1 ? '1 SSH key' : `${ssh} SSH keys`] : []),
+  ]
+  return parts.length ? parts.join(', ') : 'No working access'
+}
+
+// What the confirmation dialog asks about before it takes access away.
+type Removal = { title: string; confirmLabel: string; body: ReactNode; run: () => Promise<void> }
+
 export function AgentsPage() {
   const { data: agents, error, reload } = useLoad(api.agents)
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [created, setCreated] = useState<CreatedToken | null>(null)
-  const [revoking, setRevoking] = useState<{ token: AgentToken; agent: string } | null>(null)
-  const [revokeBusy, setRevokeBusy] = useState(false)
-  const [revokeError, setRevokeError] = useState<string | null>(null)
+  const [removal, setRemoval] = useState<Removal | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+  const [addingSshKey, setAddingSshKey] = useState<number | null>(null)
 
   async function create(event: FormEvent) {
     event.preventDefault()
@@ -115,27 +241,57 @@ export function AgentsPage() {
     }
   }
 
-  async function revoke() {
-    if (!revoking) return
-    setRevokeBusy(true)
-    setRevokeError(null)
+  function confirm(next: Removal) {
+    setRemoveError(null)
+    setRemoval(next)
+  }
+
+  async function remove() {
+    if (!removal) return
+    setRemoveBusy(true)
+    setRemoveError(null)
     try {
-      await api.revokeToken(revoking.token.id)
-      setRevoking(null)
+      await removal.run()
+      setRemoval(null)
       reload()
     } catch (err) {
-      setRevokeError(message(err))
+      setRemoveError(message(err))
     } finally {
-      setRevokeBusy(false)
+      setRemoveBusy(false)
     }
   }
+
+  const revokeToken = (agent: Agent, token: AgentToken) =>
+    confirm({
+      title: 'Revoke this key?',
+      confirmLabel: 'Revoke key',
+      body: `${agent.name} loses access through this key right away. This cannot be undone, but you can create a new key later.`,
+      run: () => api.revokeToken(token.id),
+    })
+
+  const revokeConnection = (agent: Agent, connection: Connection) =>
+    confirm({
+      title: 'Revoke this sign-in?',
+      confirmLabel: 'Revoke sign-in',
+      body: `${agent.name} loses access right away. You can connect it again from ${connection.clientName} later.`,
+      run: () => api.revokeConnection(connection.id),
+    })
+
+  const removeSshKey = (agent: Agent, key: SshKey) =>
+    confirm({
+      title: 'Remove this SSH key?',
+      confirmLabel: 'Remove SSH key',
+      body: `${agent.name} can no longer open a shell in workspaces with this key. You can add it again later.`,
+      run: () => api.removeSshKey(key.id),
+    })
 
   return (
     <div>
       <PageHeading>Agent access</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
-        Agents such as Claude Code use a key to build and change projects. A key works for every project, so revoke
-        keys you no longer use.
+        Agents such as Claude build and change projects with a key, or by signing in when you connect them from the
+        app. An SSH key lets an agent open a shell in a project workspace. Access works for every project, so revoke
+        what you no longer use.
       </p>
 
       <div className="mt-10 space-y-10">
@@ -176,29 +332,56 @@ export function AgentsPage() {
         {agents && agents.length > 0 && (
           <ul className="space-y-8">
             {agents.map((agent) => {
-              const active = agent.tokens.filter((t) => t.revokedAt === null).length
               return (
                 <li key={agent.id} className="border-t border-border pt-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
                     <div>
                       <h2 className="text-xl font-semibold break-words">{agent.name}</h2>
-                      <p className="text-sm text-muted">
-                        {active === 0 ? 'No working keys' : active === 1 ? '1 working key' : `${active} working keys`}
-                      </p>
+                      <p className="text-sm text-muted">{accessSummary(agent)}</p>
                     </div>
-                    <Button onClick={() => newKey(agent.id)}>New key</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => newKey(agent.id)}>New key</Button>
+                      <Button onClick={() => setAddingSshKey(agent.id)} disabled={addingSshKey === agent.id}>
+                        Add SSH key
+                      </Button>
+                    </div>
                   </div>
+                  {addingSshKey === agent.id && (
+                    <AddSshKey
+                      agent={agent}
+                      onCancel={() => setAddingSshKey(null)}
+                      onAdded={() => {
+                        setAddingSshKey(null)
+                        reload()
+                      }}
+                    />
+                  )}
+                  {agent.connections.length > 0 && (
+                    <ul className="mt-3 divide-y divide-border">
+                      {agent.connections.map((connection) => (
+                        <ConnectionRow
+                          key={connection.id}
+                          connection={connection}
+                          onRevoke={(c) => revokeConnection(agent, c)}
+                        />
+                      ))}
+                    </ul>
+                  )}
                   {agent.tokens.length > 0 && (
                     <ul className="mt-3 divide-y divide-border">
                       {agent.tokens.map((token) => (
                         <KeyRow
                           key={token.id}
                           token={token}
-                          onRevoke={(t) => {
-                            setRevokeError(null)
-                            setRevoking({ token: t, agent: agent.name })
-                          }}
+                          onRevoke={(t) => revokeToken(agent, t)}
                         />
+                      ))}
+                    </ul>
+                  )}
+                  {agent.sshKeys.length > 0 && (
+                    <ul className="mt-3 divide-y divide-border">
+                      {agent.sshKeys.map((key) => (
+                        <SshKeyRow key={key.id} sshKey={key} onRemove={(k) => removeSshKey(agent, k)} />
                       ))}
                     </ul>
                   )}
@@ -210,19 +393,16 @@ export function AgentsPage() {
       </div>
 
       <ConfirmDialog
-        open={revoking !== null}
-        title="Revoke this key?"
-        confirmLabel="Revoke key"
+        open={removal !== null}
+        title={removal?.title ?? ''}
+        confirmLabel={removal?.confirmLabel ?? ''}
         variant="danger"
-        busy={revokeBusy}
-        error={revokeError}
-        onConfirm={revoke}
-        onCancel={() => setRevoking(null)}
+        busy={removeBusy}
+        error={removeError}
+        onConfirm={remove}
+        onCancel={() => setRemoval(null)}
       >
-        <p>
-          {revoking?.agent} loses access through this key right away. This cannot be undone, but you can create a new
-          key later.
-        </p>
+        <p>{removal?.body}</p>
       </ConfirmDialog>
     </div>
   )

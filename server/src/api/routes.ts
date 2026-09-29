@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createAgentToken, getAgent, listAgents, revokeAgentToken } from '../agents.ts'
+import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { Auth } from '../auth/auth.ts'
 import type { User } from '../auth/users.ts'
 import type { Delivery } from '../delivery.ts'
 import type { Host } from '../host.ts'
 import { HttpError, json, readJson } from '../http.ts'
+import { listConnections, revokeGrant } from '../oauth/grants.ts'
 import { latestRun } from '../pipeline/runner.ts'
 import { getProject, listProjects, ProjectError, type Project } from '../projects.ts'
 import type { Runtime } from '../runtime/runtime.ts'
@@ -14,7 +15,6 @@ import { getVersion, listVersions, type Version } from '../versions.ts'
 // ready: deployed, and the runtime starts when something calls it.
 export type ProjectStatus = 'ready' | 'running' | 'updating'
 
-const MAX_AGENT_NAME = 64
 const VERSION_PAGE = 100
 
 type Route = {
@@ -117,10 +117,15 @@ export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Del
       pattern: /^\/api\/agents$/,
       handle: ({ res }) => {
         const keys = listSshKeys(host.db)
+        const connections = listConnections(host.db)
         json(
           res,
           200,
-          listAgents(host.db).map((agent) => ({ ...agent, sshKeys: keys.filter((key) => key.agentId === agent.id) })),
+          listAgents(host.db).map((agent) => ({
+            ...agent,
+            sshKeys: keys.filter((key) => key.agentId === agent.id),
+            connections: connections.get(agent.id) ?? [],
+          })),
         )
       },
     },
@@ -178,6 +183,16 @@ export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Del
       handle: ({ res, params }) => {
         if (!revokeAgentToken(host.db, positiveInt(params[0]))) {
           throw new HttpError(404, 'This key does not exist or is already revoked')
+        }
+        res.writeHead(204).end()
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/connections\/(\d+)\/revoke$/,
+      handle: ({ res, params }) => {
+        if (!revokeGrant(host.db, positiveInt(params[0]))) {
+          throw new HttpError(404, 'This connection does not exist or is already revoked')
         }
         res.writeHead(204).end()
       },

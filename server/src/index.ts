@@ -66,9 +66,12 @@ const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime })
 homeAssistant.start()
 await runtime.start()
 
-if (!config.oidc) console.warn('HOBWORK_OIDC_ISSUER is not set, so nobody can sign in to the web UI.')
-else if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
+if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
   console.warn('HOBWORK_ALLOWED_USERS is empty, so nobody can sign in to the web UI.')
+} else if (!config.oidc) {
+  console.warn(
+    'HOBWORK_OIDC_ISSUER is not set, so people sign in with passkeys only. Enroll the first one with "pnpm --filter @hobwork/server sign-in-link <email>".',
+  )
 }
 
 const server = createApp(host, {

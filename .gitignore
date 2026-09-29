@@ -22,3 +22,6 @@ xcuserdata/
 
 # Pocket ID dev instance runtime state
 /dev/pocket-id/data/
+
+# Release packages
+/release/out/

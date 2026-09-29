@@ -271,4 +271,21 @@ import Testing
         #expect(queue.events.isEmpty)
         connection.stop()
     }
+
+    @Test func runsARepeatedCommandOnceAndAnswersBoth() async throws {
+        let (connection, socket) = try await connected()
+        let handler = RecordingHandler()
+        handler.reply = { _, _ in .object(["id": .string("a1")]) }
+        connection.register(handler, for: "alarms")
+
+        let call = DeviceCall(id: .string("cmd-1"), capability: "alarms", method: "timer", args: .object(["seconds": .number(60)]))
+        try socket.deliver(.call(call))
+        try await eventually("first result") { socket.sent.count == 2 }
+        try socket.deliver(.call(call))
+        try await eventually("second result") { socket.sent.count == 3 }
+        let result = DeviceMessage.result(DeviceCallResult(id: .string("cmd-1"), outcome: .success(.object(["id": .string("a1")]))))
+        #expect(socket.sent.suffix(2) == [result, result])
+        #expect(handler.calls.count == 1)
+        connection.stop()
+    }
 }

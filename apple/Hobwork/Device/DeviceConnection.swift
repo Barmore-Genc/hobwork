@@ -1,14 +1,6 @@
 import Foundation
 import Observation
 
-@MainActor
-protocol CapabilityHandler: AnyObject {
-    /// Throw a `CallError` to send its code to the host; other errors become `failed`.
-    func handle(method: String, args: JSONValue?) async throws -> JSONValue
-}
-
-typealias Sleep = @Sendable (Duration) async throws -> Void
-
 /// The device WebSocket: hello on every connect, answers calls, sends events, pings
 /// and reconnects with backoff until stopped.
 @MainActor
@@ -44,7 +36,7 @@ final class DeviceConnection {
     @ObservationIgnored private let queue: any EventQueue
     @ObservationIgnored private let sleep: Sleep
     @ObservationIgnored private let timing: Timing
-    @ObservationIgnored private var handlers: [String: any CapabilityHandler] = [:]
+    @ObservationIgnored let runner: CommandRunner
 
     @ObservationIgnored private var runTask: Task<Void, Never>?
     @ObservationIgnored private var socket: (any DeviceSocket)?
@@ -57,9 +49,11 @@ final class DeviceConnection {
         queue: any EventQueue,
         timing: Timing = Timing(),
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
+        runner: CommandRunner = CommandRunner(),
         makeSocket: @escaping @MainActor (URLRequest) -> any DeviceSocket = { URLSessionDeviceSocket(request: $0) }
     ) {
         self.request = request
+        self.runner = runner
         self.hello = hello
         self.queue = queue
         self.timing = timing
@@ -68,7 +62,7 @@ final class DeviceConnection {
     }
 
     func register(_ handler: any CapabilityHandler, for capability: String) {
-        handlers[capability] = handler
+        runner.register(handler, for: capability)
     }
 
     func start() {
@@ -187,20 +181,11 @@ final class DeviceConnection {
     }
 
     private func respond(to call: DeviceCall, on socket: any DeviceSocket) async {
-        let outcome: Result<JSONValue, CallError>
-        if let handler = handlers[call.capability] {
-            do {
-                outcome = try .success(await handler.handle(method: call.method, args: call.args))
-            } catch let error as CallError {
-                outcome = .failure(error)
-            } catch {
-                outcome = .failure(CallError(code: "failed", message: error.localizedDescription))
-            }
-        } else {
-            outcome = .failure(CallError(code: "unsupported", message: "This device does not support \(call.capability)"))
-        }
-        // A result for a connection that has since closed is lost; the host fails the call.
-        try? await socket.send(DeviceMessage.result(DeviceCallResult(id: call.id, outcome: outcome)).encoded())
+        // Nil when another process runs the command right now; it answers the host itself.
+        guard let outcome = await runner.run(DeviceCommand(call)) else { return }
+        // A result for a connection that has since closed is lost; the host sends the
+        // command again after the next hello and gets it from the command log.
+        try? await socket.send(DeviceMessage.result(DeviceCallResult(id: call.id, outcome: outcome.result)).encoded())
     }
 
     private func flushEvents() async {

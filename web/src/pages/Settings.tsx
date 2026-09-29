@@ -8,9 +8,61 @@ import { BackupSettings } from './BackupSettings.tsx'
 import { DevicesSection } from './settings/Devices.tsx'
 import { HomeAssistantSection } from './settings/HomeAssistant.tsx'
 
+function message(err: unknown): string {
+  return err instanceof ApiError ? err.message : String(err)
+}
+
+function RenameForm({ passkey, onDone }: { passkey: Passkey; onDone: (renamed: boolean) => void }) {
+  const [name, setName] = useState(passkey.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await api.renamePasskey(passkey.id, name.trim())
+      onDone(true)
+    } catch (err) {
+      setError(message(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mt-3 space-y-3">
+      <label htmlFor={`passkey-${passkey.id}-name`} className="sr-only">
+        Passkey name
+      </label>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <input
+          id={`passkey-${passkey.id}-name`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={64}
+          required
+          autoFocus
+          className="min-h-10 flex-1 rounded-md border border-border bg-surface-raised px-3 text-fg focus:border-accent focus:outline-none"
+        />
+        <div className="flex gap-3">
+          <Button type="submit" variant="primary" disabled={busy || !name.trim() || name.trim() === passkey.name}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+          <Button variant="quiet" onClick={() => onDone(false)} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+      {error && <Notice tone="error">{error}</Notice>}
+    </form>
+  )
+}
+
 export function SettingsPage() {
   const { data: passkeys, error, reload } = useLoad(api.passkeys)
-  const [name, setName] = useState(deviceName)
+  const [name, setName] = useState('')
+  const [renaming, setRenaming] = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [added, setAdded] = useState<string | null>(null)
@@ -25,8 +77,9 @@ export function SettingsPage() {
     setAddError(null)
     setAdded(null)
     try {
-      const passkey = await api.addPasskey(name.trim())
+      const passkey = await api.addPasskey(name.trim(), deviceName())
       setAdded(passkey.name)
+      setName('')
       reload()
     } catch (err) {
       setAddError(passkeyError(err))
@@ -44,7 +97,7 @@ export function SettingsPage() {
       setRemoving(null)
       reload()
     } catch (err) {
-      setRemoveError(err instanceof ApiError ? err.message : String(err))
+      setRemoveError(message(err))
     } finally {
       setRemoveBusy(false)
     }
@@ -71,18 +124,20 @@ export function SettingsPage() {
           <label htmlFor="passkey-name" className="font-display text-lg font-semibold">
             Add a passkey
           </label>
-          <p className="mt-1 text-sm text-muted">Name it after the device or password manager that keeps it.</p>
+          <p className="mt-1 text-sm text-muted">
+            Name it after the device or password manager that keeps it, or leave the name empty to have Hobwork pick one.
+          </p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
             <input
               id="passkey-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={64}
-              required
+              placeholder="Name (optional)"
               disabled={!supported}
               className="min-h-10 flex-1 rounded-md border border-border bg-surface-raised px-3 text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none"
             />
-            <Button type="submit" variant="primary" disabled={!supported || adding || !name.trim()}>
+            <Button type="submit" variant="primary" disabled={!supported || adding}>
               {adding ? 'Waiting for your device…' : 'Add passkey'}
             </Button>
           </div>
@@ -112,28 +167,46 @@ export function SettingsPage() {
         {passkeys && passkeys.length > 0 && (
           <ul className="mt-6 divide-y divide-border border-y border-border">
             {passkeys.map((passkey) => (
-              <li key={passkey.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-4">
-                <div>
-                  <p className="font-semibold break-words">{passkey.name}</p>
-                  <p className="text-sm text-muted">
-                    Added <span title={exactTime(passkey.createdAt)}>{shortDate(passkey.createdAt)}</span>
-                    {' · '}
-                    {passkey.lastUsedAt ? (
-                      <span title={exactTime(passkey.lastUsedAt)}>last used {timeAgo(passkey.lastUsedAt)}</span>
-                    ) : (
-                      'not used yet'
-                    )}
-                  </p>
+              <li key={passkey.id} className="py-4">
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold break-words">{passkey.name}</p>
+                    <p className="text-sm text-muted">
+                      Added <span title={exactTime(passkey.createdAt)}>{shortDate(passkey.createdAt)}</span>
+                      {' · '}
+                      {passkey.lastUsedAt ? (
+                        <span title={exactTime(passkey.lastUsedAt)}>last used {timeAgo(passkey.lastUsedAt)}</span>
+                      ) : (
+                        'not used yet'
+                      )}
+                    </p>
+                  </div>
+                  {renaming !== passkey.id && (
+                    <div className="flex gap-1">
+                      <Button variant="quiet" onClick={() => setRenaming(passkey.id)}>
+                        Rename
+                      </Button>
+                      <Button
+                        variant="quiet-danger"
+                        onClick={() => {
+                          setRemoveError(null)
+                          setRemoving(passkey)
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <Button
-                  variant="quiet-danger"
-                  onClick={() => {
-                    setRemoveError(null)
-                    setRemoving(passkey)
-                  }}
-                >
-                  Remove
-                </Button>
+                {renaming === passkey.id && (
+                  <RenameForm
+                    passkey={passkey}
+                    onDone={(renamed) => {
+                      setRenaming(null)
+                      if (renamed) reload()
+                    }}
+                  />
+                )}
               </li>
             ))}
           </ul>

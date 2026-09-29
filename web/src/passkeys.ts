@@ -13,7 +13,8 @@ export function passkeyError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-// A starting name for a new passkey, so the list tells devices apart.
+// Names a new passkey when its password manager is unknown, so the list tells
+// devices apart.
 export function deviceName(): string {
   const agent = navigator.userAgent
   if (/iPhone/.test(agent)) return 'iPhone'

@@ -592,6 +592,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       }
       throw err
     }
+    if (!res.ok) throw new Error(`the runner answered HTTP ${res.status}: ${(await res.text()).trim()}`)
     return (await res.json()) as InvokeResult
   }
 

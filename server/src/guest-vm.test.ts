@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
@@ -13,6 +13,8 @@ import { queryLogs } from './runtime/logs.ts'
 import { createSecretStore } from './secrets.ts'
 import { createTestHost } from './test-host.ts'
 import type { ExecOptions, Sandbox, SandboxOptions, SpawnOptions } from './sandbox/sandbox.ts'
+import { hostWorkspaceVm } from './test-workspace-vm.ts'
+import { TOOL_COMMAND } from './workspace-tools.ts'
 import type { Workspace } from './workspaces.ts'
 
 type FakeSandbox = Sandbox & {
@@ -28,6 +30,8 @@ const SESSION = { 'x-hobwork-session': 'good' }
 const hasSession = (_workspace: unknown, token: string) => token === 'good'
 
 let sandboxes: FakeSandbox[]
+// Set to run the workspace tools of a command for real, in `dir`.
+let toolHost: ReturnType<typeof createTestHost> | undefined
 // What the branch has committed. The checkout in `dir` is never read for these.
 let committed: Record<string, string>
 const readBranchFile = async (_workspace: Workspace, path: string) => committed[path]
@@ -41,6 +45,11 @@ async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
     commands: [],
     stopped: false,
     exec(command, execOptions = {}) {
+      if (toolHost && command.startsWith(TOOL_COMMAND)) {
+        sandbox.commands.push({ command, options: execOptions })
+        const result = hostWorkspaceVm(toolHost, workspace()).exec(command, { cwd: '.', timeoutMs: 60_000, input: execOptions.input, onOutput: (stream, text) => execOptions.onOutput?.({ stream, text }) })
+        return { result: result.then((r) => ({ ...r, timedOut: false, killed: false })), kill: async () => {} }
+      }
       sandbox.commands.push({ command, options: execOptions })
       execOptions.onOutput?.({ stream: 'stdout', text: `ran ${command}\n` })
       execOptions.onOutput?.({ stream: 'stderr', text: 'warning\n' })
@@ -92,6 +101,7 @@ function workspace(): Workspace {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'hobwork-guest-vm-test-'))
   sandboxes = []
+  toolHost = undefined
   committed = { 'package.json': JSON.stringify({ scripts: {} }) }
 })
 
@@ -197,6 +207,7 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     const secrets = createSecretStore(host, randomBytes(32))
     const secret = secrets.create({ name: 'Spools', value: 'real', hosts: ['api.spools.example'] }, { kind: 'host' })
     secrets.assign('filament', secret.id, 'API_KEY', { kind: 'host' })
+    toolHost = host
     mkdirSync(join(dir, 'migrations'))
     writeFileSync(join(dir, 'migrations', '0001_spools.sql'), 'CREATE TABLE spools (color TEXT) STRICT;')
     const workspaceEnvironment = createWorkspaceEnvironment(host, { data, secrets })
@@ -223,6 +234,16 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     expect(bad.status).toBe(400)
     expect(await bad.json()).toMatchObject({ ok: false, error: { message: 'no such column: nope', statement: 0 } })
     expect(existsSync(data.branchDbPath('filament', 'spools'))).toBe(true)
+    // Migrations are read in the VM, and a symlink there is refused.
+    const outside = join(dir, '..', 'outside.sql')
+    writeFileSync(outside, 'CREATE TABLE stolen (a) STRICT;')
+    symlinkSync(outside, join(dir, 'migrations', '0002_link.sql'))
+    const linked = await db('SELECT 1')
+    expect(await linked.json()).toMatchObject({ ok: false, error: { code: 'migration', message: expect.stringContaining('0002_link.sql must be a regular file') } })
+    rmSync(join(dir, 'migrations', '0002_link.sql'))
+    rmSync(outside)
+    expect(sandboxes[0]?.commands.some((c) => c.command.startsWith(TOOL_COMMAND))).toBe(true)
+    expect((await db('SELECT 1')).status).toBe(200)
     expect(existsSync(data.dbPath('filament'))).toBe(false)
     const cli = await options.internal!(new Request('http://hobwork.internal/v1/workspace/status'))
     expect(await cli.text()).toBe('cli')

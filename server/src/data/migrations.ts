@@ -1,5 +1,3 @@
-import { lstatSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { constants, type DatabaseSync } from 'node:sqlite'
 import {
   MIGRATIONS_DIR,
@@ -10,6 +8,9 @@ import {
 } from '../../../packages/sdk/src/db/migrations.ts'
 import { firstKeyword, splitStatements } from '../../../packages/sdk/src/db/sql.ts'
 import { git } from '../git.ts'
+import { ProjectError } from '../projects.ts'
+import { runFileTool } from '../workspace-tools.ts'
+import type { ExecWorkspaceVm } from '../workspaces.ts'
 
 // Read from git rather than a checkout, so a symlink in the repo cannot make
 // the host read a file outside it.
@@ -27,25 +28,16 @@ export async function readMigrationsFromGit(gitDir: string, commit: string): Pro
   return parseMigrations(files)
 }
 
-// For a branch checkout the VM can write to: symlinks are refused rather than
-// followed, for the same reason as above.
-export function readMigrationsFromDir(dir: string): Migration[] {
-  const migrationsDir = join(dir, MIGRATIONS_DIR)
-  let stat
+// For a workspace: the VM lists and reads them (so a symlink in the checkout
+// cannot make the host read outside it), and the host checks the answer.
+export async function readMigrationsFromWorkspace(vm: Pick<ExecWorkspaceVm, 'exec'>): Promise<Migration[]> {
   try {
-    stat = lstatSync(migrationsDir)
-  } catch {
-    return []
+    const { files } = await runFileTool(vm, { op: 'migrations' })
+    return parseMigrations(files)
+  } catch (err) {
+    if (err instanceof ProjectError) throw new MigrationError(err.message)
+    throw err
   }
-  if (!stat.isDirectory()) throw new MigrationError(`${MIGRATIONS_DIR} must be a directory`)
-  const files: { name: string; sql: string }[] = []
-  for (const name of readdirSync(migrationsDir)) {
-    if (!name.endsWith('.sql')) continue
-    const path = join(migrationsDir, name)
-    if (!lstatSync(path).isFile()) throw new MigrationError(`${MIGRATIONS_DIR}/${name} must be a regular file`)
-    files.push({ name, sql: readFileSync(path, 'utf8') })
-  }
-  return parseMigrations(files)
 }
 
 type SchemaObject = { type: string; columns: Set<string> }

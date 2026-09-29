@@ -7,6 +7,7 @@ import type { DbRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import { repoPath, workspaceDir } from '../host.ts'
 import { createProject } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
+import { migrationsOf } from '../test-workspace-vm.ts'
 import { FAKE_PROJECT, seedMain, type Files } from '../test-project.ts'
 import type { RunMigrationVm } from './migration-vm.ts'
 import { createProjectData, type ProjectData } from './project-data.ts'
@@ -173,7 +174,7 @@ test('a branch DB applies pending migrations in the VM and only when something c
   mkdirSync(join(files, 'migrations'), { recursive: true })
   writeFileSync(join(files, 'migrations', '0001_spools.sql'), SPOOLS)
   await data.resetBranch('filament', 'dev')
-  const onBranch = (request: DbRequest) => data.executeOnBranch('filament', 'dev', files, request)
+  const onBranch = (request: DbRequest) => data.executeOnBranch('filament', 'dev', migrationsOf(host, files), request)
   expect(await onBranch(sql('SELECT color FROM spools'))).toMatchObject({ results: [{ rows: [{ color: 'red' }] }] })
   expect(runs).toBe(1)
   writeFileSync(join(files, 'migrations', '0002_grams.sql'), 'ALTER TABLE spools ADD COLUMN grams REAL;')

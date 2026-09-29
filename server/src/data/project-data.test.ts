@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { DbRequest } from '../../../packages/sdk/src/runner/protocol.ts'
@@ -6,6 +6,7 @@ import { repoPath, workspaceDir } from '../host.ts'
 import { createProject } from '../projects.ts'
 import { queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
+import { migrationsOf } from '../test-workspace-vm.ts'
 import { FAKE_PROJECT, seedMain, type Files } from '../test-project.ts'
 import { createDbPool } from './db-pool.ts'
 import { createProjectData, type ProjectData } from './project-data.ts'
@@ -147,6 +148,39 @@ test('the dry run reads migrations from git and refuses symlinks', async () => {
   expect(outcome).toEqual({ status: 'failed', output: 'migrations/0001_link.sql must be a regular file' })
 })
 
+test('a branch DB refuses symlinked, oversized and misnamed migrations from the checkout', async () => {
+  await deployed({ 'migrations/0001_spools.sql': SPOOLS })
+  const files = join(workspaceDir(host, 'filament', 'dev'), 'files')
+  const outside = join(host.dataDir, 'outside.sql')
+  writeFileSync(outside, 'CREATE TABLE secret (a TEXT) STRICT;')
+  mkdirSync(join(files, 'migrations'), { recursive: true })
+  const onBranch = (request: DbRequest) => data.executeOnBranch('filament', 'dev', migrationsOf(host, files), request)
+  const refusal = async (message: string) =>
+    expect(await onBranch(sql('SELECT 1'))).toMatchObject({ ok: false, error: { code: 'migration', message: expect.stringContaining(message) } })
+
+  symlinkSync(outside, join(files, 'migrations', '0001_link.sql'))
+  await refusal('migrations/0001_link.sql must be a regular file')
+  rmSync(join(files, 'migrations', '0001_link.sql'))
+
+  writeFileSync(join(files, 'migrations', 'notes.sql'), 'SELECT 1;')
+  await refusal('migrations/notes.sql must be named like')
+  rmSync(join(files, 'migrations', 'notes.sql'))
+
+  writeFileSync(join(files, 'migrations', '0002_big.sql'), `-- ${'x'.repeat(1024 * 1024)}`)
+  await refusal('migrations/0002_big.sql is over the')
+  rmSync(join(files, 'migrations', '0002_big.sql'))
+
+  rmSync(join(files, 'migrations'), { recursive: true })
+  const elsewhere = join(host.dataDir, 'elsewhere')
+  mkdirSync(elsewhere)
+  writeFileSync(join(elsewhere, '0001_secret.sql'), 'CREATE TABLE secret (a TEXT) STRICT;')
+  symlinkSync(elsewhere, join(files, 'migrations'))
+  await refusal('migrations must be a directory')
+  expect(await data.execute({ project: 'filament', branch: 'dev' }, sql("SELECT name FROM sqlite_schema WHERE name = 'secret'"))).toMatchObject({
+    results: [{ rows: [] }],
+  })
+})
+
 test('slow queries and DB size show up in the log and the status', async () => {
   await data.stop()
   data = createProjectData(host, { slowQueryMs: 0, sizeWarningBytes: 1 })
@@ -180,7 +214,7 @@ test('a branch DB starts as a copy of production and applies the branch migratio
   writeFileSync(join(files, 'migrations', '0001_spools.sql'), SPOOLS)
   await data.resetBranch('filament', 'dev')
 
-  const onBranch = (request: DbRequest) => data.executeOnBranch('filament', 'dev', files, request)
+  const onBranch = (request: DbRequest) => data.executeOnBranch('filament', 'dev', migrationsOf(host, files), request)
   await onBranch(sql("INSERT INTO spools (color) VALUES ('blue')"))
   expect(await onBranch(sql('SELECT color FROM spools ORDER BY id'))).toMatchObject({
     results: [{ rows: [{ color: 'red' }, { color: 'blue' }] }],

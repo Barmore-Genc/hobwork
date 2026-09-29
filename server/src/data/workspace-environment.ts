@@ -8,6 +8,7 @@ import type { Host } from '../host.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { SecretStore } from '../secrets.ts'
 import { dbResponse } from './internal.ts'
+import { readMigrationsFromWorkspace } from './migrations.ts'
 import type { ProjectData } from './project-data.ts'
 
 const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
@@ -22,7 +23,7 @@ export function createWorkspaceEnvironment(
 ): WorkspaceEnvironment {
   const { data, secrets, homeAssistant, devices, ai } = options
   return {
-    async start(workspace) {
+    async start(workspace, vm) {
       const { project, branch } = workspace
       await data?.resetBranch(project, branch)
       return {
@@ -39,7 +40,7 @@ export function createWorkspaceEnvironment(
           if (url.pathname === '/v1/ha') return haResponse(body, { ha: homeAssistant, access: 'read' })
           if (url.pathname === '/v1/devices') return devicesResponse(body, { devices, project, access: 'read' })
           if (!data) return Response.json({ error: 'This Hobwork host has no hob DBs' }, { status: 503 })
-          return dbResponse(body, (dbRequest) => data.executeOnBranch(project, branch, workspace.dir, dbRequest))
+          return dbResponse(body, (dbRequest) => data.executeOnBranch(project, branch, () => readMigrationsFromWorkspace(vm), dbRequest))
         },
         onEgressBlocked: ({ hostname, ip, port }) => {
           try {

@@ -11,6 +11,10 @@ import { walk, type DirEntry } from './walk.ts'
 export const MAX_READ_BYTES = 4 * 1024 * 1024
 export const MAX_WRITE_BYTES = 16 * 1024 * 1024
 const MAX_LIST_ENTRIES = 2000
+export const MAX_MIGRATION_BYTES = 1024 * 1024
+export const MAX_MIGRATIONS_TOTAL_BYTES = 8 * 1024 * 1024
+export const MAX_MIGRATION_FILES = 1000
+const MIGRATION_NAME = /^\d+_[A-Za-z0-9_.-]+\.sql$/
 
 export type FileRequest =
   | { op: 'read'; path: string }
@@ -19,6 +23,7 @@ export type FileRequest =
   | { op: 'delete'; path: string }
   | { op: 'list'; path: string; recursive: boolean }
   | ({ op: 'search'; path: string } & SearchRequest)
+  | { op: 'migrations' }
 
 export type FileResponse =
   | { op: 'read'; binary: false; content: string; size: number }
@@ -28,6 +33,7 @@ export type FileResponse =
   | { op: 'delete' }
   | { op: 'list'; entries: string[]; truncated: boolean }
   | { op: 'search'; matches: string[]; truncated: boolean; filesSearched: number }
+  | { op: 'migrations'; files: { name: string; sql: string }[] }
 
 type Target = { abs: string; rel: string }
 
@@ -211,6 +217,47 @@ async function list(root: string, path: string, recursive: boolean): Promise<Fil
   return { op: 'list', entries, truncated }
 }
 
+// Regular files only: neither the directory nor the files are followed through
+// symlinks, so the host can trust that the content came from the checkout.
+async function readMigrations(root: string): Promise<FileResponse> {
+  const dir = join(root, 'migrations')
+  let stat
+  try {
+    stat = await lstat(dir)
+  } catch (err) {
+    if (isErrno(err, 'ENOENT')) return { op: 'migrations', files: [] }
+    throw err
+  }
+  if (!stat.isDirectory()) throw new ToolError('migrations must be a directory')
+  const names = (await readdir(dir)).filter((name) => name.endsWith('.sql')).sort()
+  if (names.length > MAX_MIGRATION_FILES) throw new ToolError(`migrations has more than ${MAX_MIGRATION_FILES} files`)
+  const files: { name: string; sql: string }[] = []
+  let total = 0
+  for (const name of names) {
+    if (!MIGRATION_NAME.test(name)) throw new ToolError(`migrations/${name} must be named like 0001_add_spools.sql`)
+    let handle
+    try {
+      handle = await open(join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    } catch (err) {
+      if (isErrno(err, 'ELOOP')) throw new ToolError(`migrations/${name} must be a regular file`)
+      throw err
+    }
+    try {
+      const file = await handle.stat()
+      if (!file.isFile()) throw new ToolError(`migrations/${name} must be a regular file`)
+      if (file.size > MAX_MIGRATION_BYTES) {
+        throw new ToolError(`migrations/${name} is over the ${MAX_MIGRATION_BYTES} byte limit for a migration`)
+      }
+      total += file.size
+      if (total > MAX_MIGRATIONS_TOTAL_BYTES) throw new ToolError(`migrations are over ${MAX_MIGRATIONS_TOTAL_BYTES} bytes in total`)
+      files.push({ name, sql: (await handle.readFile()).toString('utf8') })
+    } finally {
+      await handle.close()
+    }
+  }
+  return { op: 'migrations', files }
+}
+
 async function readSmallFile(path: string): Promise<Buffer | undefined> {
   try {
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -271,5 +318,7 @@ export async function runFileRequest(root: string, request: FileRequest): Promis
       return list(root, request.path, request.recursive)
     case 'search':
       return search(root, request)
+    case 'migrations':
+      return readMigrations(root)
   }
 }

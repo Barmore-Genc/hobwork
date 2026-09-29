@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process'
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import type { Migration } from '../../packages/sdk/src/db/migrations.ts'
+import { readMigrationsFromWorkspace } from './data/migrations.ts'
 import { repoPath, type Host } from './host.ts'
 import { INTERNAL_HOST } from './sandbox/sandbox.ts'
 import { TOOL_COMMAND } from './workspace-tools.ts'
@@ -60,6 +62,12 @@ export function hostWorkspaceVm(host: Host, workspace: Workspace): ExecWorkspace
       })
     },
   }
+}
+
+// The migrations of a checkout directory, read the way the host reads them from a workspace VM.
+export function migrationsOf(host: Host, dir: string): () => Promise<Migration[]> {
+  const workspace = { project: 'filament', dir, gitDir: '' } as Workspace
+  return () => readMigrationsFromWorkspace(hostWorkspaceVm(host, workspace))
 }
 
 export function startHostWorkspaceVm(host: Host): StartWorkspaceVm<ExecWorkspaceVm> {

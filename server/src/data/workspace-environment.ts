@@ -1,3 +1,5 @@
+import type { Devices } from '../devices/devices.ts'
+import { devicesResponse } from '../devices/internal.ts'
 import { ENVIRONMENT_PATHS, type WorkspaceEnvironment } from '../guest-vm.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import { haResponse } from '../homeassistant/internal.ts'
@@ -12,12 +14,12 @@ const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 // Workspace VMs get the project's secrets (as placeholders) and their hosts,
 // a DB copied from production when the VM starts, reachable at
 // http://hobwork.internal/v1/db like in the runtime, and read-only Home
-// Assistant access at /v1/ha.
+// Assistant access at /v1/ha, and the device list at /v1/devices.
 export function createWorkspaceEnvironment(
   host: Host,
-  options: { data?: ProjectData; secrets?: SecretStore; homeAssistant?: HomeAssistant },
+  options: { data?: ProjectData; secrets?: SecretStore; homeAssistant?: HomeAssistant; devices?: Devices },
 ): WorkspaceEnvironment {
-  const { data, secrets, homeAssistant } = options
+  const { data, secrets, homeAssistant, devices } = options
   return {
     async start(workspace) {
       const { project, branch } = workspace
@@ -33,6 +35,7 @@ export function createWorkspaceEnvironment(
           const body = await request.text()
           if (body.length > MAX_INTERNAL_BODY_BYTES) return Response.json({ error: 'Request body too large' }, { status: 413 })
           if (url.pathname === '/v1/ha') return haResponse(body, { ha: homeAssistant, access: 'read' })
+          if (url.pathname === '/v1/devices') return devicesResponse(body, { devices, project, access: 'read' })
           if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
           return dbResponse(body, (dbRequest) => data.executeOnBranch(project, branch, workspace.dir, dbRequest))
         },

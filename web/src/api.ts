@@ -38,7 +38,12 @@ export type EntryPoints = {
   routes: { key: string; lastRun: LastRun }[]
   crons: { name: string; schedule: string; nextRun: string | null; lastRun: LastRun }[]
   webhooks: { name: string; tokenCreatedAt: string | null; lastRun: LastRun }[]
-  triggers: { name: string; homeassistant: Record<string, unknown> | null; lastRun: LastRun }[]
+  triggers: {
+    name: string
+    homeassistant: Record<string, unknown> | null
+    device: { capability: string; event: string } | null
+    lastRun: LastRun
+  }[]
 }
 
 export type DbStatus = {
@@ -241,6 +246,24 @@ export type ConnectRequest = {
   agentName: string
 }
 
+export type Device = {
+  id: number
+  // What projects use to reach it.
+  name: string
+  platform: 'ios' | 'macos'
+  owner: string
+  capabilities: string[]
+  connected: boolean
+  lastSeenAt: string | null
+  appVersion: string | null
+  push: boolean
+  createdAt: string
+  // False when the owner can no longer sign in to Hobwork.
+  ownerAllowed: boolean
+}
+
+export type PairingRequest = { displayName: string; platform: 'ios' | 'macos'; name: string }
+
 export type CreatedToken = { agent: { id: number; name: string }; token: string }
 
 export type HomeAssistantSettings = {
@@ -373,6 +396,14 @@ export const api = {
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, { agentName }),
   denyConnect: (id: string) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/deny`),
+  devices: () => request<{ devices: Device[]; push: boolean }>('GET', '/api/devices'),
+  renameDevice: (id: number, name: string) => request<Device>('PATCH', `/api/devices/${id}`, { name }),
+  revokeDevice: (id: number) => request<void>('POST', `/api/devices/${id}/revoke`),
+  pairingRequest: (query: string) => request<PairingRequest>('GET', `/api/devices/pairing?${query}`),
+  approvePairing: (query: Record<string, string>, name: string) =>
+    request<{ redirectTo: string }>('POST', '/api/devices/pairing/approve', { request: query, name }),
+  denyPairing: (query: Record<string, string>) =>
+    request<{ redirectTo: string }>('POST', '/api/devices/pairing/deny', { request: query }),
   homeAssistant: () => request<HomeAssistantSettings>('GET', '/api/settings/homeassistant'),
   saveHomeAssistant: (settings: { url: string; token?: string }) =>
     request<HomeAssistantSettings>('PUT', '/api/settings/homeassistant', settings),

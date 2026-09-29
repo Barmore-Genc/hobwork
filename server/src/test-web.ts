@@ -8,6 +8,7 @@ import { signInOidcUser, type User } from './auth/users.ts'
 import { createApp, type WebOptions } from './app.ts'
 import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
+import type { Devices } from './devices/devices.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import type { HomeAssistantSettings } from './homeassistant/settings.ts'
 import type { Host } from './host.ts'
@@ -42,6 +43,7 @@ export async function startTestApp(
     workspaces?: WorkspaceManager<ExecWorkspaceVm>
     homeAssistant?: HomeAssistant
     homeAssistantSettings?: HomeAssistantSettings
+    devices?: Devices
   } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
@@ -54,6 +56,7 @@ export async function startTestApp(
     runtime: options.runtime,
     data: options.data,
     backups: options.backups,
+    devices: options.devices,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },

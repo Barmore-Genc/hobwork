@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
@@ -15,6 +16,9 @@ import { createBackupRoutes } from './backup/routes.ts'
 import { defaultAppsUrl, type Allowlist, type OidcConfig } from './config.ts'
 import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
+import { createDevices, type Devices } from './devices/devices.ts'
+import { createDeviceRoutes, deviceUserRoutes } from './devices/routes.ts'
+import { createDeviceSockets } from './devices/socket.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import type { HomeAssistantSettings } from './homeassistant/settings.ts'
@@ -54,6 +58,7 @@ export function createApp(
     data?: ProjectData
     secrets?: SecretStore
     backups?: Backups
+    devices?: Devices
     web?: WebOptions
   } = {},
 ): Server {
@@ -61,6 +66,7 @@ export function createApp(
   const delivery = options.delivery ?? createDelivery(host, { workspaces })
   const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
   const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
+  const devices = options.devices ?? createDevices({ host, allowlist: web.allowlist })
   const oauth = createOAuthServer({
     db: host.db,
     publicUrl: web.publicUrl,
@@ -82,6 +88,7 @@ export function createApp(
     runtime: options.runtime,
     data: options.data,
     secrets: options.secrets,
+    devices,
   })
 
   const handleAuth = createAuthRoutes({
@@ -103,8 +110,11 @@ export function createApp(
     secrets: options.secrets,
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
+  const handleDevices = createDeviceRoutes({ db: host.db, auth, allowlist: web.allowlist, publicUrl: web.publicUrl, devices })
+  const deviceSockets = createDeviceSockets({ db: host.db, allowlist: web.allowlist, devices })
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
+    ...deviceUserRoutes({ db: host.db, devices }),
     ...projectDeletionRoutes({ host, workspaces, delivery, runtime: options.runtime, data: options.data }),
     ...homeAssistantSettingsRoutes({
       host,
@@ -136,7 +146,7 @@ export function createApp(
     })
   const handleStatic = createStaticRoutes({ webDist: web.webDist })
 
-  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (apps.isAppRequest(req)) return apps.handle(req, res)
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
 
@@ -153,6 +163,7 @@ export function createApp(
     try {
       if (await oauth.handle(req, res, pathname, new URLSearchParams(search))) return
       if (await apps.handleHandoff(req, res, pathname, new URLSearchParams(search))) return
+      if (await handleDevices(req, res, pathname, new URLSearchParams(search))) return
       if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
       if (await handleBackups(req, res, pathname)) return
       if (await handleUserApi(req, res, pathname, new URLSearchParams(search))) return
@@ -165,4 +176,9 @@ export function createApp(
       else res.destroy()
     }
   })
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (apps.isAppRequest(req) || !deviceSockets.handleUpgrade(req, socket, head)) socket.destroy()
+  })
+  server.on('close', () => deviceSockets.close())
+  return server
 }

@@ -13,6 +13,8 @@ import { dbResponse } from '../data/internal.ts'
 import { readMigrationsFromGit } from '../data/migrations.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Deployment } from '../delivery.ts'
+import type { Devices } from '../devices/devices.ts'
+import { devicesResponse } from '../devices/internal.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import { getBranchHaApproval } from '../homeassistant/approvals.ts'
 import { haResponse, type HaAccess } from '../homeassistant/internal.ts'
@@ -56,7 +58,7 @@ const MAX_LINES_PER_INVOCATION = 1000
 const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 const OUTPUT_TAIL_LINES = 30
-const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha'])
+const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha', 'POST /v1/devices'])
 // Previews are for trying a branch out, so their VMs go away sooner.
 const PREVIEW_IDLE_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -72,6 +74,8 @@ export type RuntimeOptions = {
   triggers?: TriggerRegistry
   // Answers ctx.ha calls from handlers.
   homeAssistant?: HomeAssistant
+  // Answers ctx.device and ctx.devices calls from handlers.
+  devices?: Devices
   // Project DBs for handlers (ctx.db) and migrations on deploy.
   data?: ProjectData
   // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
@@ -339,6 +343,18 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       return haResponse(body, {
         ha: options.homeAssistant,
         access,
+        log: ({ invocation, level, message }) => {
+          const lines = invocationLines(project, instance())
+          lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
+          appendLogs(host, lines.entries)
+        },
+      })
+    }
+    if (route === 'POST /v1/devices') {
+      return devicesResponse(body, {
+        devices: options.devices,
+        project,
+        access: branch === undefined ? 'full' : 'read',
         log: ({ invocation, level, message }) => {
           const lines = invocationLines(project, instance())
           lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })

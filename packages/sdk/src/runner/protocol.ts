@@ -94,6 +94,17 @@ export type HaRequest = (
 
 export type HaResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
 
+// POST http://hobwork.internal/v1/devices
+export type DeviceRequest = (
+  | { action: 'list' }
+  | { action: 'call'; device: string; capability: string; method: string; args?: unknown }
+) & {
+  // Set by the runner inside an invocation, so the call is logged with it.
+  invocation?: number
+}
+
+export type DeviceResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
+
 // Where `pnpm build` puts a handler, relative to the build's root (the
 // project's dist/). The template's vite.config.ts writes the same layout.
 export function handlerModulePath(handler: string): string {

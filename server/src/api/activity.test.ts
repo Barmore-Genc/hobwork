@@ -201,7 +201,7 @@ test('the project page shows entry points, reachable hosts, the DB and the app',
     ],
     webhooks: [{ name: 'scanned', tokenCreatedAt: null, lastRun: null }],
     triggers: [
-      { name: 'desk-button', homeassistant: { trigger: 'state', entity_id: 'input_button.desk' }, lastRun: null },
+      { name: 'desk-button', homeassistant: { trigger: 'state', entity_id: 'input_button.desk' }, device: null, lastRun: null },
     ],
   })
   const next = new Date(body.entryPoints.crons[0].nextRun)

@@ -81,8 +81,8 @@ export function createAuth(options: { db: DatabaseSync; publicUrl: string; allow
       return !error
     },
 
-    signIn(res: ServerResponse, user: User) {
-      setCookie(res, cookieName, createSession(db, user.id), { maxAge: SESSION_TTL_SECONDS, secure })
+    signIn(res: ServerResponse, user: User, options: { deviceId?: number } = {}) {
+      setCookie(res, cookieName, createSession(db, user.id, Date.now(), options.deviceId), { maxAge: SESSION_TTL_SECONDS, secure })
     },
 
     signOut(req: IncomingMessage, res: ServerResponse) {

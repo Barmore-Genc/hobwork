@@ -5,7 +5,7 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 ## Layout
 
 - `hobwork.json`: every entry point (routes, crons, webhooks, triggers), egress hosts and settings. Hobwork only runs what is declared here.
-- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch`, `ctx.log`, `ctx.db`, `ctx.secrets` and `ctx.ha`.
+- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch`, `ctx.log`, `ctx.db`, `ctx.secrets`, `ctx.ha`, `ctx.device(name)` and `ctx.devices()`.
 - Routes and webhooks answer with what the handler returns: a `Response` is sent as is, any other value as JSON, `undefined` as 204. A thrown error answers 500 and is recorded with its stack trace. Route `"GET /spools/:id"` answers `GET /api/spools/42` on the project's app origin (and `/p/<project>/api/spools/42` on the Hobwork host, with an agent token). A webhook is called at a secret URL that `rotate_webhook_token` returns.
 - Crons use 5-field cron syntax in the Hobwork host's time zone.
 - `ui/` and `index.html`: the dashboard (React + Tailwind), served at the root of the project's own origin (`https://<project>.<apps domain>/`) to signed-in household members and shown inside the Hobwork app. Call the project's routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`), which requests `/api/...` on that origin with the session and the CSRF header that writes need. Every path without a file extension serves `index.html`, so client-side routes work. Paths under `/_hobwork/` are reserved. The page cannot call Hobwork's own API. Style with the theme utilities (`bg-bg`, `bg-surface`, `bg-surface-raised`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-on-accent`, `text-success`, `text-warning`, `text-danger`, `rounded-sm|md|lg`, `font-display`) rather than fixed colors, so the dashboard matches Hobwork and follows light and dark mode without `dark:` variants.
@@ -81,6 +81,31 @@ const { response } = await ctx.ha.callService('weather', 'get_forecasts', { type
 
 - Tests: `createTestContext({ ha: { callService: vi.fn() } })`. Methods a test does not stub reject.
 - The workspace only reads states: `hobwork ha state <entity_id>` and `hobwork ha states [domain]`. Service calls and events only run from deployed handlers, so try them with `invoke` after `merge`.
+
+## Devices
+
+People pair their phones and computers with Hobwork through the Hobwork app. `list_devices` shows each device's name, owner, capabilities and whether it is connected. Handlers send notifications by device name:
+
+```ts
+const { id } = await ctx.device('kaan-iphone').notifications.send({
+  title: 'Filament low',
+  body: 'Spool 4 has 80 g left',
+  actions: [{ id: 'order', title: 'Order more' }],
+  data: { spool: 4 },
+})
+const devices = await ctx.devices() // [{ name, platform, owner, capabilities, connected, lastSeenAt }]
+```
+
+- A device that is not connected gets the notification by push. Failures (unknown device, not reachable) throw a `DeviceError` from `@hobwork/sdk` with a `code`. Sends are logged with the invocation.
+- Tapping an action runs the project's triggers declared with a `device` block, with a `NotificationActionEvent` as `ctx.payload` (`{ device, notificationId, action, data }`, `data` being what the notification was sent with):
+
+  ```json
+  "triggers": {
+    "order-tapped": { "device": { "capability": "notifications", "event": "action" }, "handler": "src/order-tapped.ts" }
+  }
+  ```
+
+- Only deployed handlers reach devices. In the workspace and in branch previews, `ctx.devices()` works and sends fail with `read_only`, so try a notification with `invoke` after `merge`. In tests: `createTestContext({ device: () => ({ notifications: { send: vi.fn() } }) })`.
 
 ## LLMs (OpenRouter)
 

@@ -10,6 +10,11 @@ test('accepts the architecture.md example', () => {
   expect(validate(example), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts a device trigger for notification actions', () => {
+  const config = { triggers: { snooze: { device: { capability: 'notifications', event: 'action' }, handler: 'src/snooze.ts' } } }
+  expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -20,7 +25,12 @@ test.each([
   ['malformed cron schedule', { crons: { a: { schedule: 'daily', handler: 'src/a.ts' } } }],
   ['webhook without handler', { webhooks: { a: {} } }],
   ['route key without method', { routes: { '/spools': { handler: 'src/a.ts' } } }],
-  ['trigger without homeassistant', { triggers: { a: { handler: 'src/a.ts' } } }],
+  ['trigger without homeassistant or device', { triggers: { a: { handler: 'src/a.ts' } } }],
+  [
+    'trigger with homeassistant and device',
+    { triggers: { a: { homeassistant: {}, device: { capability: 'notifications', event: 'action' }, handler: 'src/a.ts' } } },
+  ],
+  ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
   ['bad idleTimeout', { idleTimeout: 'soon' }],
 ])('rejects %s', (_, config) => {

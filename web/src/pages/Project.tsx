@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { api, ApiError, type LastRun, type ProjectDetail, type Version } from '../api.ts'
+import { api, ApiError, type EntryPoints, type LastRun, type ProjectDetail, type Version } from '../api.ts'
 import { bytes, dayTime, exactTime, shortDate, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice } from '../ui.tsx'
@@ -95,7 +95,9 @@ function EntryRow({ children, aside }: { children: ReactNode; aside: ReactNode }
   )
 }
 
-function triggerSummary(definition: Record<string, unknown> | null): string {
+function triggerSummary(trigger: EntryPoints['triggers'][number]): string {
+  if (trigger.device?.capability === 'notifications') return 'When someone taps a button on a notification from this project'
+  const definition = trigger.homeassistant
   if (!definition) return 'From another integration'
   const words = (value: unknown) => String(value).replaceAll('_', ' ')
   const kind = String(definition.trigger ?? definition.platform ?? '')
@@ -197,11 +199,11 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
             </EntryGroup>
           )}
           {entries.triggers.length > 0 && (
-            <EntryGroup title="Home Assistant" description="Run when something happens at home.">
+            <EntryGroup title="Triggers" description="Run when something happens at home or on your devices.">
               {entries.triggers.map((trigger) => (
                 <EntryRow key={trigger.name} aside={<LastRunLink project={project.name} run={trigger.lastRun} />}>
                   <p className="font-semibold break-words">{trigger.name}</p>
-                  <p className="text-sm break-words text-muted">{triggerSummary(trigger.homeassistant)}</p>
+                  <p className="text-sm break-words text-muted">{triggerSummary(trigger)}</p>
                 </EntryRow>
               ))}
             </EntryGroup>

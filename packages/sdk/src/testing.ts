@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
+import type { Device } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 import type { Context, Db, Logger } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
@@ -39,14 +40,27 @@ function unstubbedHa(): HomeAssistant {
   return { callService: reject('callService'), getState: reject('getState'), getStates: reject('getStates'), fireEvent: reject('fireEvent') }
 }
 
+function unstubbedDevice(name: string): Device {
+  return {
+    notifications: {
+      send: () =>
+        Promise.reject(
+          new Error(
+            `ctx.device('${name}').notifications.send is not stubbed in this test. Pass device: (name) => ({ notifications: { send } }) to createTestContext`,
+          ),
+        ),
+    },
+  }
+}
+
 export type TestContextOverrides = Omit<Partial<Context>, 'ha'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
 }
 
-// A handler context for tests. `db` defaults to a fresh test DB; `fetch` and
-// `ha` reject until a test stubs them, since tests should not reach the network
-// or change the home.
+// A handler context for tests. `db` defaults to a fresh test DB; `fetch`, `ha`
+// and devices reject until a test stubs them, since tests should not reach the
+// network, change the home or notify anyone.
 export function createTestContext(overrides: TestContextOverrides = {}): Context {
   return {
     invocation: { id: 1, kind: 'route', name: 'test', manual: true },
@@ -54,6 +68,8 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
     fetch: () => Promise.reject(new Error('ctx.fetch is not stubbed in this test. Pass fetch to createTestContext')),
     log: silent,
     secrets: {},
+    device: unstubbedDevice,
+    devices: () => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')),
     ...overrides,
     ha: { ...unstubbedHa(), ...overrides.ha },
     db: overrides.db ?? createTestDb(),

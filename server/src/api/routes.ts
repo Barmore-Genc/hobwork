@@ -192,6 +192,7 @@ export function createApiRoutes(options: {
       triggers: Object.entries(config.triggers).map(([name, entry]) => ({
         name,
         homeassistant: entry.homeassistant ?? null,
+        device: entry.device ?? null,
         lastRun: lastRun('trigger', name),
       })),
     }

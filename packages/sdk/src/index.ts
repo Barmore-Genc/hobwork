@@ -1,6 +1,9 @@
+import type { Device, DeviceInfo } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 
+export type * from './devices.ts'
 export type * from './homeassistant.ts'
+export { DeviceError } from './runner/device-client.ts'
 export { HomeAssistantError } from './runner/ha-client.ts'
 export * from './openrouter.ts'
 
@@ -25,8 +28,8 @@ export type Context = {
   request?: Request
   // Values of `:name` segments in the route path.
   params: Record<string, string>
-  // The event for triggers (Home Assistant trigger variables), or what a manual
-  // invocation passed.
+  // The event for triggers (Home Assistant trigger variables, a device event
+  // such as NotificationActionEvent), or what a manual invocation passed.
   payload?: unknown
   // Outgoing HTTP. Only hosts listed in `egress` in hobwork.json are reachable.
   fetch: typeof fetch
@@ -36,6 +39,11 @@ export type Context = {
   db: Db
   // Home Assistant service calls and states, through the Hobwork host.
   ha: HomeAssistant
+  // A paired phone or computer by name, e.g. ctx.device('kaan-iphone').notifications.send(...).
+  // Calls go through the Hobwork host.
+  device(name: string): Device
+  // Paired devices with their capabilities and whether they are connected.
+  devices(): Promise<DeviceInfo[]>
   // Secret name -> placeholder. Send the placeholder in a request header to a
   // host the secret is bound to, and Hobwork replaces it with the real value on
   // the way out. The real value never reaches handler code.

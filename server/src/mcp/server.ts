@@ -4,6 +4,7 @@ import * as z from 'zod'
 import type { Agent } from '../agents.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
+import type { Devices } from '../devices/devices.ts'
 import {
   checkoutDirectory,
   deleteCheckoutFile,
@@ -22,6 +23,7 @@ import { createBranch, diffBranch, listBranches, log, readFileAtRef } from '../r
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { runBash } from './bash.ts'
 import { registerDeliveryTools } from './delivery.ts'
+import { registerDeviceTools } from './devices.ts'
 import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 import { registerRuntimeTools } from './runtime.ts'
@@ -36,6 +38,7 @@ export type McpContext = {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  devices?: Devices
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
@@ -107,6 +110,7 @@ export function createMcpServer({
   runtime,
   data,
   secrets,
+  devices,
 }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
@@ -448,6 +452,7 @@ export function createMcpServer({
   if (homeAssistant) registerHomeAssistantTools(server, homeAssistant)
   registerRuntimeTools(server, { host, runtime })
   registerSecretTools(server, { host, secrets, agent })
+  if (devices) registerDeviceTools(server, devices)
 
   return server
 }

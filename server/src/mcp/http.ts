@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { verifyAgentToken, type Agent } from '../agents.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
+import type { Devices } from '../devices/devices.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
@@ -52,6 +53,7 @@ export function createMcpHandler(options: {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  devices?: Devices
 }) {
   const authenticate = options.authenticate ?? bearerTokenAuth(options.host)
 
@@ -80,6 +82,7 @@ export function createMcpHandler(options: {
       runtime: options.runtime,
       data: options.data,
       secrets: options.secrets,
+      devices: options.devices,
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {

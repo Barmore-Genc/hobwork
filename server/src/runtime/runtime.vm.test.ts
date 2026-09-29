@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createDelivery, type Delivery } from '../delivery.ts'
+import { createDevices } from '../devices/devices.ts'
 import { pipelineVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
@@ -31,7 +32,9 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
     host = createTestHost()
     const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
     let delivery: Delivery | undefined
+    const devices = createDevices({ host })
     runtime = createRuntime(host, {
+      devices,
       createSandbox: vmOptions.createSandbox,
       image: vmOptions.image,
       startBuildVm: pipelineVms.start,
@@ -42,6 +45,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
       workspaces,
       delivery,
       runtime,
+      devices,
       web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -114,20 +118,29 @@ export default ((ctx) => {
 }) satisfies Handler
 `,
     })
-    // The SDK in the image has ctx.ha and the OpenRouter helper, and its errors
-    // pass instanceof in the handler bundle although the runner threw them.
+    // The SDK in the image has ctx.ha, ctx.device and the OpenRouter helper,
+    // and its errors pass instanceof in the handler bundle although the runner
+    // threw them.
     await ok('write_file', {
       ...p,
       path: 'src/lights.ts',
-      content: `import { HomeAssistantError, openrouter, type RequestHandler } from '@hobwork/sdk'
+      content: `import { DeviceError, HomeAssistantError, openrouter, type RequestHandler } from '@hobwork/sdk'
 
 export default (async (ctx) => {
   const ai = typeof openrouter(ctx).json
+  const devices = await ctx.devices()
+  let device: string | undefined
+  try {
+    await ctx.device('kaan-iphone').notifications.send({ title: 'Lights' })
+  } catch (err) {
+    if (err instanceof DeviceError) device = err.code
+    else throw err
+  }
   try {
     await ctx.ha.getState('light.kitchen')
-    return { ai }
+    return { ai, devices, device }
   } catch (err) {
-    if (err instanceof HomeAssistantError) return { ai, code: err.code }
+    if (err instanceof HomeAssistantError) return { ai, devices, device, code: err.code }
     throw err
   }
 }) satisfies RequestHandler
@@ -142,7 +155,7 @@ export default (async (ctx) => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ message: expect.stringMatching(/^Good (morning|afternoon|evening)$/) })
     expect((await fetch(`${base}/p/filament/api/greeting`)).status).toBe(401)
-    expect(await (await api('/lights')).json()).toEqual({ ai: 'function', code: 'not_configured' })
+    expect(await (await api('/lights')).json()).toEqual({ ai: 'function', devices: [], device: 'unknown_device', code: 'not_configured' })
   })
 
   test('the template UI opens on its app origin through the sign-in redirects and calls its route', async () => {

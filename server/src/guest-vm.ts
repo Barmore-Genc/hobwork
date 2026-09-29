@@ -25,7 +25,7 @@ const INSTALL_CLI = [
 
 // Answered by the workspace environment (the branch DB and Home Assistant);
 // everything else on hobwork.internal goes to the CLI API.
-export const ENVIRONMENT_PATHS = new Set(['/v1/db', '/v1/ha'])
+export const ENVIRONMENT_PATHS = new Set(['/v1/db', '/v1/ha', '/v1/devices'])
 
 const VM_RESOURCES = { memory: '2G', cpus: 4, diskSize: '4G' }
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000

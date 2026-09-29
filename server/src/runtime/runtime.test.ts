@@ -6,6 +6,10 @@ import { createApp } from '../app.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
+import { createDevices } from '../devices/devices.ts'
+import type { DeviceConnection } from '../devices/registry.ts'
+import { createPairingCode, exchangePairingCode, recordHello } from '../devices/store.ts'
+import { pkce } from '../devices/test-devices.ts'
 import { createHomeAssistant } from '../homeassistant/client.ts'
 import { startFakeHomeAssistant } from '../homeassistant/fake-ha.ts'
 import { git } from '../git.ts'
@@ -530,4 +534,60 @@ test('handlers call Home Assistant through the host, logged with their invocatio
     ha.stop()
     await fake.close()
   }
+})
+
+test('handlers notify devices, and a tapped notification action runs the device trigger', async () => {
+  const devices = createDevices({
+    host,
+    triggers: async (project) => (await runtime.config(project)).config.triggers,
+    invokeTrigger: (project, name, payload) => runtime.invoke(project, { kind: 'trigger', name, manual: false, payload }),
+  })
+  start({ devices })
+  const { user } = signedIn(host)
+  const { verifier, challenge } = pkce()
+  const code = createPairingCode(host.db, { userId: user.id, name: 'kaan-iphone', platform: 'ios', codeChallenge: challenge })
+  const { device } = exchangePairingCode(host.db, code, verifier)
+  recordHello(host.db, device.id, { appVersion: '1.0', capabilities: ['notifications'] })
+  // Stands in for the app's socket and shows every notification.
+  const shown: unknown[] = []
+  const app: DeviceConnection = {
+    deviceId: device.id,
+    send(message) {
+      if (message.type !== 'call') return
+      shown.push(message.args)
+      queueMicrotask(() => devices.registry.result(app, { id: message.id, ok: true, value: null }))
+    },
+    close() {},
+  }
+  devices.registry.attach(app)
+
+  await deploy(
+    projectFiles({
+      hobwork: { ...HOBWORK_JSON, triggers: { tapped: { device: { capability: 'notifications', event: 'action' }, handler: 'src/tapped.ts' } } },
+      handlers: {
+        'handlers/spools.js': `export default async (ctx) => {
+          const sent = await ctx.device('kaan-iphone').notifications.send({ title: 'Spool low', actions: [{ id: 'order', title: 'Order' }], data: { spool: 4 } })
+          return { sent, devices: (await ctx.devices()).map((d) => [d.name, d.connected]) }
+        }`,
+        'handlers/tapped.js': `export default async (ctx) => { console.log(JSON.stringify(ctx.payload)) }`,
+      },
+    }),
+  )
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  const body = bodyOf(outcome) as { sent: { id: string; delivery: string }; devices: unknown[] }
+  expect(body).toEqual({ sent: { id: expect.any(String), delivery: 'app' }, devices: [['kaan-iphone', true]] })
+  expect(shown).toEqual([{ id: body.sent.id, project: 'filament', title: 'Spool low', actions: [{ id: 'order', title: 'Order' }] }])
+  expect(queryLogs(host, { project: 'filament', invocationId: outcome.invocationId, limit: 10 }).map((l) => l.message)).toContain(
+    'Device kaan-iphone: sent notification "Spool low" (to the app)',
+  )
+
+  await devices.handleEvent(device.id, { capability: 'notifications', name: 'action', data: { id: body.sent.id, action: 'order' } })
+  const runs = () => listInvocations(host, { project: 'filament', kind: 'trigger', limit: 5 })
+  await until(() => runs()[0]?.status === 'ok')
+  const [run] = runs()
+  expect(run).toMatchObject({ name: 'tapped', status: 'ok', manual: false })
+  const logged = queryLogs(host, { project: 'filament', invocationId: run!.id, limit: 5 }).map((l) => JSON.parse(l.message) as unknown)
+  expect(logged).toEqual([
+    { device: 'kaan-iphone', capability: 'notifications', event: 'action', notificationId: body.sent.id, action: 'order', data: { spool: 4 } },
+  ])
 })

@@ -11,13 +11,13 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }
 
-function page(res: ServerResponse, status: number, heading: string, body: string) {
+export function page(res: ServerResponse, status: number, heading: string, body: string, title = 'NFC tag') {
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NFC tag · Hobwork</title>
+<title>${escapeHtml(title)} · Hobwork</title>
 <link rel="stylesheet" href="/theme/theme.css">
 <style>
 body { margin: 0; background: var(--hw-bg); color: var(--hw-fg); font-family: var(--hw-font-sans); }
@@ -55,7 +55,7 @@ export function createNfcPage(options: { db: DatabaseSync; auth: Auth; publicUrl
   function sameSite(req: IncomingMessage): boolean {
     const site = req.headers['sec-fetch-site']
     const origin = req.headers.origin
-    return (site === undefined || site === 'none' || site === 'same-origin') && (origin === undefined || origin === publicUrl)
+    return (site === 'none' || site === 'same-origin') && (origin === undefined || origin === publicUrl)
   }
 
   return async (req: IncomingMessage, res: ServerResponse, tag: string, search: URLSearchParams): Promise<void> => {
@@ -84,7 +84,7 @@ export function createNfcPage(options: { db: DatabaseSync; auth: Auth; publicUrl
       return
     }
     // A page on another site could send the person here; the scan then waits
-    // for a tap.
+    // for a tap. A request without Sec-Fetch-Site could be from any site.
     if (!sameSite(req) || req.method === 'HEAD') {
       page(
         res,

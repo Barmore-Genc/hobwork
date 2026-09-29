@@ -8,7 +8,16 @@ export const PAIRING_CODE_TTL_MS = 5 * 60 * 1000
 export const WEB_SESSION_LINK_TTL_MS = 60 * 1000
 export const NOTIFICATION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_DEVICE_NAME = 40
+// Custom-scheme redirect of apps that were not built with the host's domain in
+// Associated Domains.
 export const PAIRING_REDIRECT_URI = 'hobwork://paired'
+export const PAIRED_PATH = '/devices/paired'
+
+// A universal link the app claims, so no other app can catch the pairing code
+// the way it could with a custom scheme.
+export function pairedUniversalLink(publicUrl: string): string {
+  return `${publicUrl}${PAIRED_PATH}`
+}
 
 export const PLATFORMS = ['ios', 'macos'] as const
 export type Platform = (typeof PLATFORMS)[number]

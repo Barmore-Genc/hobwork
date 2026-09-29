@@ -39,6 +39,18 @@ test('public URL defaults to localhost and must be an origin', () => {
   expect(() => loadConfig({ HOBWORK_PUBLIC_URL: 'hob.example.com' })).toThrow('HOBWORK_PUBLIC_URL')
 })
 
+test('an http public URL must be loopback', () => {
+  for (const url of ['http://localhost:7420', 'http://hobwork.localhost:5173', 'http://127.0.0.1:7420', 'http://127.1.2.3', 'http://[::1]:7420']) {
+    expect(loadConfig({ HOBWORK_PUBLIC_URL: url }).publicUrl).toBe(new URL(url).origin)
+  }
+  for (const url of ['http://hob.example.com', 'http://192.168.1.5:7420', 'http://10.0.0.2', 'http://localhost.example.com', 'http://[2001:db8::1]']) {
+    expect(() => loadConfig({ HOBWORK_PUBLIC_URL: url })).toThrow(/HOBWORK_PUBLIC_URL must use https unless it is a loopback address/)
+  }
+  expect(() =>
+    loadConfig({ HOBWORK_PUBLIC_URL: 'https://hob.example.com', HOBWORK_APPS_URL: 'http://apps.hob.example.com' }),
+  ).toThrow('HOBWORK_APPS_URL must use https')
+})
+
 test('OIDC settings and allowlist', () => {
   expect(loadConfig({}).oidc).toBeUndefined()
   expect(loadConfig({}).allowlist).toEqual({ emails: [], subjects: [] })

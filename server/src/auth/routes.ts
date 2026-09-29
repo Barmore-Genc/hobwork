@@ -41,6 +41,14 @@ export function createAuthRoutes(options: {
       return true
     }
     if (pathname === LINK_PATH && req.method === 'GET') {
+      // A link followed from a page would let that page sign the browser in to
+      // the link author's account (login CSRF). Typed links and links from
+      // mail or chat apps are sent as "none".
+      const site = req.headers['sec-fetch-site']
+      if (site !== undefined && site !== 'none') {
+        json(res, 403, { error: 'Open this link from your address bar or a message, not from another page' })
+        return true
+      }
       const user = useSignInLink(db, search.get('token') ?? '')
       if (!user || !isAllowed(db, allowlist, user)) {
         redirect(res, '/login?error=link_expired')

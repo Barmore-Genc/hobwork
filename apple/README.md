@@ -44,7 +44,7 @@ The macOS targets use the `-macOS` files (`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`)
 Two build settings pick the iOS entitlements files:
 
 - `HOBWORK_FAMILY_CONTROLS` (default `YES`): `NO` signs every target without Family Controls (the `-NoFamilyControls` files). The development entitlement works for Xcode builds; TestFlight and the App Store need the distribution entitlement, which Apple approves on request. Until then `just testflight` archives with `NO`, and that build does not offer Screen Time.
-- `HOBWORK_APPLINKS_HOST` (default empty): a host name such as `hobwork.example.com` adds `applinks:<host>` (the `-AppLinks` files), so NFC tags with `https://<host>/nfc/<tag>` open the app. The host serves the matching `apple-app-site-association`.
+- `HOBWORK_APPLINKS_HOST` (default empty): a host name such as `hobwork.example.com` adds `applinks:<host>` and `webcredentials:<host>` (the `-AppLinks` files), so NFC tags with `https://<host>/nfc/<tag>` open the app and pairing with that host finishes on the universal link `https://<host>/devices/paired`, which only this app can claim. Pairing with any other host falls back to `hobwork://paired`. The host serves the matching `apple-app-site-association`.
 
 For example `xcodebuild ... HOBWORK_APPLINKS_HOST=hobwork.example.com`.
 

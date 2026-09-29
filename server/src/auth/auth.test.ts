@@ -107,3 +107,18 @@ test('CSRF check on state-changing requests', () => {
   expect(check({ [CSRF_HEADER]: '1', 'sec-fetch-site': 'cross-site' })).toBe(403)
   expect(check({ [CSRF_HEADER]: '1', 'sec-fetch-site': 'same-site' })).toBe(403)
 })
+
+test('one identity per issuer: another subject with the same email is refused', () => {
+  const first = signInOidcUser(host.db, allowlist, kaan)!
+  const other = signInOidcUser(host.db, allowlist, { ...kaan, subject: 'sub-impostor' })
+  expect(other).toBeUndefined()
+  expect(host.db.prepare('SELECT count(*) AS n FROM users').get()?.n).toBe(1)
+  expect(host.db.prepare('SELECT count(*) AS n FROM user_identities').get()?.n).toBe(1)
+  expect(signInOidcUser(host.db, allowlist, kaan)?.id).toBe(first.id)
+})
+
+test('an issuer that has not been linked yet can still join a user by verified email', () => {
+  const first = signInOidcUser(host.db, allowlist, kaan)!
+  const second = signInOidcUser(host.db, allowlist, { ...kaan, issuer: 'https://other.example.com', subject: 'other-sub' })
+  expect(second?.id).toBe(first.id)
+})

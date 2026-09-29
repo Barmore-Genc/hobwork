@@ -476,7 +476,10 @@ test('the host serves the apple-app-site-association file for tag links', async 
   const res = await fetch(`${app.base}/.well-known/apple-app-site-association`)
   expect(res.headers.get('content-type')).toContain('application/json')
   expect(await res.json()).toEqual({
-    applinks: { details: [{ appIDs: ['63QQLP356Q.dev.bgenc.hobwork'], components: [{ '/': '/nfc/*' }] }] },
+    applinks: {
+      details: [{ appIDs: ['63QQLP356Q.dev.bgenc.hobwork'], components: [{ '/': '/nfc/*' }, { '/': '/devices/paired' }] }],
+    },
+    webcredentials: { apps: ['63QQLP356Q.dev.bgenc.hobwork'] },
   })
   const other = await startTestApp(host, { devices, web: { appleAppId: 'ABCDE12345.example.app' } })
   try {
@@ -515,6 +518,11 @@ test('the tag page runs the scan for a signed-in person, and offers the app and 
   expect(await crossSite.text()).toContain('<form method="post"')
   expect(invoked).toEqual([])
 
+  // A request that names no site could be from any site.
+  const unknownSite = await page({ cookie })
+  expect(await unknownSite.text()).toContain('<form method="post"')
+  expect(invoked).toEqual([])
+
   const opened = await page({ cookie, 'sec-fetch-site': 'none' })
   expect(opened.status).toBe(303)
   expect(opened.headers.get('location')).toBe(`/nfc/${tag}?scanned`)
@@ -526,7 +534,7 @@ test('the tag page runs the scan for a signed-in person, and offers the app and 
   expect(await result.text()).toContain('bedtime got the scan')
   expect(invoked).toHaveLength(1)
 
-  const tapped = await page({ cookie, origin: TEST_PUBLIC_URL, 'content-type': 'application/x-www-form-urlencoded' }, { method: 'POST' })
+  const tapped = await page({ cookie, origin: TEST_PUBLIC_URL, 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' }, { method: 'POST' })
   expect(tapped.status).toBe(303)
   await until(() => invoked.length === 2)
   const forged = await page({ cookie, origin: 'https://evil.example' }, { method: 'POST' })

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DatabaseSync } from 'node:sqlite'
 import * as client from 'openid-client'
@@ -9,9 +10,8 @@ import { signInOidcUser, type OidcIdentity } from './users.ts'
 export const LOGIN_PATH = '/auth/login'
 export const CALLBACK_PATH = '/auth/callback'
 
-const FLOW_COOKIE = 'hobwork_oidc'
-const FLOW_COOKIE_PATH = '/auth/'
 const FLOW_TTL_SECONDS = 10 * 60
+const MAX_FLOWS = 1000
 
 type Flow = { state: string; nonce: string; verifier: string; returnTo: string }
 
@@ -24,20 +24,40 @@ export function safeReturnTo(value: string | null | undefined): string {
   return value
 }
 
-function encodeFlow(flow: Flow): string {
-  return Buffer.from(JSON.stringify(flow)).toString('base64url')
+function hashId(id: string): string {
+  return createHash('sha256').update(id).digest('hex')
 }
 
-function decodeFlow(value: string | undefined): Flow | undefined {
-  if (!value) return undefined
-  try {
-    const flow = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<Flow>
-    if (typeof flow.state !== 'string' || typeof flow.nonce !== 'string' || typeof flow.verifier !== 'string') {
-      return undefined
-    }
-    return { state: flow.state, nonce: flow.nonce, verifier: flow.verifier, returnTo: safeReturnTo(flow.returnTo) }
-  } catch {
-    return undefined
+function storeFlow(db: DatabaseSync, flow: Flow, now = Date.now()): string {
+  db.prepare('DELETE FROM oidc_flows WHERE expires_at <= ?').run(new Date(now).toISOString())
+  // Anyone can start a flow, so the table stays bounded.
+  db.prepare(
+    'DELETE FROM oidc_flows WHERE id_hash IN (SELECT id_hash FROM oidc_flows ORDER BY expires_at DESC LIMIT -1 OFFSET ?)',
+  ).run(MAX_FLOWS - 1)
+  const id = randomBytes(32).toString('base64url')
+  db.prepare('INSERT INTO oidc_flows (id_hash, state, nonce, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    hashId(id),
+    flow.state,
+    flow.nonce,
+    flow.verifier,
+    flow.returnTo,
+    new Date(now + FLOW_TTL_SECONDS * 1000).toISOString(),
+  )
+  return id
+}
+
+// Each flow can be finished once.
+function takeFlow(db: DatabaseSync, id: string | undefined, now = Date.now()): Flow | undefined {
+  if (!id) return undefined
+  const row = db
+    .prepare('DELETE FROM oidc_flows WHERE id_hash = ? AND expires_at > ? RETURNING state, nonce, verifier, return_to')
+    .get(hashId(id), new Date(now).toISOString())
+  if (!row) return undefined
+  return {
+    state: String(row.state),
+    nonce: String(row.nonce),
+    verifier: String(row.verifier),
+    returnTo: safeReturnTo(String(row.return_to)),
   }
 }
 
@@ -70,6 +90,8 @@ export function createOidcLogin(options: {
 }) {
   const { oidc, publicUrl, db, allowlist, auth } = options
   const redirectUri = `${publicUrl}${CALLBACK_PATH}`
+  // The __Host- prefix keeps a sibling subdomain from planting the cookie.
+  const flowCookie = auth.secure ? '__Host-hobwork_oidc' : 'hobwork_oidc'
   let discovered: Promise<client.Configuration> | undefined
 
   // Discovered on first use and cached, so the host starts while the provider is down.
@@ -91,7 +113,7 @@ export function createOidcLogin(options: {
   }
 
   function fail(res: ServerResponse, error: LoginError) {
-    setCookie(res, FLOW_COOKIE, '', { maxAge: 0, secure: auth.secure, path: FLOW_COOKIE_PATH })
+    setCookie(res, flowCookie, '', { maxAge: 0, secure: auth.secure })
     redirect(res, `/login?error=${error}`)
   }
 
@@ -109,11 +131,7 @@ export function createOidcLogin(options: {
       verifier: client.randomPKCECodeVerifier(),
       returnTo: safeReturnTo(search.get('returnTo')),
     }
-    setCookie(res, FLOW_COOKIE, encodeFlow(flow), {
-      maxAge: FLOW_TTL_SECONDS,
-      secure: auth.secure,
-      path: FLOW_COOKIE_PATH,
-    })
+    setCookie(res, flowCookie, storeFlow(db, flow), { maxAge: FLOW_TTL_SECONDS, secure: auth.secure })
     const url = client.buildAuthorizationUrl(config, {
       redirect_uri: redirectUri,
       scope: 'openid profile email',
@@ -126,7 +144,7 @@ export function createOidcLogin(options: {
   }
 
   async function callback(req: IncomingMessage, res: ServerResponse) {
-    const flow = decodeFlow(parseCookies(req.headers.cookie).get(FLOW_COOKIE))
+    const flow = takeFlow(db, parseCookies(req.headers.cookie).get(flowCookie))
     if (!flow) return fail(res, 'expired')
     let identity: OidcIdentity
     try {
@@ -149,11 +167,11 @@ export function createOidcLogin(options: {
     const user = signInOidcUser(db, allowlist, identity)
     if (!user) {
       console.warn(
-        `Refused sign-in for ${identity.email ?? 'an unverified email'} (subject ${identity.subject}): not in HOBWORK_ALLOWED_USERS`,
+        `Refused sign-in for ${identity.email ?? 'an unverified email'} (subject ${identity.subject}): not allowed to sign in`,
       )
       return fail(res, 'not_allowed')
     }
-    setCookie(res, FLOW_COOKIE, '', { maxAge: 0, secure: auth.secure, path: FLOW_COOKIE_PATH })
+    setCookie(res, flowCookie, '', { maxAge: 0, secure: auth.secure })
     auth.signIn(res, user)
     redirect(res, flow.returnTo)
   }

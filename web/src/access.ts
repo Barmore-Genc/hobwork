@@ -1,6 +1,7 @@
 import type { Access } from './api.ts'
 
 export const FULL_ACCESS: Access = { readOnly: false, projects: null }
+export const READ_ONLY_ACCESS: Access = { readOnly: true, projects: null }
 
 export function accessReady(access: Access): boolean {
   return access.projects === null || access.projects.length > 0

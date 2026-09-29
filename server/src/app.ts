@@ -145,7 +145,7 @@ export function createApp(
     ...allActivityRoutes(host),
     ...aiSettingsRoutes({ host }),
     ...haServicesRoutes({ host }),
-    ...deviceUserRoutes({ db: host.db, devices }),
+    ...deviceUserRoutes({ db: host.db, devices, publicUrl: web.publicUrl }),
     ...projectDeletionRoutes({
       host,
       workspaces,

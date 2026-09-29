@@ -47,22 +47,10 @@ Sections are in the order to work on them.
 
 - **Pipeline output in the log store**: pipeline step output streams to the log store line by line, instead of a 2,000-character summary per step. Memory is already bounded (head and tail).
 - **VM resources and budget**: `hobwork.json` can ask for less memory and fewer vCPUs per VM kind, never more than the defaults. Starting a VM reserves its resources from a global memory and vCPU budget. When the budget is full, requests wait in per-hob queues with an equal share per active hob, borrowing idle capacity; idle workspace VMs over their share stop first. The main runtime goes first, then builds and previews, then workspaces. Waits end with a "host busy" error.
-- **OAuth limits**: key IPv6 rate limits by /64, and evict the oldest unapproved clients and requests instead of refusing new ones.
 
 ### Guest privilege
 
 Everything in a workspace VM runs as root, so any process (a dependency's install script, a test) can read the agent's `HOBWORK_SESSION` from `/proc` and merge. Run agent commands as an unprivileged guest user, keep the session token in a root-owned helper that only the `hobwork` CLI reaches, and set `kernel.yama.ptrace_scope` to 1 and `hidepid=2` on `/proc`. Needs an image rebuild.
-
-### Sign-in
-
-- **OIDC flow state on the server**: the flow cookie holds an opaque ID instead of the state, so app subdomains cannot plant a flow. Requests with a security cookie name more than once are treated as signed out.
-- **One identity per issuer**: once a user is linked to an issuer, only that `(issuer, sub)` signs in as them; a new subject from the same issuer with the same email is refused.
-- **No http outside dev**: refuse to start with an `http` public URL unless it is loopback.
-- **`/auth/link`**: the same `Sec-Fetch-Site` check as `/auth/device`.
-- **Consent default**: the MCP consent page starts on read-only access.
-- **Device pairing redirect**: a universal link instead of `hobwork://paired`.
-- **NFC page**: a missing `Sec-Fetch-Site` counts as cross-site and shows the Run button.
-- **OAuth metadata fetch**: block `64:ff9b:1::/48`, `2002::/16` and IPv4-compatible IPv6 addresses.
 
 ### Sandbox account
 

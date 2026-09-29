@@ -182,6 +182,11 @@ export default (async (ctx) => {
     expect(html).toContain('<base href="/">')
     expect(html).toContain('href="/theme/theme.css"')
     expect((await send(`${origin}/theme/theme.css`)).status).toBe(200)
+    // The template's emoji icon, rendered in the pipeline VM.
+    expect(html).toContain('<link rel="apple-touch-icon" href="/_hobwork/icons/icon-180.png">')
+    const icon = await send(`${origin}/_hobwork/icons/icon-180.png`)
+    expect(icon.status).toBe(200)
+    expect(icon.headers['content-type']).toBe('image/png')
 
     const assets = [...html.matchAll(/(?:src|href)="\/(assets\/[^"]+)"/g)].map((m) => m[1]!)
     expect(assets.some((path) => path.endsWith('.js'))).toBe(true)

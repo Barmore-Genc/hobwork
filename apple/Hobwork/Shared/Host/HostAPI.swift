@@ -117,6 +117,11 @@ struct HostAPI: Sendable {
         _ = try await send(eventRequest(event))
     }
 
+    /// Answers a command outside the socket. The host ignores all but the first result.
+    func send(_ result: DeviceCallResult) async throws {
+        _ = try await send(resultRequest(result))
+    }
+
     /// Removes this device from the host, as removing it in the web UI does.
     func removeDevice() async throws {
         _ = try await send(removeRequest)
@@ -141,6 +146,10 @@ struct HostAPI: Sendable {
 
     func eventRequest(_ event: DeviceEvent) -> URLRequest {
         request(method: "POST", path: "api/devices/events", body: event)
+    }
+
+    func resultRequest(_ result: DeviceCallResult) -> URLRequest {
+        request(method: "POST", path: "api/devices/results", body: result)
     }
 
     var webSocketRequest: URLRequest {

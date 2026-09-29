@@ -78,6 +78,7 @@ export function createApp(
   // OAuth access tokens are bound to the MCP endpoint (RFC 8707), so project
   // routes accept static agent tokens only.
   const authenticate = options.authenticate ?? bearerTokenAuth(host)
+  const origins = createAppOrigins(web.appsUrl ?? defaultAppsUrl(web.publicUrl))
   const handleMcp = createMcpHandler({
     host,
     workspaces,
@@ -89,6 +90,7 @@ export function createApp(
     data: options.data,
     secrets: options.secrets,
     devices,
+    appOrigin: origins.origin,
   })
 
   const handleAuth = createAuthRoutes({
@@ -98,7 +100,6 @@ export function createApp(
     passkeys: createPasskeys({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist, auth, now: web.now }),
     oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
   })
-  const origins = createAppOrigins(web.appsUrl ?? defaultAppsUrl(web.publicUrl))
   const handleApi = createApiRoutes({
     host,
     auth,

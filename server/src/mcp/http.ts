@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { verifyAgentToken, type Agent } from '../agents.ts'
+import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
 import type { Devices } from '../devices/devices.ts'
@@ -54,6 +55,7 @@ export function createMcpHandler(options: {
   data?: ProjectData
   secrets?: SecretStore
   devices?: Devices
+  appOrigin?: (target: AppTarget) => string | undefined
 }) {
   const authenticate = options.authenticate ?? bearerTokenAuth(options.host)
 
@@ -83,6 +85,7 @@ export function createMcpHandler(options: {
       data: options.data,
       secrets: options.secrets,
       devices: options.devices,
+      appOrigin: options.appOrigin,
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { createApp } from './app.ts'
+import { createAppOrigins } from './apps/origins.ts'
 import { createBackups } from './backup/backups.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
@@ -93,7 +94,7 @@ const delivery = createDelivery(host, {
   pipeline: pipelineVms && { startVm: pipelineVms.start, migrationDryRun: data.migrationDryRun },
   deploy: runtime.deploy,
 })
-const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime })
+const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: createAppOrigins(config.appsUrl).origin })
 homeAssistant.start()
 await runtime.start()
 const housekeeping = startHousekeeping(host, runtime)

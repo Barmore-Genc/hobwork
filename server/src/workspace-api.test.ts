@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ensureAgent } from './agents.ts'
+import { createAppOrigins } from './apps/origins.ts'
 import { createDelivery } from './delivery.ts'
 import { git } from './git.ts'
 import { repoPath } from './host.ts'
@@ -37,7 +38,12 @@ beforeEach(async () => {
   workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
   await workspaces.open('filament', 'spools')
   const delivery = createDelivery(host, { workspaces, pipeline: { startVm: startHostPipelineVm } })
-  const handler = createWorkspaceApi({ host, workspaces, delivery })({ project: 'filament', branch: 'spools' })
+  const handler = createWorkspaceApi({
+    host,
+    workspaces,
+    delivery,
+    appOrigin: createAppOrigins('https://apps.example.com').origin,
+  })({ project: 'filament', branch: 'spools' })
   server = createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -96,6 +102,8 @@ test('status, diff and commit as the session agent', async () => {
   expect(clean.stdout).toContain('Workspace filament/spools, working as laptop')
   expect(clean.stdout).toContain('No uncommitted changes')
   expect(clean.stdout).toContain('No pipeline runs for spools yet')
+  expect(clean.stdout).toContain('App for spools (committed changes): https://spools--filament.apps.example.com')
+  expect(clean.stdout).toContain('App for main: https://filament.apps.example.com')
 
   workspaceFile('src/b.ts', 'export const b = 2\n')
   expect((await hobwork(['status'])).stdout).toContain('?? src/b.ts')

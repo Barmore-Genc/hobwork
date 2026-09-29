@@ -1,4 +1,5 @@
 import type { Agent } from './agents.ts'
+import type { AppTarget } from './apps/origins.ts'
 import type { Delivery } from './delivery.ts'
 import type { Host } from './host.ts'
 import { formatMerge } from './mcp/delivery.ts'
@@ -63,8 +64,9 @@ export function createWorkspaceApi(options: {
   workspaces: WorkspaceManager<ExecWorkspaceVm>
   delivery: Delivery
   runtime?: Runtime
+  appOrigin?: (target: AppTarget) => string | undefined
 }): (workspace: { project: string; branch: string }) => InternalHandler {
-  const { host, workspaces, delivery, runtime } = options
+  const { host, workspaces, delivery, runtime, appOrigin } = options
 
   async function status({ project, branch, agent }: Context): Promise<CliResult> {
     const [head] = await log(host, project, branch, 1)
@@ -72,6 +74,8 @@ export function createWorkspaceApi(options: {
     const newest = listVersions(host, project, 1)[0]
     const deployed = runtime?.status(project)
     const run = latestRun(host, project, branch)
+    const branchUrl = appOrigin?.({ project, branch })
+    const mainUrl = appOrigin?.({ project })
     const lines = [
       `Workspace ${project}/${branch}, working as ${agent.name}`,
       head ? `Branch ${branch} is at ${head.sha.slice(0, 10)} "${head.subject}" (${head.author}, ${head.date})` : '',
@@ -86,6 +90,8 @@ export function createWorkspaceApi(options: {
       run
         ? `Last pipeline run for ${branch}: #${run.id} ${run.status}${run.failedStep ? ` at ${run.failedStep}` : ''}, started ${run.startedAt}`
         : `No pipeline runs for ${branch} yet`,
+      branchUrl && branch !== DEFAULT_BRANCH ? `App for ${branch} (committed changes): ${branchUrl}` : '',
+      mainUrl ? `App for ${DEFAULT_BRANCH}: ${mainUrl}` : '',
     ]
     return { output: lines.filter(Boolean).join('\n'), ok: true }
   }

@@ -2,6 +2,8 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
+import { createAiGateway, OPENROUTER_HOSTS } from '../ai/gateway.ts'
+import { DEFAULT_LIMITS, saveHostAiSettings } from '../ai/settings.ts'
 import { createApp } from '../app.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
@@ -481,6 +483,21 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
   })
   expect(sandboxes.created).toHaveLength(4)
   expect(sandboxes.created[3]?.egress?.sort()).toEqual(['api.spools.example', 'shared.example', 'weather.example'])
+})
+
+test('runtime VMs send OpenRouter requests through the AI gateway', async () => {
+  saveHostAiSettings(host.db, { models: ['openai/*'], limits: DEFAULT_LIMITS }, null)
+  start({ ai: createAiGateway(host) })
+  await deploy()
+  const intercept = sandboxes.created[0]?.intercept
+  expect(intercept?.hosts).toEqual(OPENROUTER_HOSTS)
+  const res = await intercept!.handle(
+    new Request('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', body: '{"model":"x-ai/grok-4"}' }),
+    async () => Response.json({}),
+  )
+  expect(res.status).toBe(403)
+  const line = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.event === 'ai-limit')
+  expect(line?.message).toContain('Hobwork does not let this project use x-ai/grok-4')
 })
 
 test('blocked egress is logged to the project log', async () => {

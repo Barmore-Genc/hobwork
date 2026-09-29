@@ -32,7 +32,10 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 
 ## OpenRouter
 
-- Streaming responses from the OpenRouter helper.
+- Streaming responses from the OpenRouter helper. The AI gateway gets answers to the guest only when they are complete, since Gondolin buffers answers from its `onRequest` hook; streaming needs Gondolin to pass a response body stream through.
+- A spend limit across all projects, next to the per-project ones.
+- Spend limits can be passed by one request, since cost is known only afterwards. Estimating a request's cost from `max_tokens` and the model's prices before sending it would close that gap.
+- Tell people when a project reaches a limit (a notification to their devices), not only in the project log.
 
 ## Checking push notifications on a device
 

@@ -67,6 +67,12 @@ export type JsonRequest<T> = ChatRequest & {
   strict?: boolean
 }
 
+// `code` is OpenRouter's error code, or one of these:
+// - `hobwork_model_not_allowed` (403): the project may not use the model.
+// - `hobwork_rate_limit` and `hobwork_spend_limit` (429): the project reached a
+//   limit people set in Hobwork. `metadata.retry_after_seconds` says when it may try again.
+// - `timeout`, `aborted`: the call's timeout ran out or its signal aborted it.
+// - `missing_secret`, `invalid_json`, `invalid_output`.
 export class OpenRouterError extends Error {
   status?: number
   code?: string | number
@@ -85,14 +91,23 @@ export class OpenRouterError extends Error {
 export type OpenRouterOptions = {
   // Default: the OPENROUTER_API_KEY secret's placeholder from ctx.secrets.
   apiKey?: string
+  // Milliseconds each call waits for OpenRouter's answer. Default: no limit
+  // of its own, so only the invocation's timeout applies.
+  timeout?: number
+}
+
+export type OpenRouterCallOptions = {
+  // Milliseconds to wait for OpenRouter's answer. Default: the client's `timeout`.
+  timeout?: number
+  signal?: AbortSignal
 }
 
 export type OpenRouter = {
-  chat(request: ChatRequest): Promise<ChatResult>
+  chat(request: ChatRequest, options?: OpenRouterCallOptions): Promise<ChatResult>
   // Structured output: the reply as a value that passed the schema.
-  json<T>(request: JsonRequest<T>): Promise<T>
+  json<T>(request: JsonRequest<T>, options?: OpenRouterCallOptions): Promise<T>
   // JSON mode without a schema: the reply parsed as JSON.
-  json(request: ChatRequest): Promise<unknown>
+  json(request: ChatRequest, options?: OpenRouterCallOptions): Promise<unknown>
 }
 
 function parseJson(text: string): unknown {
@@ -129,7 +144,29 @@ function issuePath(issue: SchemaIssue): string {
 // which Hobwork replaces on the way to openrouter.ai, so the secret must be
 // allowed to go to that host.
 export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: OpenRouterOptions = {}): OpenRouter {
-  async function complete(body: Record<string, unknown>): Promise<ChatResult> {
+  async function send(body: Record<string, unknown>, apiKey: string, call: OpenRouterCallOptions): Promise<{ res: Response; text: string }> {
+    const timeout = call.timeout ?? options.timeout
+    const timer = timeout === undefined ? undefined : AbortSignal.timeout(timeout)
+    const signals = [call.signal, timer].filter((signal) => signal !== undefined)
+    const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0]
+    try {
+      const res = await ctx.fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      })
+      return { res, text: await res.text() }
+    } catch (err) {
+      if (timer?.aborted) throw new OpenRouterError(`OpenRouter did not answer within ${timeout} ms`, undefined, 'timeout')
+      if (call.signal?.aborted) {
+        throw Object.assign(new OpenRouterError('The OpenRouter call was aborted', undefined, 'aborted'), { cause: call.signal.reason })
+      }
+      throw err
+    }
+  }
+
+  async function complete(body: Record<string, unknown>, call: OpenRouterCallOptions): Promise<ChatResult> {
     const apiKey = options.apiKey ?? ctx.secrets[OPENROUTER_SECRET]
     if (!apiKey) {
       throw new OpenRouterError(
@@ -138,12 +175,7 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
         'missing_secret',
       )
     }
-    const res = await ctx.fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const text = await res.text()
+    const { res, text } = await send(body, apiKey, call)
     let parsed: { error?: ErrorBody } & Partial<ChatCompletion>
     try {
       parsed = JSON.parse(text)
@@ -158,9 +190,9 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
     return { text: typeof content === 'string' ? content : '', completion }
   }
 
-  async function json(request: ChatRequest | JsonRequest<unknown>): Promise<unknown> {
+  async function json(request: ChatRequest | JsonRequest<unknown>, call: OpenRouterCallOptions = {}): Promise<unknown> {
     if (!('schema' in request) || !request.schema) {
-      const { text } = await complete({ ...request, response_format: { type: 'json_object' } })
+      const { text } = await complete({ ...request, response_format: { type: 'json_object' } }, call)
       return parseJson(text)
     }
     const { schema, schemaName, strict, ...rest } = request as JsonRequest<unknown>
@@ -175,7 +207,7 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
       // Only route to providers that support structured output. Without this,
       // models that do not support it ignore the schema and answer in prose.
       provider: { require_parameters: true, ...provider },
-    }).catch((err: unknown) => {
+    }, call).catch((err: unknown) => {
       if (err instanceof OpenRouterError && err.status === 404 && err.metadata?.failed_routing_step === 'Filter by Parameters') {
         err.message += `. ${request.model} may not support structured output: pick a model that lists structured_outputs in its supported parameters, or call json() without a schema for JSON mode`
       }
@@ -190,7 +222,7 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
   }
 
   return {
-    chat: (request) => complete(request),
+    chat: (request, call = {}) => complete(request, call),
     json: json as OpenRouter['json'],
   }
 }

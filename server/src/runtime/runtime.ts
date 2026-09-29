@@ -25,6 +25,7 @@ import { DEFAULT_BRANCH, listProjects, ProjectError } from '../projects.ts'
 import { branchHead } from '../repo.ts'
 import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
+import type { AiGateway } from '../ai/gateway.ts'
 import { listVersions } from '../versions.ts'
 import { createDeployHealth, DEFAULT_AUTO_REVERT_POLICY, type AutoRevertPolicy, type DeployHealth } from './auto-revert.ts'
 import { cleanupBuilds, type BuildCleanupOptions } from './build-cleanup.ts'
@@ -80,6 +81,8 @@ export type RuntimeOptions = {
   data?: ProjectData
   // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
   secrets?: SecretStore
+  // Checks and records the VMs' OpenRouter requests.
+  ai?: AiGateway
   autoRevert?: AutoRevertPolicy
   // Which builds to keep when old ones are removed after a deploy.
   buildRetention?: Pick<BuildCleanupOptions, 'keepVersions' | 'minAgeMs'>
@@ -428,6 +431,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       egress,
       secrets,
       internal: (request) => handleInternal(project, deployed, () => inst, request),
+      intercept: options.ai?.interceptor(
+        project,
+        deployed.branch === undefined ? { source: 'runtime' } : { source: 'preview', branch: deployed.branch },
+      ),
       onEgressBlocked: ({ hostname, ip, port }) =>
         event(
           project,

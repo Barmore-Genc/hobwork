@@ -20,6 +20,7 @@ export type LifecycleEvent =
   | 'db'
   | 'secret'
   | 'project'
+  | 'ai-limit'
 
 export const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
 

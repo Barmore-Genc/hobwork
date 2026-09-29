@@ -20,9 +20,11 @@ import {
   type Sandbox,
   type SandboxOptions,
   type SandboxProcess,
+  type Secret,
   type SpawnOptions,
 } from './sandbox.ts'
 import { hostMatches } from './egress.ts'
+import { requestHook, upstreamFetch } from './intercept.ts'
 import { systemEnv } from './system-env.ts'
 
 const KILL_GRACE_MS = 2000
@@ -58,11 +60,16 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
       onBlocked?.({ hostname, ip: '', port: Number(port) || (protocol === 'https:' ? 443 : 80) })
       return false
     },
-    // Gondolin injects secrets after onRequest, so the internal handler only sees placeholders.
-    onRequest: internal
-      ? (request) => (new URL(request.url).hostname === INTERNAL_HOST ? internal(request) : undefined)
-      : undefined,
+    // Gondolin injects secrets after onRequest, so the internal handler and
+    // the interceptor only see placeholders.
+    onRequest: requestHook({
+      internal,
+      intercept: options.intercept,
+      egress,
+      upstream: upstreamFetch((request) => fillSecrets(request)),
+    }),
   })
+  const fillSecrets = secretFiller(options.secrets ?? {}, hooks.env)
   const isIpAllowed = hooks.httpHooks.isIpAllowed
   if (isIpAllowed && onBlocked) {
     hooks.httpHooks.isIpAllowed = async (info) => {
@@ -91,6 +98,20 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     throw err
   }
   return new GondolinSandbox(vm)
+}
+
+// Fills in secrets for requests the interceptor sends itself, which skip
+// Gondolin's hooks. `placeholders` are the ones the guest got, by env name.
+export function secretFiller(
+  secrets: Record<string, Secret>,
+  placeholders: Record<string, string>,
+): (request: Request) => Promise<Request> {
+  const hooks = createHttpHooks({
+    secrets: Object.fromEntries(
+      Object.entries(secrets).map(([name, secret]) => [name, { ...secret, placeholder: placeholders[name] }]),
+    ),
+  })
+  return async (request) => (await hooks.httpHooks.onRequest!(request)) as Request
 }
 
 // QEMU's microvm machine has no CMOS RTC or i8042, and the kernel spends about 1.3s probing them.

@@ -1,3 +1,4 @@
+import type { AiGateway } from '../ai/gateway.ts'
 import type { Devices } from '../devices/devices.ts'
 import { devicesResponse } from '../devices/internal.ts'
 import { ENVIRONMENT_PATHS, type WorkspaceEnvironment } from '../guest-vm.ts'
@@ -17,9 +18,9 @@ const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 // Assistant access at /v1/ha, and the device list at /v1/devices.
 export function createWorkspaceEnvironment(
   host: Host,
-  options: { data?: ProjectData; secrets?: SecretStore; homeAssistant?: HomeAssistant; devices?: Devices },
+  options: { data?: ProjectData; secrets?: SecretStore; homeAssistant?: HomeAssistant; devices?: Devices; ai?: AiGateway },
 ): WorkspaceEnvironment {
-  const { data, secrets, homeAssistant, devices } = options
+  const { data, secrets, homeAssistant, devices, ai } = options
   return {
     async start(workspace) {
       const { project, branch } = workspace
@@ -27,6 +28,7 @@ export function createWorkspaceEnvironment(
       return {
         egress: secrets?.hosts(project) ?? [],
         secrets: secrets?.forSandbox(project) ?? {},
+        intercept: ai?.interceptor(project, { source: 'workspace', branch }),
         internal: async (request) => {
           const url = new URL(request.url)
           if (request.method !== 'POST' || !ENVIRONMENT_PATHS.has(url.pathname)) {

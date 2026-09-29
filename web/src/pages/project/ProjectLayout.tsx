@@ -6,13 +6,14 @@ import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { projectPath } from './names.ts'
 
-export type ProjectTab = 'overview' | 'activity' | 'log' | 'secrets' | 'app'
+export type ProjectTab = 'overview' | 'activity' | 'log' | 'secrets' | 'ai' | 'app'
 
 const TABS: { tab: ProjectTab; label: string; path: string }[] = [
   { tab: 'overview', label: 'Overview', path: '' },
   { tab: 'activity', label: 'Activity', path: '/activity' },
   { tab: 'log', label: 'Log', path: '/log' },
   { tab: 'secrets', label: 'Secrets', path: '/secrets' },
+  { tab: 'ai', label: 'AI', path: '/ai' },
 ]
 
 // Heading, status and tabs shared by every project page. The page itself gets

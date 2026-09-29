@@ -5,6 +5,7 @@ import { deviceName, passkeyError, passkeysSupported } from '../passkeys.ts'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
 import { BackupSettings } from './BackupSettings.tsx'
+import { AiSection } from './settings/Ai.tsx'
 import { DevicesSection } from './settings/Devices.tsx'
 import { HomeAssistantSection } from './settings/HomeAssistant.tsx'
 
@@ -216,6 +217,8 @@ export function SettingsPage() {
       <DevicesSection />
 
       <HomeAssistantSection />
+
+      <AiSection />
 
       <BackupSettings />
 

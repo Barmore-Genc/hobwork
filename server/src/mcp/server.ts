@@ -4,6 +4,8 @@ import * as z from 'zod'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import { allowsProject } from '../access.ts'
 import type { AuthenticatedAgent } from '../agents.ts'
+import { effectiveAiSettings } from '../ai/settings.ts'
+import { projectUsage } from '../ai/usage.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
@@ -194,10 +196,20 @@ export function createMcpServer({
     },
   )
 
+  function aiView(projectId: number) {
+    const { hostModels, projectModels, limits } = effectiveAiSettings(host.db, projectId)
+    const { lastMinute, lastHour, day, month } = projectUsage(host.db, projectId, Date.now())
+    return {
+      models: { host: hostModels, project: projectModels },
+      limits,
+      usage: { requestsLastMinute: lastMinute, requestsLastHour: lastHour, last24Hours: day, last30Days: month },
+    }
+  }
+
   server.registerTool(
     'get_project',
     {
-      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, the disk space it uses in bytes (project DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs and the state of each branch workspace.`,
+      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, the disk space it uses in bytes (project DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
       inputSchema: { project },
       annotations: { readOnlyHint: true },
     },
@@ -232,6 +244,7 @@ export function createMcpServer({
         workspaces: workspaces
           .list(name)
           .map(({ branch: b, status, lastUsedAt }) => ({ branch: b, status, lastUsedAt })),
+        ai: aiView(record.id),
       })
     },
   )

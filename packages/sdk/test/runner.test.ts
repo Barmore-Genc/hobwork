@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { InvocationKind } from '../src/index.ts'
-import type { DbRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
+import type { DbRequest, HaRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
 import { startRunner, type Runner } from '../src/runner/runner.ts'
 
 let app: string
@@ -13,6 +13,7 @@ let internal: Server
 let internalUrl: string
 let received: LogLine[]
 let dbRequests: DbRequest[]
+let haRequests: HaRequest[]
 let runner: Runner | undefined
 let url: string
 
@@ -39,6 +40,12 @@ const HANDLERS: Record<string, string> = {
     let error
     try { await ctx.db.run('BAD') } catch (err) { error = err.name + ': ' + err.message + ' @' + err.statement }
     return { blob: Array.from(rows[0].blob), error, secrets: ctx.secrets }
+  }`,
+  'handlers/src/ha.js': `export default async (ctx) => {
+    const state = await ctx.ha.getState('light.kitchen')
+    let error
+    try { await ctx.ha.callService('light', 'explode') } catch (err) { error = [err.name, err.code, err.message] }
+    return { state: state.state, error }
   }`,
 }
 
@@ -72,6 +79,7 @@ beforeEach(async () => {
   write(HANDLERS)
   received = []
   dbRequests = []
+  haRequests = []
   internal = createServer((req, res) => {
     let data = ''
     req.on('data', (chunk: Buffer) => (data += chunk))
@@ -84,6 +92,16 @@ beforeEach(async () => {
             ? { ok: false, error: { message: 'syntax error', statement: 0 } }
             : { ok: true, results: [{ rows: [{ blob: request.statements[0]?.params?.[0 as never] }], changes: 0, lastInsertRowid: 0 }] }
         res.writeHead(response.ok ? 200 : 400, { 'content-type': 'application/json' }).end(JSON.stringify(response))
+        return
+      }
+      if (req.url === '/v1/ha') {
+        const request = JSON.parse(data) as HaRequest
+        haRequests.push(request)
+        const response =
+          request.action === 'getState'
+            ? { ok: true, result: { entity_id: request.entityId, state: 'on', attributes: {} } }
+            : { ok: false, error: { code: 'service_not_found', message: 'Action light.explode not found' } }
+        res.writeHead(response.ok ? 200 : 502, { 'content-type': 'application/json' }).end(JSON.stringify(response))
         return
       }
       if (req.url === '/v1/logs') received.push(...(JSON.parse(data) as { lines: LogLine[] }).lines)
@@ -175,4 +193,17 @@ test('handlers reach the host DB with ctx.db and see secret placeholders in ctx.
     transaction: false,
     invocation: result.id,
   })
+})
+
+test('handlers call Home Assistant with ctx.ha, and its errors throw as HomeAssistantError', async () => {
+  await start()
+  const result = await invoke('src/ha.ts')
+  expect(JSON.parse(body(result))).toEqual({
+    state: 'on',
+    error: ['HomeAssistantError', 'service_not_found', 'Action light.explode not found'],
+  })
+  expect(haRequests).toEqual([
+    { action: 'getState', entityId: 'light.kitchen', invocation: result.id },
+    { action: 'callService', domain: 'light', service: 'explode', invocation: result.id },
+  ])
 })

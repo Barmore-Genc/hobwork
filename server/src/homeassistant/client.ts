@@ -118,6 +118,7 @@ export type HomeAssistant = {
   ): Promise<CallServiceResult>
   getState(entityId: string): Promise<HaState | undefined>
   getStates(): Promise<HaState[]>
+  fireEvent(eventType: string, data?: Record<string, unknown>): Promise<{ context: HaContext }>
   listDevices(): Promise<HaDevice[]>
   listEntities(): Promise<HaEntityRegistryEntry[]>
   listAreas(): Promise<HaArea[]>
@@ -511,6 +512,8 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
       return (await request<HaState[]>({ type: 'get_states' })).find((s) => s.entity_id === entityId)
     },
     getStates: () => request<HaState[]>({ type: 'get_states' }),
+    fireEvent: (eventType, data) =>
+      request<{ context: HaContext }>({ type: 'fire_event', event_type: eventType, ...(data ? { event_data: data } : {}) }),
     listDevices: () => request<HaDevice[]>({ type: 'config/device_registry/list' }),
     listEntities: () => request<HaEntityRegistryEntry[]>({ type: 'config/entity_registry/list' }),
     listAreas: () => request<HaArea[]>({ type: 'config/area_registry/list' }),

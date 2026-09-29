@@ -321,7 +321,7 @@ Auto-revert details (`server/src/runtime/auto-revert.ts`):
 - Inside the VM a Hobwork **runner** (Node) loads the deployed build and serves invocations from the host over the Gondolin ingress.
 - The host owns scheduling and trigger subscriptions. A cron tick, webhook call or trigger wakes the VM if it is asleep.
 - Deploy: start the new VM, wait until it is ready, switch traffic, drain and stop the old one.
-- Handlers call back to the host (DB, logs, devices, events) through the SDK over an internal endpoint that only the project's VMs can reach.
+- Handlers call back to the host (DB, logs, Home Assistant, devices, events) through the SDK over an internal endpoint that only the project's VMs can reach.
 
 Implementation (`server/src/runtime/`):
 
@@ -477,15 +477,19 @@ HA automations can also call a Hobwork webhook (`rest_command`), for anything ea
 
 ### Hobwork to HA (actions)
 
-The SDK has `ha.callService(domain, service, data)`, `ha.getState(entity)` and similar. Calls go through the host, so the HA token never enters a VM and VMs do not need access to the LAN. Announcements on Google Home speakers are `tts.speak` or `media_player.play_media` calls.
+Handlers get `ctx.ha` (`packages/sdk/src/homeassistant.ts`): `callService(domain, service, data?, target?, { returnResponse? })`, `getState(entityId)` (undefined for an unknown entity), `getStates({ domain?, entityIds? })` and `fireEvent(type, data?)`. Calls go through the host, so the HA token never enters a VM and VMs do not need access to the LAN. Announcements on Google Home speakers are `tts.speak` or `media_player.play_media` calls.
+
+- **Transport**: the runner POSTs `HaRequest` (`packages/sdk/src/runner/protocol.ts`) with the invocation ID to `http://hobwork.internal/v1/ha`, and the host answers it with its HA client (`server/src/homeassistant/internal.ts`). Failures answer `{ ok: false, error: { code, message } }` with HA's code and message, or Hobwork's (`not_configured` and `not_connected` 503, `timeout` 504, `read_only` 403, `bad_request` 400). The SDK throws them as `HomeAssistantError`. The runner and the handler bundle each have a copy of that class, so its `instanceof` checks a `Symbol.for` brand.
+- **Logs**: every call is logged with its invocation, as a `runtime` line: service calls and events at `info`, reads at `debug`, failures at `warn`. The host checks that the invocation belongs to the VM's project, and the lines count toward the invocation's 1,000 line limit.
+- **Workspaces** read states only (`getState`, `getStates`, also as `hobwork ha state` and `hobwork ha states`). Code run there is work in progress and tests, and a test that switches off the heating by mistake has real effects, so service calls and events answer `read_only`. Tests fake `ctx.ha` with `createTestContext({ ha: { ... } })`, whose unstubbed methods reject. Pipeline VMs have no internal endpoint for HA. Rejected: an opt-in for service calls from workspaces; a deployed handler run with `invoke` does the same thing, with its version and logs recorded.
 
 ### Later
 
 A custom HA integration (installed through HACS) that exposes Hobwork handlers as HA services or entities, so they can be used from the HA automation editor.
 
-## Integrations (later)
+## Integrations
 
-- **OpenRouter**: SDK helper for calling models, with the API key as a secret.
+- **OpenRouter** (`packages/sdk/src/openrouter.ts`): `openrouter(ctx, { apiKey? })` returns `chat(request)` (the completion and its text) and `json(request)`. It POSTs to `https://openrouter.ai/api/v1/chat/completions` through `ctx.fetch` with the `OPENROUTER_API_KEY` placeholder in the `Authorization` header, so the user binds that secret to `openrouter.ai` and the value never reaches the handler. `json` without a schema uses JSON mode. With a schema it sends `response_format: json_schema` (strict by default) with `provider.require_parameters` so OpenRouter only routes to providers that support it, and validates the reply. Schemas are Standard Schema with Standard JSON Schema (`~standard.validate` and `~standard.jsonSchema`), which zod 4 implements, so the SDK needs no zod dependency. Errors throw `OpenRouterError` with the HTTP status and OpenRouter's message.
 - **Visual programming**: undecided.
 
 ## Open questions

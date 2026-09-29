@@ -23,9 +23,9 @@ const INSTALL_CLI = [
   'chmod 755 /usr/local/bin/hobwork',
 ].join(' && ')
 
-// Answered by the workspace environment (the branch DB); everything else on
-// hobwork.internal goes to the CLI API.
-const DB_PATH = '/v1/db'
+// Answered by the workspace environment (the branch DB and Home Assistant);
+// everything else on hobwork.internal goes to the CLI API.
+export const ENVIRONMENT_PATHS = new Set(['/v1/db', '/v1/ha'])
 
 const VM_RESOURCES = { memory: '2G', cpus: 4, diskSize: '4G' }
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
@@ -166,14 +166,14 @@ export function workspaceVmBackend(
     const egress = [...egressOf(environment?.egress ?? [])]
     const base = sandboxOptions(options, workspace.dir, egress, label, environment)
     const cliApi = internal?.(workspace)
-    const dbApi = environment?.internal
+    const environmentApi = environment?.internal
     let sandbox: Sandbox
     try {
       sandbox = await options.createSandbox({
         ...base,
         mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
         internal: (request) => {
-          if (dbApi && new URL(request.url).pathname === DB_PATH) return dbApi(request)
+          if (environmentApi && ENVIRONMENT_PATHS.has(new URL(request.url).pathname)) return environmentApi(request)
           return cliApi?.(request) ?? Response.json({ error: 'not found' }, { status: 404 })
         },
       })

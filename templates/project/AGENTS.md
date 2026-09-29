@@ -5,7 +5,7 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 ## Layout
 
 - `hobwork.json`: every entry point (routes, crons, webhooks, triggers), egress hosts and settings. Hobwork only runs what is declared here.
-- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch`, `ctx.log`, `ctx.db` and `ctx.secrets`.
+- `src/`: handlers and shared code. A handler file default-exports a function typed with `Handler` from `@hobwork/sdk` (`RequestHandler` for routes and webhooks). It gets one argument, the context: `ctx.request` (routes and webhooks), `ctx.params` (`:name` segments of the route path), `ctx.payload` (trigger event), `ctx.invocation`, `ctx.fetch`, `ctx.log`, `ctx.db`, `ctx.secrets` and `ctx.ha`.
 - Routes and webhooks answer with what the handler returns: a `Response` is sent as is, any other value as JSON, `undefined` as 204. A thrown error answers 500 and is recorded with its stack trace. Route `"GET /spools/:id"` answers `GET /p/<project>/api/spools/42`. A webhook is called at a secret URL that `rotate_webhook_token` returns.
 - Crons use 5-field cron syntax in the Hobwork host's time zone.
 - `ui/`: dashboard pages (React + Tailwind), served at `/p/<project>/`. Call the project's routes with relative URLs (`fetch('api/...')`).
@@ -43,6 +43,60 @@ await ctx.fetch('https://api.example.com/v1/spools', { headers: { authorization:
 ```
 
 The placeholder is only replaced in headers, not in the URL or body. Hosts a secret is bound to are reachable without listing them in `egress`. If a secret is missing, ask the user to add it.
+
+## Home Assistant
+
+Hobwork is connected to the household's Home Assistant. Find entities, services and device triggers with the `ha_*` tools; `ha_listen` shows the real payload of a trigger.
+
+Triggers go in `hobwork.json`, in HA automation syntax. The handler gets HA's trigger variables as `ctx.payload`:
+
+```json
+"triggers": {
+  "desk-button": { "homeassistant": { "trigger": "state", "entity_id": "input_button.desk" }, "handler": "src/desk-button.ts" }
+}
+```
+
+Handlers act with `ctx.ha`:
+
+```ts
+await ctx.ha.callService('light', 'turn_on', { brightness_pct: 40 }, { area_id: 'living_room' })
+const door = await ctx.ha.getState('binary_sensor.front_door') // undefined if the entity does not exist
+const lights = await ctx.ha.getStates({ domain: 'light' })
+await ctx.ha.fireEvent('print_done', { job: 42 })
+const { response } = await ctx.ha.callService('weather', 'get_forecasts', { type: 'daily' }, { entity_id: 'weather.home' }, { returnResponse: true })
+```
+
+- Errors from Home Assistant (unknown service, invalid data, not connected) throw a `HomeAssistantError` from `@hobwork/sdk` with HA's `code` and `message`. Service calls are logged with the invocation.
+- Announcements on a Google Home or other speaker: `tts.speak` with a TTS entity and the speaker, or `media_player.play_media` for an audio URL. `ha_list_entities` shows the `tts.*` and `media_player.*` entities.
+
+  ```ts
+  await ctx.ha.callService('tts', 'speak', { media_player_entity_id: 'media_player.kitchen', message: 'The print is done' }, { entity_id: 'tts.google_translate_en_com' })
+  await ctx.ha.callService('media_player', 'play_media', { media_content_id: 'https://example.com/chime.mp3', media_content_type: 'music' }, { entity_id: 'media_player.kitchen' })
+  ```
+
+- Tests: `createTestContext({ ha: { callService: vi.fn() } })`. Methods a test does not stub reject.
+- The workspace only reads states: `hobwork ha state <entity_id>` and `hobwork ha states [domain]`. Service calls and events only run from deployed handlers, so try them with `invoke` after `merge`.
+
+## LLMs (OpenRouter)
+
+`openrouter(ctx)` from `@hobwork/sdk` calls models through OpenRouter. It needs the `OPENROUTER_API_KEY` secret: ask the user to create it in Hobwork, bound to `openrouter.ai`.
+
+```ts
+import { openrouter } from '@hobwork/sdk'
+import { z } from 'zod'
+
+const ai = openrouter(ctx)
+const { text } = await ai.chat({ model: 'openai/gpt-5-mini', messages: [{ role: 'user', content: 'Name a red spool' }] })
+const spool = await ai.json({
+  model: 'openai/gpt-5-mini',
+  messages: [{ role: 'user', content: `Read this spool label: ${label}` }],
+  schema: z.object({ brand: z.string(), color: z.string(), grams: z.number() }),
+})
+```
+
+- `json` with a `schema` asks for structured output and returns the checked, typed value. Without one it uses JSON mode and returns the parsed reply. Structured output is strict by default, which needs every field: use `.nullable()` instead of `.optional()`.
+- Other fields (`temperature`, `max_tokens`, `reasoning`, `provider`, ...) are passed to OpenRouter. Errors throw an `OpenRouterError` with OpenRouter's message and HTTP `status`.
+- Tests: pass a fake `fetch` and `secrets: { OPENROUTER_API_KEY: 'key' }` to `createTestContext`.
 
 ## Workflow
 

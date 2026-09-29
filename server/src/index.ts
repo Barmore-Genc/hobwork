@@ -28,6 +28,11 @@ for (const project of listProjects(host)) installHooks(repoPath(host, project.na
 
 const secrets = createSecretStore(host, loadSecretKey(config.dataDir, config.secretKey))
 const data = createProjectData(host)
+const homeAssistant = createHomeAssistant({
+  connection: () => config.homeAssistant,
+  logger: homeAssistantClientLogger(host, () =>
+    listProjects(host).map((p) => p.name).filter((name) => triggers.active(name).length > 0)),
+})
 
 const image = imageDir()
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
@@ -35,7 +40,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
       image,
       createSandbox: createGondolinSandbox,
       log: (message) => console.warn(message),
-      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets }),
+      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant }),
     }
   : undefined
 if (vmOptions) console.log(`guest image: ${image}`)
@@ -49,11 +54,6 @@ const workspaces = createWorkspaceManager<InteractiveWorkspaceVm>(host, {
 workspaces.resetStatuses()
 failInterruptedRuns(host)
 
-const homeAssistant = createHomeAssistant({
-  connection: () => config.homeAssistant,
-  logger: homeAssistantClientLogger(host, () =>
-    listProjects(host).map((p) => p.name).filter((name) => triggers.active(name).length > 0)),
-})
 const triggers = createTriggerRegistry({
   ha: homeAssistant,
   invoke: async (project, name, variables) => {
@@ -67,6 +67,7 @@ const runtime = createRuntime(host, {
   startBuildVm: pipelineVms?.start,
   revert: (request) => delivery.restore(request),
   triggers,
+  homeAssistant,
   data,
   secrets,
 })

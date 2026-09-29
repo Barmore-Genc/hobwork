@@ -30,11 +30,24 @@ function connection(): { url: string; token: string } {
 }
 
 const SWITCH = 'input_boolean.test_switch'
+const BUTTON = 'input_button.test_button'
+const NUMBER = 'input_number.test_number'
 
-describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers run handlers', () => {
-  let ha: HomeAssistant
-  let host: ReturnType<typeof createTestHost>
-  let runtime: Runtime
+async function release(project: string, files: Record<string, string>) {
+  await createProject(host, project)
+  const commit = await seedMain(host, project, {
+    'package.json': fakePackageJson({ build: 'mkdir -p dist/handlers/src && cp *.js dist/handlers/src/' }),
+    ...files,
+  })
+  const version = recordVersion(host, { projectId: requireProject(host, project).id, commit, summary: 'Release' })
+  await runtime.deploy({ project, version: version.number, commit, reason: 'merge' })
+}
+
+let ha: HomeAssistant
+let host: ReturnType<typeof createTestHost>
+let runtime: Runtime
+
+describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers and actions in handlers', () => {
 
   beforeAll(async () => {
     const conn = connection()
@@ -54,6 +67,7 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers ru
       image: '/nonexistent-image',
       startBuildVm: startHostPipelineVm,
       triggers,
+      homeAssistant: ha,
     })
   })
 
@@ -94,5 +108,48 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant triggers ru
     })
     const refused = queryLogs(host, { project: 'lights', limit: 50 }).find((l) => l.event === 'trigger')
     expect(refused?.message).toContain('broken')
+  })
+
+  test('a deployed handler toggles an input_boolean with ctx.ha.callService', async () => {
+    await release('toggler', {
+      'hobwork.json': JSON.stringify({ routes: { 'POST /toggle': { handler: 'src/toggle.ts' } } }),
+      'toggle.js': `export default async (ctx) => {
+        await ctx.ha.callService('input_boolean', 'toggle', undefined, { entity_id: '${SWITCH}' })
+        return (await ctx.ha.getState('${SWITCH}')).state
+      }`,
+    })
+    const before = (await ha.getState(SWITCH))?.state
+    const outcome = await runtime.invoke('toggler', { kind: 'route', name: 'POST /toggle', manual: true })
+    if (!outcome.ok) throw new Error(outcome.error.message)
+    const after = (await ha.getState(SWITCH))?.state
+    expect(after).toBe(before === 'on' ? 'off' : 'on')
+    expect(JSON.parse(Buffer.from(outcome.response.body, 'base64').toString())).toBe(after)
+    const logged = queryLogs(host, { project: 'toggler', invocationId: outcome.invocationId, limit: 10 }).map((l) => l.message)
+    expect(logged).toContain(`Home Assistant: input_boolean.toggle target {"entity_id":"${SWITCH}"}`)
+  })
+
+  test('a trigger on a button runs a handler that calls a service and fires an event', async () => {
+    const value = 20 + Math.floor(Math.random() * 60)
+    await release('button', {
+      'hobwork.json': JSON.stringify({
+        triggers: { pressed: { homeassistant: { trigger: 'state', entity_id: BUTTON }, handler: 'src/pressed.ts' } },
+      }),
+      'pressed.js': `export default async (ctx) => {
+        await ctx.ha.callService('input_number', 'set_value', { value: ${value} }, { entity_id: '${NUMBER}' })
+        await ctx.ha.fireEvent('hobwork_handler_event', { from: ctx.payload.trigger.entity_id })
+      }`,
+    })
+    const events: unknown[] = []
+    const unsubscribe = await ha.subscribeTrigger({ trigger: 'event', event_type: 'hobwork_handler_event' }, (variables) => {
+      events.push((variables.trigger as { event?: { data?: unknown } }).event?.data)
+    })
+    try {
+      await ha.callService('input_button', 'press', undefined, { entity_id: BUTTON })
+      await vi.waitFor(async () => expect((await ha.getState(NUMBER))?.state).toBe(`${value}.0`), { timeout: 10_000 })
+      await vi.waitFor(() => expect(events).toEqual([{ from: BUTTON }]), { timeout: 5_000 })
+      expect(listInvocations(host, { project: 'button', kind: 'trigger', limit: 5 })).toMatchObject([{ name: 'pressed', status: 'ok' }])
+    } finally {
+      await unsubscribe()
+    }
   })
 })

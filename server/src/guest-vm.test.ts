@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { pipelineVmBackend, workspaceVmBackend } from './guest-vm.ts'
+import type { HomeAssistant } from './homeassistant/client.ts'
 import { createProject } from './projects.ts'
 import { queryLogs } from './runtime/logs.ts'
 import { createSecretStore } from './secrets.ts'
@@ -211,6 +212,37 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     await vm.stop()
   } finally {
     await data.stop()
+    host.dispose()
+  }
+})
+
+test('workspace VMs read Home Assistant states but cannot call services', async () => {
+  const host = createTestHost()
+  try {
+    const calls: string[] = []
+    const homeAssistant = {
+      configured: true,
+      getState: async (entityId: string) => ({ entity_id: entityId, state: 'on', attributes: {} }),
+      callService: async (domain: string, service: string) => calls.push(`${domain}.${service}`),
+    } as unknown as HomeAssistant
+    const workspaceEnvironment = createWorkspaceEnvironment(host, { homeAssistant })
+    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'))(workspace())
+    const ha = async (request: object) => {
+      const res = await sandboxes[0]!.options.internal!(
+        new Request('http://hobwork.internal/v1/ha', { method: 'POST', body: JSON.stringify(request) }),
+      )
+      return { status: res.status, body: await res.json() }
+    }
+    expect(await ha({ action: 'getState', entityId: 'light.kitchen' })).toMatchObject({
+      status: 200,
+      body: { ok: true, result: { state: 'on' } },
+    })
+    expect(await ha({ action: 'callService', domain: 'light', service: 'turn_off' })).toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: 'read_only' } },
+    })
+    expect(calls).toEqual([])
+  } finally {
     host.dispose()
   }
 })

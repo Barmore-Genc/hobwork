@@ -98,6 +98,8 @@ Status: done. The SSH gateway and the `hobwork` CLI are covered by `pnpm -C serv
 - Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.
 - OpenRouter SDK helper.
 
+Status: done. Handlers call HA with `ctx.ha` through the host; workspaces only read. Covered by unit tests of the internal endpoint and the SDK, and with `HOBWORK_HA_TESTS=1` against the dev HA: a deployed handler toggles an `input_boolean`, and a trigger on `input_button.test_button` runs a handler that sets an `input_number` and fires an event. `pnpm -C server test:vm` checks that a handler built against the SDK in the image gets a `HomeAssistantError`. The OpenRouter helper is tested with a fake `fetch`, not against OpenRouter. Deferred: HA settings in the web UI (the connection still comes from env vars), `render_template` and other HA WebSocket commands in `ctx.ha`, and streaming from OpenRouter.
+
 ## Phase 10: Apple apps
 
 - iOS app (`dev.bgenc.hobwork`): login, WebView for project UIs, device WebSocket, push notifications.

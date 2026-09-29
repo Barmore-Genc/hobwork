@@ -6,6 +6,8 @@ import { createApp } from '../app.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
+import { createHomeAssistant } from '../homeassistant/client.ts'
+import { startFakeHomeAssistant } from '../homeassistant/fake-ha.ts'
 import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
@@ -17,7 +19,7 @@ import { createSecretStore } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
-import { getInvocation, listInvocations, queryLogs } from './logs.ts'
+import { getInvocation, listInvocations, queryLogs, startInvocation } from './logs.ts'
 import { createRuntime, type Runtime, type RuntimeOptions } from './runtime.ts'
 import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
 import { rotateWebhookToken } from './webhooks.ts'
@@ -442,4 +444,65 @@ test('blocked egress is logged to the project log', async () => {
   sandboxes.created[0]?.onEgressBlocked?.({ hostname: 'tracker.example', ip: '', port: 443 })
   const blocked = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.event === 'egress-blocked')
   expect(blocked).toMatchObject({ level: 'warn', message: expect.stringContaining('tracker.example:443') })
+})
+
+test('handlers call Home Assistant through the host, logged with their invocation', async () => {
+  const fake = await startFakeHomeAssistant()
+  const ha = createHomeAssistant({ connection: () => ({ url: fake.url, token: fake.token }), logger: { info() {}, warn() {}, error() {} } })
+  try {
+    fake.responses.set('call_service', () => ({ context: { id: 'c1', parent_id: null, user_id: null } }))
+    fake.responses.set('get_states', () => [{ entity_id: 'light.kitchen', state: 'on', attributes: {} }])
+    ha.start()
+    await ha.waitUntilConnected()
+    start({ homeAssistant: ha })
+    await deploy(
+      projectFiles({
+        handlers: {
+          'handlers/spools.js': `export default async (ctx) => {
+            try {
+              await ctx.ha.callService('light', 'turn_on', { brightness: 50 }, { entity_id: 'light.kitchen' })
+              return { state: (await ctx.ha.getState('light.kitchen')).state }
+            } catch (err) {
+              return { error: [err.name, err.code, err.message] }
+            }
+          }`,
+        },
+      }),
+    )
+    const route = () => runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+    const ok = await route()
+    expect(bodyOf(ok)).toEqual({ state: 'on' })
+    expect(fake.received.find((m) => m.type === 'call_service')).toMatchObject({
+      domain: 'light',
+      service: 'turn_on',
+      service_data: { brightness: 50 },
+      target: { entity_id: 'light.kitchen' },
+    })
+    const lines = queryLogs(host, { project: 'filament', invocationId: ok.invocationId, limit: 10 })
+    expect(lines.map((l) => `${l.level} ${l.message}`)).toEqual([
+      'info Home Assistant: light.turn_on {"brightness":50} target {"entity_id":"light.kitchen"}',
+      'debug Home Assistant: get state of light.kitchen',
+    ])
+
+    fake.failures.set('call_service', { code: 'service_not_found', message: 'Action light.turn_on not found' })
+    expect(bodyOf(await route())).toEqual({ error: ['HomeAssistantError', 'service_not_found', 'Action light.turn_on not found'] })
+
+    // The endpoint is bound to the VM's project, so an invocation of another
+    // project is not attributed.
+    await createProject(host, 'other')
+    const foreign = startInvocation(host, { project: 'other', version: null, kind: 'cron', name: 'x', manual: false })
+    fake.failures.clear()
+    await sandboxes.created[0]!.internal!(
+      new Request('http://hobwork.internal/v1/ha', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'callService', domain: 'light', service: 'turn_off', invocation: foreign }),
+      }),
+    )
+    expect(queryLogs(host, { project: 'other', limit: 10 })).toEqual([])
+    const unattributed = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.message.includes('light.turn_off'))
+    expect(unattributed?.invocationId).toBeNull()
+  } finally {
+    ha.stop()
+    await fake.close()
+  }
 })

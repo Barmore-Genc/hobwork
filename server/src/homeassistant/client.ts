@@ -126,6 +126,9 @@ export type HomeAssistant = {
   listAreas(): Promise<HaArea[]>
   listServices(): Promise<HaServices>
   listDeviceTriggers(deviceId: string): Promise<Record<string, unknown>[]>
+  // For automation.* and script.* entities: the stored config, as in the HA editor's YAML view.
+  getConfig(entityId: string): Promise<Record<string, unknown>>
+  searchRelated(itemType: string, itemId: string): Promise<Record<string, string[]>>
   // Resolves once HA accepted the trigger, and rejects if HA refuses it. While
   // disconnected it resolves right away and the trigger is subscribed on
   // connect; later refusals go to onError. Every subscription is renewed after
@@ -530,6 +533,12 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     listServices: () => request<HaServices>({ type: 'get_services' }),
     listDeviceTriggers: (deviceId) =>
       request<Record<string, unknown>[]>({ type: 'device_automation/trigger/list', device_id: deviceId }),
+    async getConfig(entityId) {
+      const domain = entityId.split('.')[0]
+      return (await request<{ config: Record<string, unknown> }>({ type: `${domain}/config`, entity_id: entityId })).config
+    },
+    searchRelated: (itemType, itemId) =>
+      request<Record<string, string[]>>({ type: 'search/related', item_type: itemType, item_id: itemId }),
     subscribeTrigger,
   }
 }

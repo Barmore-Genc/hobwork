@@ -258,7 +258,7 @@ Runtime: `invoke` (call a route or run a cron, webhook or trigger by hand, on `m
 
 Secrets: `list_secrets` (the library: names, hosts and assignments, never values), `assign_secret` and `unassign_secret`. Only users create secrets and set values and hosts. See [Secrets and network](#secrets-and-network).
 
-Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_services`, `ha_list_device_triggers` (ready-made trigger definitions for a device), and `ha_listen` (wait for a trigger to fire, so an agent can ask the user to press a button and see the resulting payload). Listings take filters and are paged, since real installs have thousands of entities.
+Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_services`, `ha_list_device_triggers` (ready-made trigger definitions for a device), `ha_get_automation` (an automation's or script's config, whether it is on and when it last ran), `ha_find_related` (the automations and scripts that use a device or entity, and the other way round), and `ha_listen` (wait for a trigger to fire, so an agent can ask the user to press a button and see the resulting payload). Listings take filters and are paged, since real installs have thousands of entities.
 
 Devices: `list_devices` (names, owners, capabilities, connection). Read-only; see [Devices](#devices-apple-apps).
 

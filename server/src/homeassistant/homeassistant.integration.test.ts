@@ -84,6 +84,15 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant dev instanc
     expect(triggers[0]).toMatchObject({ platform: 'device', device_id: expect.any(String) })
   })
 
+  test('reads automation configs and what uses an entity', async () => {
+    const automation = 'automation.test_button_emits_event'
+    expect(await ha.getConfig(automation)).toMatchObject({
+      triggers: [{ trigger: 'state', entity_id: 'input_button.test_button' }],
+    })
+    expect(await ha.searchRelated('entity', 'input_button.test_button')).toMatchObject({ automation: [automation] })
+    await expect(ha.getConfig('automation.nope')).rejects.toMatchObject({ code: 'not_found' })
+  })
+
   test('the trigger registry invokes the handler for a bus event trigger', async () => {
     const invocations: { project: string; name: string; variables: TriggerVariables }[] = []
     const registry = createTriggerRegistry({

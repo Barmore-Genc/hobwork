@@ -456,7 +456,14 @@ export function createDevices(options: {
   }
 
   function callMessage(command: CommandRecord) {
-    return { type: 'call' as const, id: command.id, capability: command.capability, method: command.method, args: command.args }
+    return {
+      type: 'call' as const,
+      id: command.id,
+      capability: command.capability,
+      method: command.method,
+      args: command.args,
+      expiresAt: command.expiresAt,
+    }
   }
 
   function sendOverSocket(waiter: Waiter): boolean {

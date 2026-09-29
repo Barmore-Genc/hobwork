@@ -23,7 +23,7 @@ export class DeviceError extends Error {
 }
 
 export type HostMessage =
-  | { type: 'call'; id: string; capability: string; method: string; args: unknown }
+  | { type: 'call'; id: string; capability: string; method: string; args: unknown; expiresAt?: string }
   | { type: 'ping' }
   | { type: 'pong' }
 

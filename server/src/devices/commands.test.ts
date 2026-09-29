@@ -180,6 +180,7 @@ test('commands go over the socket when the app is connected, and the first resul
     capability: 'alarms',
     method: 'set',
     args: { title: 'Wake up', time: '07:00', days: ['mon', 'fri'] },
+    expiresAt: expect.any(String),
   })
   client.send({ type: 'result', id: message.id, ok: true, value: { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' } })
   expect(await call).toEqual({ id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' })

@@ -12,6 +12,7 @@ import { lastLogId, listInvocations, queryLogs, waitForLogs } from './runtime/lo
 import type { Runtime } from './runtime/runtime.ts'
 import type { InternalHandler } from './sandbox/sandbox.ts'
 import { listVersions } from './versions.ts'
+import { createWorkspaceGit, WORKSPACE_GIT_PREFIX } from './workspace-git.ts'
 import { SESSION_HEADER, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
 const MAX_BODY_CHARS = 64 * 1024
@@ -95,10 +96,7 @@ export function createWorkspaceApi(options: {
 
   async function commit({ project, branch, agent, request }: Context): Promise<CliResult> {
     const message = await bodyField(request, 'message')
-    const sha = await workspaces.commit(project, branch, message, {
-      name: agent.name,
-      email: `agent-${agent.id}@hobwork.local`,
-    })
+    const sha = await workspaces.commit(project, branch, message, agent)
     return { output: sha ? `Committed ${sha}` : 'Nothing to commit', ok: true }
   }
 
@@ -147,9 +145,12 @@ export function createWorkspaceApi(options: {
     'GET /v1/workspace/invocations': invocations,
   }
 
-  return ({ project, branch }) =>
-    async (request) => {
+  const workspaceGit = createWorkspaceGit({ host, workspaces })
+  return ({ project, branch }) => {
+    const gitHandler = workspaceGit({ project, branch })
+    return async (request) => {
       const url = new URL(request.url)
+      if (url.pathname.startsWith(WORKSPACE_GIT_PREFIX)) return gitHandler(request)
       const route = routes[`${request.method} ${url.pathname}`]
       if (!route) return Response.json({ error: `${request.method} ${url.pathname} does not exist` }, { status: 404 })
       const agent = workspaces.sessionAgent(project, branch, request.headers.get(SESSION_HEADER) ?? '')
@@ -168,4 +169,5 @@ export function createWorkspaceApi(options: {
         return Response.json({ error: 'Something went wrong on the Hobwork host' }, { status: 500 })
       }
     }
+  }
 }

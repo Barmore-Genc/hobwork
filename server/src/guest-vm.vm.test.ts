@@ -11,6 +11,7 @@ import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './gu
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { createTestHost } from './test-host.ts'
+import { createWorkspaceApi } from './workspace-api.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from './workspaces.ts'
 
 // Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
@@ -25,8 +26,9 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
   beforeAll(async () => {
     if (!imageExists(vmOptions.image)) throw new Error(`no guest image at ${vmOptions.image}, run images/build.sh`)
     host = createTestHost()
-    workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: workspaceVmBackend(vmOptions) })
+    workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: workspaceVmBackend(vmOptions, (workspace) => api(workspace)) })
     const delivery = createDelivery(host, { workspaces, pipeline: { startVm: pipelineVms.start } })
+    const api = createWorkspaceApi({ host, workspaces, delivery })
     server = createApp(host, { workspaces, delivery })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`)
@@ -108,6 +110,23 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     const refused = await call('merge', { ...noLock, summary: 'Drop lockfile' })
     expect(refused.isError, refused.text).toBe(true)
     expect(refused.text).toContain('commit pnpm-lock.yaml')
+  })
+
+  test('file tools and commits run in the VM', async () => {
+    const tools = { hob: p.hob, branch: 'tools' }
+    await ok('create_branch', tools)
+    await ok('bash', { ...tools, command: 'ln -s /etc etc-link && echo hi > made.txt' })
+    const escape = await call('read_file', { ...tools, path: 'etc-link/passwd' })
+    expect(escape.isError, escape.text).toBe(true)
+    expect(escape.text).toContain('symlink')
+    expect(await ok('read_file', { ...tools, path: 'made.txt' })).toBe('hi')
+    expect(await ok('search', { ...tools, pattern: '^hi$' })).toBe('made.txt:1: hi')
+
+    const commit = await ok('commit', { ...tools, message: 'Add made' })
+    expect(commit).toMatch(/^Committed [0-9a-f]{40}$/)
+    const [head] = JSON.parse(await ok('log', { hob: p.hob, ref: 'tools', limit: 1 }))
+    expect(head).toMatchObject({ subject: 'Add made', author: 'claude', sha: commit.slice('Committed '.length) })
+    expect(await ok('diff', tools)).toBe('No changes')
   })
 
   test('egress follows hobwork.json and the VM restarts when it changes', async () => {

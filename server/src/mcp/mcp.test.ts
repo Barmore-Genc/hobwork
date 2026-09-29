@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
@@ -9,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createTestHost } from '../test-host.ts'
+import { hostWorkspaceVm } from '../test-workspace-vm.ts'
 import {
   createWorkspaceManager,
   type ExecWorkspaceVm,
@@ -27,36 +26,12 @@ let client: Client
 let vmStarts: Workspace[]
 let workspaces: WorkspaceManager<ExecWorkspaceVm>
 
-// Runs commands on the host in the workspace directory, standing in for a VM.
-function fakeVm(workspace: Workspace): ExecWorkspaceVm {
-  return {
-    async stop() {},
-    exec(command, { cwd, signal, env, onOutput }) {
-      return new Promise((resolve, reject) => {
-        const child = spawn('sh', ['-c', command], { cwd: join(workspace.dir, cwd), signal, env: { ...process.env, ...env } })
-        let stdout = ''
-        let stderr = ''
-        child.stdout.on('data', (chunk: Buffer) => {
-          stdout += chunk
-          onOutput?.('stdout', chunk.toString())
-        })
-        child.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk
-          onOutput?.('stderr', chunk.toString())
-        })
-        child.on('error', reject)
-        child.on('close', (code) => resolve({ exitCode: code ?? -1, stdout, stderr }))
-      })
-    },
-  }
-}
-
 async function listen(withVms: boolean): Promise<void> {
   workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, {
     startVm: withVms
       ? async (workspace) => {
           vmStarts.push(workspace)
-          return fakeVm(workspace)
+          return hostWorkspaceVm(host, workspace)
         }
       : undefined,
   })
@@ -292,4 +267,52 @@ test('bash without a VM backend returns a tool error', async () => {
   expect(await fails('bash', { hob: 'filament', branch: 'spools', command: 'ls' })).toContain(
     'no workspace VM backend',
   )
+})
+
+test('reads committed files without a VM backend, and refuses uncommitted work', async () => {
+  await client.close()
+  await new Promise((resolve) => server.close(resolve))
+  await listen(false)
+  client = await connect()
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const b = { hob: 'filament', branch: 'spools' }
+  expect(await ok('read_file', { ...b, path: 'AGENTS.md' })).toContain('Hobwork project')
+  expect(await ok('list_files', { ...b, path: '.', recursive: false })).toContain('src/')
+  expect(await ok('search', { ...b, pattern: 'Hobwork project' })).toContain('AGENTS.md:')
+  expect(await fails('write_file', { ...b, path: 'x.ts', content: '' })).toContain('not available')
+  expect(vmStarts).toHaveLength(0)
+})
+
+test('reads from git while the workspace is clean and from the VM once it is not', async () => {
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const b = { hob: 'filament', branch: 'spools' }
+  await ok('read_file', { ...b, path: 'AGENTS.md' })
+  expect(vmStarts).toHaveLength(0)
+
+  await ok('write_file', { ...b, path: 'x.ts', content: 'export const x = 1\n' })
+  expect(vmStarts).toHaveLength(1)
+  expect(await ok('read_file', { ...b, path: 'x.ts' })).toBe('export const x = 1')
+
+  await ok('commit', { ...b, message: 'Add x' })
+  expect(await ok('read_file', { ...b, path: 'x.ts' })).toBe('export const x = 1')
+  expect(vmStarts).toHaveLength(1)
+})
+
+test('read-only credentials read committed files and never uncommitted work', async () => {
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const b = { hob: 'filament', branch: 'spools' }
+  await ok('write_file', { ...b, path: 'draft.ts', content: 'export const draft = 1\n' })
+
+  const reader = await connect(createAgentToken(host.db, 'reader', { readOnly: true, projects: null }).token)
+  const read = async (path: string) =>
+    (await reader.callTool({ name: 'read_file', arguments: { ...b, path } })) as CallToolResult
+  expect(textOf(await read('AGENTS.md'))).toContain('Hobwork project')
+  expect((await read('draft.ts')).isError).toBe(true)
+  const diff = (await reader.callTool({ name: 'diff', arguments: b })) as CallToolResult
+  expect(diff.isError).toBe(true)
+  expect(textOf(diff)).toContain('Read-only credentials')
+  await reader.close()
 })

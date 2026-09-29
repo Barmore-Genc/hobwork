@@ -11,6 +11,7 @@ import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain } from '../test-project.ts'
+import { startHostWorkspaceVm } from '../test-workspace-vm.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -20,7 +21,7 @@ let server: Server
 let client: Client
 
 async function start(withPipeline: boolean): Promise<void> {
-  const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host)
+  const workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: startHostWorkspaceVm(host) })
   const delivery = createDelivery(host, {
     workspaces,
     pipeline: withPipeline ? { startVm: startHostPipelineVm } : undefined,

@@ -25,6 +25,7 @@ import type {
   Workspace,
 } from './workspaces.ts'
 import { SESSION_HEADER } from './workspaces.ts'
+import { TOOL_COMMAND } from './workspace-tools.ts'
 
 export const GUEST_DIR = '/workspace'
 export const NPM_REGISTRY = 'registry.npmjs.org'
@@ -38,9 +39,18 @@ const HOST_CLI_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/cli')
 const ICONS_DIR = '/opt/hobwork/icons'
 const HOST_ICONS_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/icons')
 
+// The file and git tools the host runs in the VM (see workspace-tools.ts). The
+// checkout's git directory is mounted next to it, since the host never runs git
+// on files the VM can write.
+const TOOLS_DIR = '/opt/hobwork/tools'
+const HOST_TOOLS_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/workspace-tools')
+export const GUEST_GIT_DIR = '/opt/hobwork/workspace-git'
+
 const INSTALL_CLI = [
   `printf '#!/bin/sh\\nexec node --disable-warning=ExperimentalWarning ${CLI_DIR}/main.ts "$@"\\n' > /usr/local/bin/hobwork`,
   'chmod 755 /usr/local/bin/hobwork',
+  `printf '#!/bin/sh\\nHOBWORK_GIT_DIR=${GUEST_GIT_DIR} exec node --disable-warning=ExperimentalWarning ${TOOLS_DIR}/main.ts "$@"\\n' > /usr/local/bin/${TOOL_COMMAND}`,
+  `chmod 755 /usr/local/bin/${TOOL_COMMAND}`,
 ].join(' && ')
 
 // Answered by the workspace environment (the branch DB and Home Assistant);
@@ -160,7 +170,7 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
   let running = 0
   return {
     busy: () => running > 0,
-    async exec(command: string, { cwd, timeoutMs, signal, env, onOutput }: ExecOptions): Promise<ExecResult> {
+    async exec(command: string, { cwd, timeoutMs, signal, env, input, onOutput }: ExecOptions): Promise<ExecResult> {
       const output = { stdout: new HeadTailOutput(), stderr: new HeadTailOutput() }
       running++
       try {
@@ -169,6 +179,7 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
           timeoutMs,
           signal,
           env,
+          input,
           onOutput: ({ stream, text }) => {
             output[stream].push(text)
             onOutput?.(stream, text)
@@ -222,7 +233,12 @@ export function workspaceVmBackend(
     try {
       sandbox = await options.createSandbox({
         ...base,
-        mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
+        mounts: {
+          ...base.mounts,
+          [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true },
+          [TOOLS_DIR]: { hostPath: HOST_TOOLS_DIR, readonly: true },
+          [GUEST_GIT_DIR]: { hostPath: workspace.gitDir },
+        },
         internal: (request) => {
           if (ENVIRONMENT_PATHS.has(new URL(request.url).pathname)) {
             if (!hasSession?.(workspace, request.headers.get(SESSION_HEADER) ?? '')) {

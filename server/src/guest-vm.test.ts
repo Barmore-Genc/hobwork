@@ -78,6 +78,7 @@ function workspace(): Workspace {
     branch: 'spools',
     status: 'starting',
     dir,
+    gitDir: join(dir, '..', 'git'),
     createdAt: '',
     lastUsedAt: '',
   }

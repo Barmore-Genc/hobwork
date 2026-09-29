@@ -258,6 +258,7 @@ class GondolinSandbox implements Sandbox {
     const proc = this.#vm.exec(command, {
       cwd: options.cwd,
       env: { ...options.env, [EXEC_ID_VAR]: execId },
+      stdin: options.input,
       stdout: onOutput ? decodingWriter('stdout', onOutput) : 'buffer',
       stderr: onOutput ? decodingWriter('stderr', onOutput) : 'buffer',
     })

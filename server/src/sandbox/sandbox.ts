@@ -76,6 +76,8 @@ export type ExecOptions = {
   env?: Record<string, string>
   timeoutMs?: number
   signal?: AbortSignal
+  // Written to the command's stdin, which is then closed.
+  input?: string
   // When set, output is streamed here and not buffered into the result.
   onOutput?: (chunk: OutputChunk) => void
 }

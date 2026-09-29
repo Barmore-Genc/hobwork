@@ -14,6 +14,7 @@ import { createTestHost } from '../test-host.ts'
 export type TestMcp = {
   host: Host
   client: Client
+  token: string
   call(name: string, args?: Record<string, unknown>, options?: { timeout?: number }): Promise<CallToolResult>
   close(): Promise<void>
 }
@@ -28,13 +29,14 @@ export async function startTestMcp(
     runtime?: (host: Host) => Runtime
     data?: (host: Host) => ProjectData
     secrets?: (host: Host) => SecretStore
+    sshPort?: number
   } = {},
 ): Promise<TestMcp> {
   const host = createTestHost()
   const { token } = createAgentToken(host.db, 'claude')
   const runtime = options.runtime?.(host)
   const data = options.data?.(host)
-  const server = createApp(host, { homeAssistant: options.homeAssistant, runtime, data, secrets: options.secrets?.(host) })
+  const server = createApp(host, { homeAssistant: options.homeAssistant, runtime, data, secrets: options.secrets?.(host), sshPort: options.sshPort })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`)
   const client = new Client({ name: 'test', version: '0.0.0' })
@@ -44,6 +46,7 @@ export async function startTestMcp(
   return {
     host,
     client,
+    token,
     async call(name, args = {}, callOptions = {}) {
       return (await client.callTool({ name, arguments: args }, undefined, callOptions)) as CallToolResult
     },

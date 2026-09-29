@@ -192,13 +192,21 @@ export type Connection = {
   revokedAt: string | null
 }
 
+export type SshKeySource =
+  | { via: 'web'; userName: string | null }
+  | { via: 'agent'; token: { id: number; createdAt: string } | null; signIn: { id: number; clientName: string } | null }
+  | { via: 'host' }
+
 export type SshKey = {
   id: number
+  name: string
   algorithm: string
   fingerprint: string
   comment: string
+  addedFrom: SshKeySource | null
   createdAt: string
   lastUsedAt: string | null
+  revokedAt: string | null
 }
 
 export type Agent = {
@@ -389,8 +397,9 @@ export const api = {
   createToken: (agentId: number) => request<CreatedToken>('POST', `/api/agents/${agentId}/tokens`),
   revokeToken: (tokenId: number) => request<void>('POST', `/api/tokens/${tokenId}/revoke`),
   revokeConnection: (id: number) => request<void>('POST', `/api/connections/${id}/revoke`),
-  addSshKey: (agentId: number, publicKey: string) => request<SshKey>('POST', `/api/agents/${agentId}/ssh-keys`, { publicKey }),
-  removeSshKey: (id: number) => request<void>('DELETE', `/api/ssh-keys/${id}`),
+  addSshKey: (agentId: number, name: string, publicKey: string) =>
+    request<SshKey>('POST', `/api/agents/${agentId}/ssh-keys`, { name, publicKey }),
+  revokeSshKey: (id: number) => request<void>('POST', `/api/ssh-keys/${id}/revoke`),
   connectRequest: (id: string) => request<ConnectRequest>('GET', `/api/oauth/requests/${encodeURIComponent(id)}`),
   approveConnect: (id: string, agentName: string) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, { agentName }),

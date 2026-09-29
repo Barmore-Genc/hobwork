@@ -121,7 +121,7 @@ test('creating an agent shows its key once and the key works for MCP', async () 
   expect(res.status).toBe(201)
   const { agent, token } = await jsonOf(res)
   expect(agent.name).toBe('claude-code')
-  expect(verifyAgentToken(host.db, token)).toEqual(agent)
+  expect(verifyAgentToken(host.db, token)).toMatchObject(agent)
 
   const [listed] = await jsonOf(await get('/api/agents'))
   expect(listed).toMatchObject({ id: agent.id, name: 'claude-code', tokens: [{ revokedAt: null }] })
@@ -137,43 +137,55 @@ test('adding a key to an agent and revoking keys', async () => {
   const res = await post(`/api/agents/${agent.id}/tokens`)
   expect(res.status).toBe(201)
   const { token: second } = await jsonOf(res)
-  expect(verifyAgentToken(host.db, second)).toEqual(agent)
+  expect(verifyAgentToken(host.db, second)).toMatchObject(agent)
 
   const [listed] = await jsonOf(await get('/api/agents'))
   expect(listed.tokens).toHaveLength(2)
   const firstId = listed.tokens.at(-1).id
   expect((await post(`/api/tokens/${firstId}/revoke`)).status).toBe(204)
   expect(verifyAgentToken(host.db, first)).toBeUndefined()
-  expect(verifyAgentToken(host.db, second)).toEqual(agent)
+  expect(verifyAgentToken(host.db, second)).toMatchObject(agent)
   expect((await post(`/api/tokens/${firstId}/revoke`)).status).toBe(404)
   expect((await post('/api/agents/999/tokens')).status).toBe(404)
 })
 
-test('registering and removing SSH keys of an agent', async () => {
+test('registering and revoking SSH keys of an agent', async () => {
   const { agent } = await jsonOf(await post('/api/agents', { name: 'laptop' }))
   const { public: publicKey, private: privateKey } = generateEd25519KeyPair()
-  const unauthenticated = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { 'x-hobwork-csrf': '1' })
+  const add = (body: Record<string, unknown>) => post(`/api/agents/${agent.id}/ssh-keys`, body)
+  const unauthenticated = await post(`/api/agents/${agent.id}/ssh-keys`, { name: 'Laptop', publicKey }, { 'x-hobwork-csrf': '1' })
   expect(unauthenticated.status).toBe(401)
-  const noCsrf = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { cookie, 'content-type': 'application/json' })
+  const noCsrf = await post(`/api/agents/${agent.id}/ssh-keys`, { name: 'Laptop', publicKey }, { cookie, 'content-type': 'application/json' })
   expect(noCsrf.status).toBe(403)
+  expect((await jsonOf(await add({ publicKey }))).error).toBe('Give the SSH key a name')
+  expect((await add({ name: 'x'.repeat(65), publicKey })).status).toBe(400)
 
-  const res = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: `${publicKey} kaan@laptop\n` })
+  const res = await add({ name: ' Laptop ', publicKey: `${publicKey} kaan@laptop\n` })
   expect(res.status).toBe(201)
   const key = await jsonOf(res)
-  expect(key).toMatchObject({ agentId: agent.id, algorithm: 'ssh-ed25519', comment: 'kaan@laptop', lastUsedAt: null })
+  expect(key).toMatchObject({
+    agentId: agent.id,
+    name: 'Laptop',
+    algorithm: 'ssh-ed25519',
+    comment: 'kaan@laptop',
+    addedFrom: { via: 'web', userName: expect.any(String) },
+    lastUsedAt: null,
+    revokedAt: null,
+  })
   expect(key.fingerprint).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/)
   const [listed] = await jsonOf(await get('/api/agents'))
   expect(listed.sshKeys).toEqual([key])
 
-  expect((await jsonOf(await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }))).error).toContain('already registered to laptop')
-  expect((await jsonOf(await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: privateKey }))).error).toContain('private key')
-  expect((await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: 'ssh-ed25519 nope' })).status).toBe(400)
-  expect((await post('/api/agents/999/ssh-keys', { publicKey })).status).toBe(404)
+  expect((await jsonOf(await add({ name: 'Again', publicKey }))).error).toContain('already registered to laptop')
+  expect((await jsonOf(await add({ name: 'Private', publicKey: privateKey }))).error).toContain('private key')
+  expect((await add({ name: 'Bad', publicKey: 'ssh-ed25519 nope' })).status).toBe(400)
+  expect((await post('/api/agents/999/ssh-keys', { name: 'Laptop', publicKey })).status).toBe(404)
 
-  const remove = (id: number) => fetch(`${app.base}/api/ssh-keys/${id}`, { method: 'DELETE', headers: writeHeaders(cookie) })
-  expect((await remove(key.id)).status).toBe(204)
-  expect((await remove(key.id)).status).toBe(404)
-  expect((await jsonOf(await get('/api/agents')))[0].sshKeys).toEqual([])
+  expect((await post(`/api/ssh-keys/${key.id}/revoke`)).status).toBe(204)
+  expect((await post(`/api/ssh-keys/${key.id}/revoke`)).status).toBe(404)
+  const [after] = (await jsonOf(await get('/api/agents')))[0].sshKeys
+  expect(after.revokedAt).not.toBeNull()
+  expect((await add({ name: 'Laptop', publicKey })).status).toBe(201)
 })
 
 test('request bodies must be JSON', async () => {

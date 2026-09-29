@@ -50,10 +50,10 @@ pnpm --filter @hobwork/server create-token claude-code
 claude mcp add --transport http hobwork http://localhost:7420/mcp --header "Authorization: Bearer <token>"
 ```
 
-For SSH into a workspace, register a public key to an agent and connect with `<project>/<branch>` as the user:
+For SSH into a workspace, register a public key to an agent (agents can also add their own with the `add_ssh_key` MCP tool) and connect with `<project>/<branch>` as the user:
 
 ```sh
-pnpm --filter @hobwork/server add-ssh-key claude-code ~/.ssh/id_ed25519.pub
+pnpm --filter @hobwork/server add-ssh-key claude-code laptop ~/.ssh/id_ed25519.pub
 ssh -p 2222 filament/add-spools@localhost
 ```
 

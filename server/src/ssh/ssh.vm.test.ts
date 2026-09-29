@@ -49,7 +49,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('SSH gateway with real VMs'
         err ? reject(err) : resolve(),
       ),
     )
-    addSshKey(host.db, ensureAgent(host.db, 'laptop').id, readFileSync(join(dir, 'key.pub'), 'utf8'))
+    addSshKey(host.db, ensureAgent(host.db, 'laptop').id, 'laptop', readFileSync(join(dir, 'key.pub'), 'utf8'), { via: 'host' })
     gateway = createSshGateway({ host, workspaces, hostKey: generateEd25519KeyPair().private })
     await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
     port = (gateway.address() as AddressInfo).port

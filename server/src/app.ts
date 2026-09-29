@@ -59,6 +59,7 @@ export function createApp(
     secrets?: SecretStore
     backups?: Backups
     devices?: Devices
+    sshPort?: number
     web?: WebOptions
   } = {},
 ): Server {
@@ -85,6 +86,7 @@ export function createApp(
     delivery,
     authenticate: options.authenticate ?? mcpAuth(host, oauth.verifyAccessToken),
     resourceMetadataUrl: oauth.resourceMetadataUrl,
+    ssh: options.sshPort === undefined ? undefined : { host: new URL(web.publicUrl).hostname, port: options.sshPort },
     homeAssistant: options.homeAssistant,
     runtime: options.runtime,
     data: options.data,

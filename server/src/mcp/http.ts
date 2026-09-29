@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { verifyAgentToken, type Agent } from '../agents.ts'
+import { verifyAgentToken, type AuthenticatedAgent } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
@@ -11,10 +11,11 @@ import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { createMcpServer } from './server.ts'
+import type { SshAddress } from './ssh-keys.ts'
 
 export const MCP_PATH = '/mcp'
 
-export type McpAuthenticator = (req: IncomingMessage) => Agent | undefined
+export type McpAuthenticator = (req: IncomingMessage) => AuthenticatedAgent | undefined
 
 function bearerToken(req: IncomingMessage): string | undefined {
   const header = req.headers.authorization
@@ -30,7 +31,7 @@ export function bearerTokenAuth(host: Host): McpAuthenticator {
 
 // Static agent tokens (Claude Code with --header) and OAuth access tokens
 // issued for this MCP endpoint.
-export function mcpAuth(host: Host, verifyAccessToken: (token: string) => Agent | undefined): McpAuthenticator {
+export function mcpAuth(host: Host, verifyAccessToken: (token: string) => AuthenticatedAgent | undefined): McpAuthenticator {
   return (req) => {
     const token = bearerToken(req)
     if (!token) return undefined
@@ -50,6 +51,7 @@ export function createMcpHandler(options: {
   authenticate?: McpAuthenticator
   // RFC 9728: sent in the 401 challenge so OAuth clients find the authorization server.
   resourceMetadataUrl?: string
+  ssh?: SshAddress
   homeAssistant?: HomeAssistant
   runtime?: Runtime
   data?: ProjectData
@@ -80,6 +82,7 @@ export function createMcpHandler(options: {
       workspaces: options.workspaces,
       delivery: options.delivery,
       agent,
+      ssh: options.ssh,
       homeAssistant: options.homeAssistant,
       runtime: options.runtime,
       data: options.data,

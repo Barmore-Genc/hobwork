@@ -146,7 +146,7 @@ export function createStorageUsage(host: Host, options: { maxAgeMs?: number; now
       return running ?? Promise.resolve()
     },
 
-    // For a project that is gone or renamed, so nothing shows old numbers.
+    // For a deleted project, so its numbers do not linger.
     forget(projectId: number) {
       cache.delete(projectId)
       queued.delete(projectId)

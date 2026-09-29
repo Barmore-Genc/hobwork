@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createAgentToken } from './agents.ts'
+import { createAgentToken, verifyAgentToken } from './agents.ts'
 import { createProjectData, type ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import type { TriggerRegistry } from './homeassistant/triggers.ts'
@@ -17,6 +17,7 @@ import { createRuntime, type Runtime } from './runtime/runtime.ts'
 import { fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './runtime/test-sandbox.ts'
 import { rotateWebhookToken } from './runtime/webhooks.ts'
 import { createSecretStore, type SecretStore } from './secrets.ts'
+import { createStorageUsage } from './storage.ts'
 import { createTestHost } from './test-host.ts'
 import { fakePackageJson, seedMain } from './test-project.ts'
 import { sendTo, signedIn, startTestApp, TEST_APPS_DOMAIN, writeHeaders } from './test-web.ts'
@@ -177,6 +178,18 @@ test('old webhook URLs, app links and project pages lead to the renamed project'
   expect(logs.status).toBe(404)
   expect(await logs.json()).toEqual({ error: 'filament is now called spools' })
   expect(() => requireProject(host, 'filament')).toThrow('Project "filament" was renamed to "spools"')
+})
+
+test('storage use and agent access follow the renamed project', async () => {
+  const id = requireProject(host, 'filament').id
+  const storage = createStorageUsage(host)
+  await storage.measure({ id, name: 'filament' })
+  const { token } = createAgentToken(host.db, 'claude', { readOnly: false, projects: ['filament'] })
+
+  await renameProject({ host, workspaces, delivery, runtime, data, storage }, 'filament', 'spools')
+  await storage.measure({ id, name: 'spools' })
+  expect(storage.get({ id, name: 'spools' })?.database).toBeGreaterThan(0)
+  expect(verifyAgentToken(host.db, token)!.access.projects).toEqual(['spools'])
 })
 
 test('a new project can take the old name', async () => {

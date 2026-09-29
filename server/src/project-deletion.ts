@@ -45,6 +45,8 @@ export type TrashInfo = {
   }[]
   webhookTokens?: { name: string; tokenHash: string; createdAt: string }[]
   nfcTags?: { id: string; createdAt: string }[]
+  // Agent tokens and OAuth connections limited to a list of projects that included this one.
+  access?: { tokens: number[]; grants: number[] }
 }
 
 export type TrashEntry = {
@@ -143,7 +145,10 @@ async function deleteNow(
 // Rows that go with the project row but are needed to bring it back as it was:
 // versions, secret assignments, webhook tokens (so webhook URLs keep working)
 // and NFC tags (they are written on physical tags).
-function restorableRows(host: Host, projectId: number): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags'> {
+function restorableRows(
+  host: Host,
+  projectId: number,
+): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access'> {
   const all = (sql: string) => host.db.prepare(sql).all(projectId)
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
@@ -176,6 +181,10 @@ function restorableRows(host: Host, projectId: number): Pick<TrashInfo, 'version
       id: String(row.id),
       createdAt: String(row.created_at),
     })),
+    access: {
+      tokens: all('SELECT token_id FROM agent_token_projects WHERE project_id = ? ORDER BY token_id').map((row) => Number(row.token_id)),
+      grants: all('SELECT grant_id FROM oauth_grant_projects WHERE project_id = ? ORDER BY grant_id').map((row) => Number(row.grant_id)),
+    },
   }
 }
 
@@ -250,9 +259,10 @@ export type ProjectRestoreDeps = {
 
 // Brings a deleted project back from the trash, under its old name or another
 // one: its repo, DB, versions, secret assignments whose secret still exists,
-// webhook tokens and NFC tags. Run history, logs and branch workspaces stay
-// gone. It starts like after a host restart, building its deployed version
-// when first needed.
+// webhook tokens, NFC tags, and its place in the project lists of agent tokens
+// and OAuth connections that still exist. Run history, logs and branch
+// workspaces stay gone. It starts like after a host restart, building its
+// deployed version when first needed.
 export async function restoreProject(
   deps: ProjectRestoreDeps,
   id: string,
@@ -351,6 +361,14 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     for (const t of info.webhookTokens ?? []) token.run(projectId, t.name, t.tokenHash, t.createdAt)
     const tag = db.prepare('INSERT OR IGNORE INTO nfc_tags (id, project_id, created_at) VALUES (?, ?, ?)')
     for (const t of info.nfcTags ?? []) tag.run(t.id, projectId, t.createdAt)
+    const tokenAccess = db.prepare(
+      'INSERT OR IGNORE INTO agent_token_projects (token_id, project_id) SELECT id, ? FROM agent_tokens WHERE id = ?',
+    )
+    for (const id of info.access?.tokens ?? []) tokenAccess.run(projectId, id)
+    const grantAccess = db.prepare(
+      'INSERT OR IGNORE INTO oauth_grant_projects (grant_id, project_id) SELECT id, ? FROM oauth_grants WHERE id = ?',
+    )
+    for (const id of info.access?.grants ?? []) grantAccess.run(projectId, id)
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')

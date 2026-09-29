@@ -47,6 +47,8 @@ import {
   type LogLevel,
   type NewLogEntry,
 } from './logs.ts'
+import { DEFAULT_RESOURCES, memorySize, memoryMbOf, resolveResources } from '../sandbox/budget.ts'
+import { HostBusyError } from '../sandbox/scheduler.ts'
 import { createLineSplitter } from './line-splitter.ts'
 import { createLogLimiter, type LogLimiter } from './log-limiter.ts'
 import { parseRoutes, type Route } from './routes.ts'
@@ -450,10 +452,15 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     const secrets = options.secrets?.forSandbox(project) ?? {}
     const egress = [...new Set([...deployed.config.egress, ...(options.secrets?.hosts(project) ?? [])])]
     let inst: Instance | undefined
+    const resources = resolveResources('runtime', deployed.config.resources, {
+      ...DEFAULT_RESOURCES.runtime,
+      memoryMb: options.memory ? memoryMbOf(options.memory) : DEFAULT_RESOURCES.runtime.memoryMb,
+    })
     const sandbox = await createSandbox({
       image: options.image,
-      memory: options.memory ?? '512M',
-      cpus: 2,
+      budget: { kind: deployed.branch === undefined ? 'runtime' : 'preview', project },
+      memory: memorySize(resources.memoryMb),
+      cpus: resources.cpus,
       mounts: {
         [APP_DIR]: { hostPath: build, readonly: true },
         [RUNNER_DIR]: { hostPath: HOST_RUNNER_DIR, readonly: true },
@@ -694,7 +701,8 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       })
       timedOut = !result.ok && result.error.name === 'TimeoutError'
     } catch (err) {
-      const unavailable = err instanceof RuntimeUnavailable
+      // A busy host says nothing about the version, like a host without a runtime backend.
+      const unavailable = err instanceof RuntimeUnavailable || err instanceof HostBusyError
       result = {
         ok: false,
         error: {

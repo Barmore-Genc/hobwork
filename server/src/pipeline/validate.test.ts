@@ -16,6 +16,16 @@ test('validates the parsed value against the schema', () => {
   ])
 })
 
+test('validates resources', () => {
+  expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 256, "cpus": 1 }, "workspace": {} } }')).toEqual([])
+  expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 12 } } }')).toEqual([
+    '/resources/runtime/memoryMb: must be >= 128',
+  ])
+  expect(validateHobworkJson('{ "resources": { "build": {} } }')).toEqual([
+    '/resources: must NOT have additional properties ("build")',
+  ])
+})
+
 test('reports where hobwork.json cannot be parsed', () => {
   expect(validateHobworkJson('{\n  "egress": ["a.example.com" "b.example.com"]\n}')).toEqual([
     'hobwork.json cannot be parsed: Comma expected at line 2 column 30',

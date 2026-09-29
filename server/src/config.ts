@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
 import type { ApnsConfig } from './devices/apns.ts'
+import { loadVmBudget, type VmBudget } from './sandbox/budget.ts'
 
 export type HomeAssistantConnection = {
   url: string
@@ -37,6 +38,8 @@ export type Config = {
   webDist: string
   homeAssistant?: HomeAssistantConnection
   workspaceIdleTimeoutMs: number
+  // Memory and vCPUs that all VMs together may reserve.
+  vmBudget: VmBudget
   // Undefined when the SSH gateway is off.
   sshPort?: number
   // Key for secrets at rest. Without it, <dataDir>/secret.key is used.
@@ -199,6 +202,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: resolve(repoRoot, 'web/dist'),
     homeAssistant: loadHomeAssistant(env),
     workspaceIdleTimeoutMs: idleMinutes * 60_000,
+    vmBudget: loadVmBudget(env),
     sshPort: env.HOBWORK_SSH_PORT === 'off' ? undefined : loadPort('HOBWORK_SSH_PORT', env.HOBWORK_SSH_PORT, 2222),
     ...(env.HOBWORK_SECRET_KEY ? { secretKey: env.HOBWORK_SECRET_KEY } : {}),
     backup: loadBackupConfig(env),

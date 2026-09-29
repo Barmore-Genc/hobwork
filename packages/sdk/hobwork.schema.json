@@ -7,6 +7,14 @@
   "definitions": {
     "handlerPath": { "type": "string", "minLength": 1 },
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "vmResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memoryMb": { "type": "integer", "minimum": 128 },
+        "cpus": { "type": "integer", "minimum": 1 }
+      }
+    },
     "cspHost": { "type": "string", "pattern": "^(https?|wss?)://(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\\d{1,5})?(/[^\\s;,'\"\\\\]*)?$" },
     "cspSources": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/definitions/cspHost" } },
     "cspSourcesWithSchemes": {
@@ -121,6 +129,16 @@
       }
     },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
+    "resources": {
+      "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 512 MB and 2 vCPUs, workspaces and pipeline runs (which also run builds) to 2048 MB and 4 vCPUs. Values above the defaults are capped to them.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": { "$ref": "#/definitions/vmResources" },
+        "workspace": { "$ref": "#/definitions/vmResources" },
+        "pipeline": { "$ref": "#/definitions/vmResources" }
+      }
+    },
     "icon": {
       "description": "The hob's icon, shown as its app's favicon and home screen icon and in hob lists: one emoji (\"🧵\") or the path of an SVG, PNG, JPEG or WebP image in the repo (\"ui/icon.svg\"). Hobwork renders it to every size it needs. Without it, the icon is the hob's first letter.",
       "type": "string",

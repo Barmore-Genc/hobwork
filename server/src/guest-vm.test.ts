@@ -114,6 +114,16 @@ test('workspace VMs mount the checkout with node_modules on the VM disk', async 
   expect(sandbox?.stopped).toBe(true)
 })
 
+test('workspace VMs get the resources hobwork.json asks for, up to the defaults', async () => {
+  writeFileSync(join(dir, 'hobwork.json'), '{ "resources": { "workspace": { "memoryMb": 1024, "cpus": 16 } } }')
+  await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  expect(sandboxes[0]?.options).toMatchObject({
+    memory: '1G',
+    cpus: 4,
+    budget: { kind: 'workspace', project: 'filament', branch: 'spools' },
+  })
+})
+
 test('exec maps cwd into the guest and returns streamed output', async () => {
   const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
   const chunks: string[] = []

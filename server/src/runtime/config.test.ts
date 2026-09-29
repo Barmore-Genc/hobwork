@@ -7,6 +7,13 @@ test('reads a hobwork.json with comments and trailing commas', () => {
   expect(config.idleTimeoutMs).toBe(5 * 60_000)
 })
 
+test('reads requested resources', () => {
+  expect(parseProjectConfig('{}').resources).toEqual({})
+  expect(parseProjectConfig('{ "resources": { "runtime": { "memoryMb": 256 } } }').resources).toEqual({
+    runtime: { memoryMb: 256 },
+  })
+})
+
 test('clamps idleTimeout below the largest setTimeout delay', () => {
   expect(parseProjectConfig('{ "idleTimeout": "365d" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)
   expect(parseProjectConfig('{ "idleTimeout": "99999999999999999999ms" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)

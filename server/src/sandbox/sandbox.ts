@@ -42,9 +42,14 @@ export type Interceptor = {
   handle: (request: Request, upstream: Upstream) => Promise<Response>
 }
 
+export type VmKind = 'runtime' | 'preview' | 'build' | 'pipeline' | 'workspace'
+
 export type SandboxOptions = {
   // Directory with the guest image (manifest.json, kernel, initramfs, rootfs).
   image: string
+  // What the VM is for, which the host's VM budget needs to schedule it.
+  // VMs without it count as pipeline VMs of no hob.
+  budget?: { kind: VmKind; project: string; branch?: string }
   memory?: string
   cpus?: number
   // Minimum root disk size, e.g. `4G`. Writes to the root disk are discarded on stop.

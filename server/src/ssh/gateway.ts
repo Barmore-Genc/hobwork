@@ -6,7 +6,7 @@ import type { Host } from '../host.ts'
 import { DEFAULT_BRANCH, ProjectError, validateProjectName } from '../projects.ts'
 import { validateBranchName } from '../repo.ts'
 import type { InteractiveWorkspaceVm, WorkspaceManager, WorkspaceProcess } from '../workspaces.ts'
-import { findSshKey, markSshKeyUsed } from './keys.ts'
+import { findSshKey, generateEd25519KeyPair, markSshKeyUsed } from './keys.ts'
 
 const HOST_KEY_FILE = 'ssh_host_ed25519_key'
 const SHELL = 'exec bash --login'
@@ -30,7 +30,7 @@ export function parseTarget(username: string): SshTarget {
 export function loadHostKey(dataDir: string): Buffer {
   const path = join(dataDir, HOST_KEY_FILE)
   if (!existsSync(path)) {
-    const { private: key } = ssh2.utils.generateKeyPairSync('ed25519')
+    const { private: key } = generateEd25519KeyPair()
     writeFileSync(path, key, { mode: 0o600, flag: 'wx' })
   }
   return readFileSync(path)

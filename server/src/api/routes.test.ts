@@ -1,10 +1,10 @@
-import ssh2 from 'ssh2'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { verifyAgentToken } from '../agents.ts'
 import { createDelivery, type Deployment } from '../delivery.ts'
 import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
+import { generateEd25519KeyPair } from '../ssh/keys.ts'
 import { createTestHost } from '../test-host.ts'
 import { seedMain } from '../test-project.ts'
 import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
@@ -151,7 +151,7 @@ test('adding a key to an agent and revoking keys', async () => {
 
 test('registering and removing SSH keys of an agent', async () => {
   const { agent } = await jsonOf(await post('/api/agents', { name: 'laptop' }))
-  const { public: publicKey, private: privateKey } = ssh2.utils.generateKeyPairSync('ed25519')
+  const { public: publicKey, private: privateKey } = generateEd25519KeyPair()
   const unauthenticated = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { 'x-hobwork-csrf': '1' })
   expect(unauthenticated.status).toBe(401)
   const noCsrf = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { cookie, 'content-type': 'application/json' })

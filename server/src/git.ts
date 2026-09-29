@@ -45,6 +45,10 @@ export function git(args: string[], options: GitOptions = {}): Promise<string> {
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
     child.on('error', reject)
+    // Commands that never read stdin can exit before we write it; the exit code is what matters.
+    child.stdin.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE') reject(err)
+    })
     child.on('close', (code) => {
       if (code === 0) resolve(Buffer.concat(stdout).toString('utf8'))
       else reject(new GitError(args, code, Buffer.concat(stderr).toString('utf8')))

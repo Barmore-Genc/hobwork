@@ -148,8 +148,6 @@ export type HealthSample = {
   unit?: string
   stage?: SleepStage
   workoutType?: string
-  // The app or device that recorded it.
-  source: string
 }
 
 // HealthKit data of the types the person shares in the app's settings.

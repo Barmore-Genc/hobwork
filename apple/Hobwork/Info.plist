@@ -54,8 +54,6 @@
 	</dict>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Projects on your Hobwork host can read the Health data you choose to share.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Hobwork does not write to Health.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 </dict>

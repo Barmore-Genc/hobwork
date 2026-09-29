@@ -399,3 +399,58 @@ test('hobwork.json adds sources to the policy, and a handler policy is sent as w
   // Node joins repeated headers with a comma, which browsers read as two policies.
   expect(route.headers['content-security-policy']).toBe(`${policy}, sandbox`)
 })
+
+test('another hob\'s app is refused unless hobwork.json lists it, on every method', async () => {
+  await createProject(host, 'open')
+  await release('open', {
+    'package.json': fakePackageJson({ build: BUILD }),
+    'hobwork.json': JSON.stringify({ ...HOBWORK_JSON, crossAppRequests: ['sleep'] }),
+  })
+  const { cookie } = signedIn(host)
+  const filament = appSessionCookie(host, cookie, 'filament')
+  const open = appSessionCookie(host, cookie, 'open')
+  const OPEN = 'http://open.apps.hobwork.test'
+  const fromSleep = { origin: SLEEP, 'sec-fetch-site': 'same-site' }
+
+  for (const headers of [fromSleep, { referer: `${SLEEP}/page`, 'sec-fetch-site': 'same-site', 'sec-fetch-dest': 'script' }]) {
+    const get = await send(`${FILAMENT}/api/spools`, { headers: { cookie: filament, ...headers } })
+    expect(get.status).toBe(403)
+    expect(JSON.parse(get.body).error).toContain('sleep')
+    expect((await send(`${FILAMENT}/assets/index-abc123.js`, { headers: { cookie: filament, ...headers } })).status).toBe(403)
+    expect((await send(`${OPEN}/api/spools`, { headers: { cookie: open, ...headers } })).status).toBe(200)
+  }
+
+  const write = { 'x-hobwork-csrf': '1', ...fromSleep }
+  expect((await send(`${FILAMENT}/api/spools`, { method: 'POST', headers: { cookie: filament, ...write }, body: 'red' })).status).toBe(403)
+  const listed = await send(`${OPEN}/api/spools`, { method: 'POST', headers: { cookie: open, ...write }, body: 'red' })
+  expect(listed.status).toBe(200)
+  expect((await send(`${OPEN}/api/spools`, { method: 'POST', headers: { cookie: open, origin: SLEEP }, body: 'red' })).status).toBe(403)
+
+  // The list is one way: open is not on filament's list, and filament is not on open's.
+  const fromFilament = { origin: FILAMENT, 'sec-fetch-site': 'same-site' }
+  expect((await send(`${OPEN}/api/spools`, { headers: { cookie: open, ...fromFilament } })).status).toBe(403)
+  expect((await send(`${SLEEP}/api/spools`, { headers: { cookie: appSessionCookie(host, cookie, 'sleep'), origin: OPEN, 'sec-fetch-site': 'same-site' } })).status).toBe(403)
+})
+
+test('the Hobwork UI, links, own previews and other sites still reach an app', async () => {
+  const { cookie } = signedIn(host)
+  const filament = appSessionCookie(host, cookie, 'filament')
+  const get = (path: string, headers: Record<string, string>) => send(`${FILAMENT}${path}`, { headers: { cookie: filament, ...headers } })
+
+  const frame = { 'sec-fetch-site': 'same-site', 'sec-fetch-dest': 'iframe' }
+  expect((await get('/', { ...frame, referer: `${TEST_PUBLIC_URL}/hobs/filament` })).status).toBe(200)
+  expect((await get('/', frame)).status).toBe(200)
+  expect((await get('/api/spools', { ...frame, referer: `${TEST_PUBLIC_URL}/` })).status).toBe(200)
+  expect((await get('/api/spools', { 'sec-fetch-site': 'same-site' })).status).toBe(403)
+  expect((await get('/api/spools', { ...frame })).status).toBe(403)
+
+  const link = { 'sec-fetch-site': 'same-site', 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate', referer: `${SLEEP}/` }
+  expect((await get('/spools/1', link)).status).toBe(200)
+  expect((await get('/api/spools', link)).status).toBe(403)
+  expect((await get('/', { ...frame, referer: `${SLEEP}/` })).status).toBe(403)
+
+  expect((await get('/api/spools', { 'sec-fetch-site': 'same-origin' })).status).toBe(200)
+  expect((await get('/', { 'sec-fetch-site': 'cross-site', 'sec-fetch-dest': 'document', origin: 'https://evil.example' })).status).toBe(200)
+  expect((await get('/api/spools', { 'sec-fetch-site': 'same-site', origin: 'http://blog.hobwork.test' })).status).toBe(403)
+  expect((await send(`${FILAMENT}/api/spools`, { headers: { cookie: filament } })).status).toBe(200)
+})

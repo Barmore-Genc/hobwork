@@ -3,15 +3,18 @@ import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { requireProject } from '../projects.ts'
 
-export const HOOKS_PREFIX = '/hooks/'
+// Webhooks are served on the hob's own app origin: <app origin>/_hobwork/hooks/<name>/<token>.
+export const HOOKS_PREFIX = '/_hobwork/hooks/'
+// Before webhooks moved to app origins they were at <Hobwork origin>/hooks/<hob>/<name>/<token>.
+export const LEGACY_HOOKS_PREFIX = '/hooks/'
 
 // Same reasoning as agent tokens: 256 random bits need no slow hash.
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
-export function webhookPath(project: string, name: string, token: string): string {
-  return `${HOOKS_PREFIX}${project}/${name}/${token}`
+export function webhookUrl(appOrigin: string, name: string, token: string): string {
+  return `${appOrigin}${HOOKS_PREFIX}${name}/${token}`
 }
 
 // Only the hash is stored, so the URL is shown once; rotating replaces the old
@@ -40,7 +43,7 @@ export function verifyWebhookToken(host: Host, project: string, name: string, to
   return row !== undefined
 }
 
-// Branch previews have their own URLs: /hooks/<branch label>--<project>/<name>/<token>.
+// Branch previews have their own origin and so their own URLs and tokens.
 export function rotateBranchWebhookToken(host: Host, project: string, branch: string, name: string): string {
   const { id } = requireProject(host, project)
   const token = randomBytes(32).toString('base64url')
@@ -54,16 +57,14 @@ export function rotateBranchWebhookToken(host: Host, project: string, branch: st
   return token
 }
 
-// The token is checked before a preview's branch label is resolved, which runs
-// git, so a request without a valid token costs no git work.
-export function branchesWithWebhookToken(host: Host, project: string, name: string, token: string): string[] {
-  return host.db
+export function verifyBranchWebhookToken(host: Host, project: string, branch: string, name: string, token: string): boolean {
+  const row = host.db
     .prepare(
-      `SELECT w.branch FROM branch_webhook_tokens w JOIN projects p ON p.id = w.project_id
-       WHERE p.name = ? AND w.name = ? AND w.token_hash = ?`,
+      `SELECT 1 FROM branch_webhook_tokens w JOIN projects p ON p.id = w.project_id
+       WHERE p.name = ? AND w.branch = ? AND w.name = ? AND w.token_hash = ?`,
     )
-    .all(project, name, hashToken(token))
-    .map((row) => String(row.branch))
+    .get(project, branch, name, hashToken(token))
+  return row !== undefined
 }
 
 export function webhookTokenCreatedAt(host: Host, project: string, name: string): string | undefined {

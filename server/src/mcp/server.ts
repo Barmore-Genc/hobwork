@@ -512,7 +512,7 @@ export function createMcpServer({
     registerHomeAssistantTools(server, homeAssistant)
     registerBranchHaTools(server, { host, agent })
   }
-  registerRuntimeTools(server, { host, runtime })
+  registerRuntimeTools(server, { host, runtime, appOrigin })
   registerSecretTools(server, { host, secrets, agent, publicUrl })
   registerSshKeyTools(server, { host, agent, ssh })
   if (devices) registerDeviceTools(server, devices)

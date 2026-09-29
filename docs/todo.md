@@ -26,14 +26,6 @@ Sections are in the order to work on them.
 - **File tools in the VM**: `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files` and `search` run inside the workspace VM. The host's check-then-open on the checkout races with symlinks the guest swaps in. Needs the workspace VM running for reads, so it depends on the VM budget below.
 - **Build copy after the VM stops**: stop the pipeline VM before `saveBuild`, and copy with `O_NOFOLLOW`.
 
-### Origins and headers
-
-- **Webhooks on the apps host**: serve `/hooks/` from the apps host, and stop answering it on the Hobwork origin.
-- **CSP and nosniff everywhere**: a `script-src` CSP on the UI, and `nosniff` on the JSON API and hob icons.
-- **Cross-app requests**: an app's `hobwork.json` lists the hobs whose apps may send it requests (`crossAppRequests`); others are refused on every method, including GET. Blocked by default.
-- **Host allowlist**: answer 421 for hosts other than the public host and app hosts.
-- **Apps URL**: document that the public host must not be at or below the apps host.
-
 ### Home Assistant, AI and secrets
 
 

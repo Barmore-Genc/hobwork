@@ -178,12 +178,12 @@ test('branch webhooks have their own URL and token', async () => {
   const mainToken = rotateWebhookToken(host, 'filament', 'scanned')
   const branchToken = rotateBranchWebhookToken(host, 'filament', 'add-spools', 'scanned')
   const hook = (target: string, token: string) =>
-    fetch(`${app.base}/hooks/${target}/scanned/${token}`, { method: 'POST', body: 'spool 3' })
+    sendTo(app.base, `http://${target}.${TEST_APPS_DOMAIN}/_hobwork/hooks/scanned/${token}`, { method: 'POST', body: 'spool 3' })
 
   const branch = await hook('add-spools--filament', branchToken)
   expect(branch.status).toBe(200)
-  expect(await branch.json()).toEqual({ where: 'branch', body: 'spool 3' })
-  expect(await (await hook('filament', mainToken)).json()).toEqual({ where: 'main', body: 'spool 3' })
+  expect(JSON.parse(branch.body)).toEqual({ where: 'branch', body: 'spool 3' })
+  expect(JSON.parse((await hook('filament', mainToken)).body)).toEqual({ where: 'main', body: 'spool 3' })
   expect((await hook('add-spools--filament', mainToken)).status).toBe(404)
   expect((await hook('filament', branchToken)).status).toBe(404)
   expect((await hook('nope--filament', branchToken)).status).toBe(404)
@@ -195,11 +195,11 @@ test('branch webhook pages are sandboxed and cannot set cookies', async () => {
   await start()
   await seedBranch(host, 'filament', 'add-spools', files('branch'))
   const token = rotateBranchWebhookToken(host, 'filament', 'add-spools', 'page')
-  const res = await fetch(`${app.base}/hooks/add-spools--filament/page/${token}`)
-  expect(await res.text()).toContain('<script>')
-  expect(res.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'")
-  expect(res.headers.get('x-content-type-options')).toBe('nosniff')
-  expect(res.headers.getSetCookie()).toEqual([])
+  const res = await sendTo(app.base, `${PREVIEW}/_hobwork/hooks/page/${token}`)
+  expect(res.body).toContain('<script>')
+  expect(res.headers['content-security-policy']).toBe("sandbox; default-src 'none'")
+  expect(res.headers['x-content-type-options']).toBe('nosniff')
+  expect(res.headers['set-cookie']).toBeUndefined()
 })
 
 test('previews use the branch DB, never production', async () => {

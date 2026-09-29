@@ -77,6 +77,7 @@ export function createAppOrigins(appsUrl: string) {
 
   return {
     domain,
+    appsUrl: apps.origin,
     secure: apps.protocol === 'https:',
     origin,
 

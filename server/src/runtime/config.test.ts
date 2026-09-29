@@ -14,6 +14,11 @@ test('reads requested resources', () => {
   })
 })
 
+test('no other app may send requests to an app unless crossAppRequests lists it', () => {
+  expect(parseProjectConfig('{}').crossAppRequests).toEqual([])
+  expect(parseProjectConfig('{ "crossAppRequests": ["sleep"] }').crossAppRequests).toEqual(['sleep'])
+})
+
 test('clamps idleTimeout below the largest setTimeout delay', () => {
   expect(parseProjectConfig('{ "idleTimeout": "365d" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)
   expect(parseProjectConfig('{ "idleTimeout": "99999999999999999999ms" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)

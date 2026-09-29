@@ -874,6 +874,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async csp(project: string, branch?: string): Promise<CspSources> {
       return (await deployedFor(project, branch)).config.csp
     },
+    // The hobs whose apps may send requests to this one, as its deployed version (or the branch) declares.
+    async crossAppRequests(project: string, branch?: string): Promise<string[]> {
+      return (await deployedFor(project, branch)).config.crossAppRequests
+    },
     // What the deployed version declares in hobwork.json.
     async config(project: string): Promise<{ config: ProjectConfig; version: number | null }> {
       const deployed = await deployment(project)

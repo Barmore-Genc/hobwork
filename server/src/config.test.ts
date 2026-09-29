@@ -94,8 +94,19 @@ test('apps URL defaults to apps.<public host> and must be an origin with a domai
   expect(() => loadConfig({ HOBWORK_APPS_URL: 'https://apps.example.com/x' })).toThrow('origin')
   expect(() => loadConfig({ HOBWORK_APPS_URL: 'http://127.0.0.1:7420' })).toThrow('domain name')
   expect(() => loadConfig({ HOBWORK_APPS_URL: 'http://localhost:7420' })).toThrow('domain name')
-  expect(() => loadConfig({ HOBWORK_PUBLIC_URL: 'https://a.example.com', HOBWORK_APPS_URL: 'https://a.example.com' })).toThrow(
-    'must differ',
+  for (const [publicUrl, appsUrl] of [
+    ['https://a.example.com', 'https://a.example.com'],
+    ['https://a.example.com:8443', 'https://a.example.com'],
+    ['https://hob.apps.example.com', 'https://apps.example.com'],
+    ['https://apps.example.com', 'https://apps.example.com'],
+  ] as const) {
+    expect(() => loadConfig({ HOBWORK_PUBLIC_URL: publicUrl, HOBWORK_APPS_URL: appsUrl }), publicUrl).toThrow('must not be at or below')
+  }
+  expect(loadConfig({ HOBWORK_PUBLIC_URL: 'https://example.com', HOBWORK_APPS_URL: 'https://apps.example.com' }).appsUrl).toBe(
+    'https://apps.example.com',
+  )
+  expect(loadConfig({ HOBWORK_PUBLIC_URL: 'https://apps.example.com', HOBWORK_APPS_URL: 'https://a.example.com' }).appsUrl).toBe(
+    'https://a.example.com',
   )
 })
 

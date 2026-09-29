@@ -10,7 +10,7 @@ import { projectLifecycleRoutes } from './api/project-lifecycle.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
 import { createAppHttp } from './apps/http.ts'
-import { createAppOrigins, parseLabel } from './apps/origins.ts'
+import { createAppOrigins } from './apps/origins.ts'
 import { createAuth } from './auth/auth.ts'
 import { createOidcLogin } from './auth/oidc.ts'
 import { createPasskeys } from './auth/passkeys.ts'
@@ -28,7 +28,7 @@ import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import type { HomeAssistantSettings } from './homeassistant/settings.ts'
 import type { Host } from './host.ts'
-import { json } from './http.ts'
+import { json, refuseUpgrade } from './http.ts'
 import { createLiveSockets } from './live.ts'
 import { bearerTokenAuth, createMcpHandler, MCP_PATH, mcpAuth, type McpAuthenticator } from './mcp/http.ts'
 import type { FetchedDocument } from './oauth/metadata-fetch.ts'
@@ -37,7 +37,6 @@ import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { SecretStore } from './secrets.ts'
 import type { StorageUsage } from './storage.ts'
-import { getProject } from './projects.ts'
 import { createStaticRoutes } from './static.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
@@ -52,6 +51,9 @@ export type WebOptions = {
   webDist?: string
   // Empty when the host is reached directly.
   trustedProxies?: TrustedProxies
+  // Answers every Host header instead of 421 for those that are neither the
+  // public host nor an app host. Tests reach the server by its loopback address.
+  anyHost?: boolean
   // Tests replace how client ID metadata documents are fetched and the clock.
   fetchClientMetadata?: (url: URL) => Promise<FetchedDocument>
   now?: () => number
@@ -77,7 +79,8 @@ export function createApp(
 ): Server {
   const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
   const delivery = options.delivery ?? createDelivery(host, { workspaces })
-  const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
+  const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] }, anyHost: true }
+  const publicHostname = new URL(web.publicUrl).hostname
   const trustedProxies = web.trustedProxies ?? parseTrustedProxies('')
   const addressOf = (req: IncomingMessage) => clientAddress(req, trustedProxies)
   const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
@@ -189,18 +192,31 @@ export function createApp(
         return allowsProject(agent.access, project) && (reads || !agent.access.readOnly) ? 'allowed' : 'forbidden'
       },
       appOrigin: (project) => origins.origin({ project }),
-      resolvePreview: async (label) => {
-        const { project, branchLabel } = parseLabel(label)
-        if (branchLabel === undefined || !getProject(host, project)) return undefined
-        const branch = await origins.resolveBranch(host, project, branchLabel)
-        return branch === undefined ? undefined : { project, branch }
-      },
     })
-  const handleStatic = createStaticRoutes({ webDist: web.webDist })
+  const handleStatic = createStaticRoutes({ webDist: web.webDist, appsUrl: origins.appsUrl })
+
+  // Requests with any other Host header come from a name someone else points at
+  // this host (DNS rebinding, a stray record, the apps host itself), and would
+  // otherwise reach Hobwork's API and UI under it. Health checks by address have
+  // no host name to match, and the answer names nothing.
+  const hostAllowed = (req: IncomingMessage) => {
+    if (web.anyHost) return true
+    try {
+      return new URL(`http://${req.headers.host}`).hostname === publicHostname
+    } catch {
+      return false
+    }
+  }
+  const misdirected = (res: ServerResponse) => {
+    res.writeHead(421, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+    res.end(`This is not the address of this Hobwork host. Use ${web.publicUrl}.\n`)
+  }
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (apps.isAppRequest(req)) return apps.handle(req, res)
+    res.setHeader('x-content-type-options', 'nosniff')
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
+    if (!hostAllowed(req) && !(req.method === 'GET' && pathname === '/api/health')) return misdirected(res)
 
     if (pathname.startsWith(GIT_PREFIX)) {
       return handleGit(host, req, res, pathname, search.slice(1), addressOf(req))
@@ -230,6 +246,7 @@ export function createApp(
   })
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     if (apps.isAppRequest(req)) return socket.destroy()
+    if (!hostAllowed(req)) return refuseUpgrade(socket, 421, 'This is not the address of this Hobwork host')
     if (!deviceSockets.handleUpgrade(req, socket, head) && !liveSockets.handleUpgrade(req, socket, head)) socket.destroy()
   })
   server.on('close', () => deviceSockets.close())

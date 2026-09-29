@@ -9,9 +9,33 @@ export const THEME_PREFIX = '/theme/'
 const FONT_PACKAGES = ['@fontsource-variable/bricolage-grotesque', '@fontsource-variable/atkinson-hyperlegible-next']
 const FONT_FILE = /^[a-z0-9-]+\.woff2$/
 
-// Project apps are on sibling origins of the same site, so the web UI must not
-// be framed by them.
-const WEB_UI_HEADERS = { 'content-security-policy': "frame-ancestors 'self'" }
+// The policy of the Hobwork web UI. It runs with the user's session, so it may
+// load code only from its own origin. Project apps are on sibling origins of
+// the same site: the web UI must not be framed by them, and it frames only
+// them (`appsFrameSource`). Styles stay inline for React `style` props.
+export function webUiPolicy(appsFrameSource?: string): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    `frame-src ${appsFrameSource ?? "'none'"}`,
+    "form-action 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'self'",
+  ].join('; ')
+}
+
+// Every app origin is one label below the apps host, so this covers them all.
+export function appsFrameSource(appsUrl: string): string {
+  const url = new URL(appsUrl)
+  return `${url.protocol}//*.${url.host}`
+}
+
+const NOSNIFF = { 'x-content-type-options': 'nosniff' }
 
 export const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -76,8 +100,12 @@ export function within(root: string, pathname: string): string | undefined {
 // Serves the theme at stable URLs for the web UI and project UIs, and, when
 // given webDist, the built web UI with a fallback to index.html for client-side routes. Returns false
 // for requests it does not serve.
-export function createStaticRoutes(options: { webDist?: string }) {
+export function createStaticRoutes(options: { webDist?: string; appsUrl?: string }) {
   const webDist = options.webDist && resolve(options.webDist)
+  const webUiHeaders = {
+    ...NOSNIFF,
+    'content-security-policy': webUiPolicy(options.appsUrl && appsFrameSource(options.appsUrl)),
+  }
   const requireFromTheme = createRequire(join(themeDir, 'package.json'))
   const fontDirs = FONT_PACKAGES.map((pkg) => join(dirname(requireFromTheme.resolve(`${pkg}/package.json`)), 'files'))
 
@@ -86,7 +114,7 @@ export function createStaticRoutes(options: { webDist?: string }) {
 
     if (pathname === `${THEME_PREFIX}theme.css`) {
       const path = join(themeDir, 'theme.css')
-      sendFile(req, res, path, statSync(path), 'no-cache')
+      sendFile(req, res, path, statSync(path), 'no-cache', NOSNIFF)
       return true
     }
     if (pathname.startsWith(`${THEME_PREFIX}fonts/`)) {
@@ -95,7 +123,7 @@ export function createStaticRoutes(options: { webDist?: string }) {
       for (const dir of fontDirs) {
         const stats = fileStats(join(dir, name))
         if (stats) {
-          sendFile(req, res, join(dir, name), stats, 'public, max-age=604800')
+          sendFile(req, res, join(dir, name), stats, 'public, max-age=604800', NOSNIFF)
           return true
         }
       }
@@ -108,18 +136,18 @@ export function createStaticRoutes(options: { webDist?: string }) {
     if (path && stats) {
       // Vite puts a content hash in every file name under assets/.
       const immutable = pathname.startsWith('/assets/')
-      sendFile(req, res, path, stats, immutable ? 'public, max-age=31536000, immutable' : 'no-cache', WEB_UI_HEADERS)
+      sendFile(req, res, path, stats, immutable ? 'public, max-age=31536000, immutable' : 'no-cache', webUiHeaders)
       return true
     }
     if (extname(pathname) !== '') return false
     const index = join(webDist, 'index.html')
     const indexStats = fileStats(index)
     if (!indexStats) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.writeHead(404, { ...NOSNIFF, 'content-type': 'text/plain; charset=utf-8' })
       res.end('The web UI is not built. Run "pnpm -C web build", or use the Vite dev server with "pnpm dev".\n')
       return true
     }
-    sendFile(req, res, index, indexStats, 'no-cache', WEB_UI_HEADERS)
+    sendFile(req, res, index, indexStats, 'no-cache', webUiHeaders)
     return true
   }
 }

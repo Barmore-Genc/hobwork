@@ -63,6 +63,7 @@ export async function startTestApp(
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },
+      anyHost: true,
       ...options.web,
     },
   })

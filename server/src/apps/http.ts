@@ -5,12 +5,13 @@ import type { Host } from '../host.ts'
 import { parseCookies, setCookie } from '../http.ts'
 import { getProject, renamedProject, type Project } from '../projects.ts'
 import { BuildError } from '../runtime/builds.ts'
-import { sendJson, sendRuntimeError, serveRoute } from '../runtime/http.ts'
+import { sendJson, sendRuntimeError, serveRoute, serveWebhook } from '../runtime/http.ts'
 import { ICONS_PREFIX, MANIFEST_PATH, sendUiText, serveAppIcons, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
 import type { CspSources } from '../runtime/csp.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
+import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from '../runtime/webhooks.ts'
 import { createAppCode, findAppSession, redeemAppCode, type AppScope } from './sessions.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
@@ -74,6 +75,54 @@ export function createAppHttp(options: {
     return { project, target, origin, scope: { projectId: project.id, branch: target.branch ?? null } }
   }
 
+  // A version whose hobwork.json cannot be read lets no other app in.
+  async function crossAppRequestsOf(app: Resolved): Promise<string[]> {
+    return (await runtime?.crossAppRequests(app.target.project, app.target.branch).catch(() => undefined)) ?? []
+  }
+
+  // The origin a browser request comes from, when it says. Origin is absent on
+  // most GETs, so Referer (which the Hobwork UI and the apps send at least as
+  // an origin) fills in.
+  function sourceOrigin(req: IncomingMessage): string | undefined {
+    const origin = req.headers.origin
+    const from = origin !== undefined && origin !== 'null' ? origin : req.headers.referer
+    if (!from) return undefined
+    try {
+      return new URL(from).origin
+    } catch {
+      return undefined
+    }
+  }
+
+  // Sibling app origins are same-site, so their requests carry this app's
+  // SameSite=Lax cookie. Refuses them unless the app's hobwork.json lists the
+  // hob they come from, on every method. Requests from the Hobwork origin (the
+  // web UI framing the app) and from other branches of the same hob pass, and
+  // so does anything that is not same-site: those carry no cookie. A top-level
+  // navigation to a page passes from anywhere, since that is a link.
+  async function crossApp(req: IncomingMessage, app: Resolved, pathname: string): Promise<{ error?: string; listed?: true }> {
+    const site = req.headers['sec-fetch-site']
+    const source = sourceOrigin(req)
+    // Browsers that send no Sec-Fetch-Site still send Origin on writes.
+    const sameSite = site === 'same-site' || (site === undefined && req.headers.origin !== undefined && source !== app.origin)
+    if (!sameSite || source === publicUrl) return {}
+
+    const dest = req.headers['sec-fetch-dest']
+    const page = !pathname.startsWith(API_PREFIX)
+    const fromLabel = source === undefined ? undefined : origins.labelOf(new URL(source).host)
+    if (fromLabel === undefined) {
+      // No usable Origin or Referer: a page load or frame of the UI cannot be
+      // told apart from the Hobwork UI's own, routes can.
+      const framesOrOpens = dest === 'document' || dest === 'iframe'
+      return page && framesOrOpens ? {} : { error: 'This app does not accept requests from other sites' }
+    }
+    const hob = parseLabel(fromLabel).project
+    if (hob === app.target.project) return {}
+    if ((await crossAppRequestsOf(app)).includes(hob)) return { listed: true }
+    if (page && dest === 'document') return {}
+    return { error: `This app does not accept requests from the app of ${hob}` }
+  }
+
   // A version whose hobwork.json cannot be read gets the default policy.
   async function cspOf(app: Resolved): Promise<CspSources | undefined> {
     return runtime?.csp(app.target.project, app.target.branch).catch(() => undefined)
@@ -101,9 +150,12 @@ export function createAppHttp(options: {
     return token ? findAppSession(host.db, allowlist, token, app.scope) : undefined
   }
 
-  function csrfError(req: IncomingMessage, app: Resolved): string | undefined {
+  // `listed`: the request comes from an app that hobwork.json lets in, so a
+  // different origin is expected.
+  function csrfError(req: IncomingMessage, app: Resolved, listed = false): string | undefined {
     if (SAFE_METHODS.has(req.method ?? 'GET')) return undefined
     if (req.headers[CSRF_HEADER] !== '1') return `Send the header "${CSRF_HEADER}: 1" with this request`
+    if (listed) return undefined
     const origin = req.headers.origin
     if (origin !== undefined && origin !== app.origin) return 'The request comes from another site'
     const site = req.headers['sec-fetch-site']
@@ -171,8 +223,33 @@ export function createAppHttp(options: {
     return project && origins.origin({ project: project.name })
   }
 
+  // <app origin>/_hobwork/hooks/<name>/<token>. The token is the only credential:
+  // the app session cookie is not read and Cookie never reaches the handler.
+  async function webhook(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string, search: string) {
+    const [name = '', token = '', ...rest] = pathname.slice(HOOKS_PREFIX.length).split('/')
+    const { project, branch } = app.target
+    // Unknown hob, webhook and token all look the same to the caller.
+    const valid = !rest.length && (branch === undefined ? verifyWebhookToken(host, project, name, token) : verifyBranchWebhookToken(host, project, branch, name, token))
+    if (!valid || !runtime) return sendJson(res, 404, { error: 'not found' })
+    const url = `${app.origin}${HOOKS_PREFIX}${name}${search}`
+    await serveWebhook(req, res, runtime, { project, branch, name, url })
+  }
+
+  // Webhook URLs live in other systems, so the old name of a renamed hob still works.
+  function renamedApp(hostHeader: string | undefined) {
+    const label = origins.labelOf(hostHeader)
+    if (!label || parseLabel(label).branchLabel !== undefined) return undefined
+    const project = renamedProject(host, label)
+    return project && resolve({ project: project.name })
+  }
+
   async function serveApp(req: IncomingMessage, res: ServerResponse) {
     const app = await resolveHost(req.headers.host)
+    const hookPath = new URL(req.url ?? '/', 'http://localhost')
+    if (!app && hookPath.pathname.startsWith(HOOKS_PREFIX)) {
+      const renamed = await renamedApp(req.headers.host)
+      if (renamed) return webhook(req, res, renamed, hookPath.pathname, hookPath.search)
+    }
     if (!app) {
       const moved = SAFE_METHODS.has(req.method ?? 'GET') ? renamedOrigin(req.headers.host) : undefined
       if (moved) {
@@ -184,8 +261,11 @@ export function createAppHttp(options: {
     const url = new URL(req.url ?? '/', app.origin)
     const { pathname, search } = url
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
+    if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
     if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
+    const cross = await crossApp(req, app, pathname)
+    if (cross.error) return sendJson(res, 403, { error: cross.error }, frameHeaders)
     const user = appUser(req, app)
     if (!user) {
       const page = !pathname.startsWith(API_PREFIX) && req.method === 'GET' && (req.headers.accept ?? '').includes('text/html')
@@ -193,7 +273,7 @@ export function createAppHttp(options: {
       return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
     }
     if (pathname.startsWith(API_PREFIX)) {
-      const error = csrfError(req, app)
+      const error = csrfError(req, app, cross.listed)
       if (error) return sendJson(res, 403, { error }, frameHeaders)
       if (!runtime) return sendJson(res, 503, { error: 'This Hobwork host does not run handlers' }, frameHeaders)
       return serveRoute(req, res, runtime, {

@@ -46,7 +46,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
       delivery,
       runtime,
       devices,
-      web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+      web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] }, anyHost: true },
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -299,10 +299,10 @@ export default (async (ctx) => ({ pinged: await ctx.request.text() })) satisfies
     expect(await (await api('/greeting')).json()).toEqual({ message: expect.stringMatching(/^Good /) })
 
     const rotated = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'ping', branch: 'preview-ui' })
-    const path = /(\/hooks\/\S+)/.exec(rotated)![1]!
-    expect(path).toMatch(/^\/hooks\/preview-ui--filament\/ping\//)
-    const hook = await fetch(`${base}${path}`, { method: 'POST', body: 'hello' })
-    expect(await hook.json()).toEqual({ pinged: 'hello' })
+    const hookUrl = /(http:\/\/\S+\/_hobwork\/hooks\/\S+)/.exec(rotated)![1]!
+    expect(hookUrl.startsWith(`${origin}/_hobwork/hooks/ping/`)).toBe(true)
+    const hook = await send(hookUrl, {}, { method: 'POST', body: 'hello' })
+    expect(JSON.parse(hook.body)).toEqual({ pinged: 'hello' })
     const list = await ok('list_invocations', { hob: 'filament', branch: 'preview-ui' })
     expect(list).toContain('webhook "ping" branch preview-ui ok')
     expect(list).toContain('route "GET /greeting" branch preview-ui ok')

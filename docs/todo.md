@@ -11,10 +11,6 @@ The principle for the larger items: the host never reads, writes or runs git on 
 
 Sections are in the order to work on them.
 
-### Limiting a compromised hob
-
-- **Default CSP for hob UIs**: app origins serve hob UIs and route responses with a strict CSP (`script-src 'self'`, no inline scripts, `object-src 'none'`, `base-uri 'none'`) and `nosniff`, so most XSS bugs in agent-written UIs cannot run script. `hobwork.json` can loosen it for a hob that needs to.
-
 ### Supply chain
 
 - **Install script changes in the UI**: a merge that changes `allowBuilds` gets a notice in its pipeline output. The web UI has no version diff to show it in; add one, or a flag on the version in `list_versions` and the versions list.
@@ -24,12 +20,6 @@ Sections are in the order to work on them.
 - **VM start config from git**: the workspace VM start reads `hobwork.json` and `package.json` from the checkout (egress, extras). Read them from the branch in git, or from inside the VM.
 - **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.
 - **Migration disk quota**: a migration can fill the host disk through its `/migrate` mount; only the DB it returns is size-checked. Put a quota on the mount or check the dir's size while the VM runs.
-
-### Home Assistant, AI and secrets
-
-
-### Resources
-
 
 ### Guest privilege
 

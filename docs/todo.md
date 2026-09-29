@@ -46,7 +46,6 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 ## OpenRouter
 
 - Streaming responses from the OpenRouter helper.
-- The helper is tested with a fake `fetch` only. Test it against OpenRouter.
 
 ## Checking push notifications on a device
 

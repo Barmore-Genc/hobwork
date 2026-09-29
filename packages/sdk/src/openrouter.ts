@@ -70,12 +70,15 @@ export type JsonRequest<T> = ChatRequest & {
 export class OpenRouterError extends Error {
   status?: number
   code?: string | number
+  // OpenRouter's error metadata, e.g. `raw` and `provider_name` for provider errors.
+  metadata?: Record<string, unknown>
 
-  constructor(message: string, status?: number, code?: string | number) {
+  constructor(message: string, status?: number, code?: string | number, metadata?: Record<string, unknown>) {
     super(message)
     this.name = 'OpenRouterError'
     this.status = status
     this.code = code
+    this.metadata = metadata
   }
 }
 
@@ -102,6 +105,22 @@ function parseJson(text: string): unknown {
   }
 }
 
+type ErrorBody = { message?: string; code?: string | number; metadata?: Record<string, unknown> }
+
+function apiError(error: ErrorBody | undefined, httpStatus: number): OpenRouterError {
+  const { metadata } = error ?? {}
+  let message = error?.message ?? `OpenRouter answered HTTP ${httpStatus}`
+  // Provider errors say only "Provider returned error"; the provider's own message is in metadata.raw.
+  const raw = metadata?.raw
+  if (raw) {
+    const provider = typeof metadata.provider_name === 'string' ? ` (${metadata.provider_name})` : ''
+    message += `${provider}: ${typeof raw === 'string' ? raw : JSON.stringify(raw)}`
+  }
+  // An error that happens after OpenRouter started answering comes with HTTP 200 and its status as the code.
+  const status = httpStatus === 200 && typeof error?.code === 'number' ? error.code : httpStatus
+  return new OpenRouterError(message, status, error?.code, metadata)
+}
+
 function issuePath(issue: SchemaIssue): string {
   return (issue.path ?? []).map((segment) => String(typeof segment === 'object' ? segment.key : segment)).join('.')
 }
@@ -125,14 +144,14 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
       body: JSON.stringify(body),
     })
     const text = await res.text()
-    let parsed: { error?: { message?: string; code?: string | number } } & Partial<ChatCompletion>
+    let parsed: { error?: ErrorBody } & Partial<ChatCompletion>
     try {
       parsed = JSON.parse(text)
     } catch {
       throw new OpenRouterError(`OpenRouter answered HTTP ${res.status}: ${text.slice(0, 500)}`, res.status)
     }
     if (!res.ok || parsed.error) {
-      throw new OpenRouterError(parsed.error?.message ?? `OpenRouter answered HTTP ${res.status}`, res.status, parsed.error?.code)
+      throw apiError(parsed.error, res.status)
     }
     const completion = parsed as ChatCompletion
     const content = completion.choices?.[0]?.message?.content
@@ -153,8 +172,14 @@ export function openrouter(ctx: Pick<Context, 'fetch' | 'secrets'>, options: Ope
         type: 'json_schema',
         json_schema: { name: schemaName ?? 'response', strict: strict ?? true, schema: jsonSchema },
       },
-      // Only route to providers that support structured output.
+      // Only route to providers that support structured output. Without this,
+      // models that do not support it ignore the schema and answer in prose.
       provider: { require_parameters: true, ...provider },
+    }).catch((err: unknown) => {
+      if (err instanceof OpenRouterError && err.status === 404 && err.metadata?.failed_routing_step === 'Filter by Parameters') {
+        err.message += `. ${request.model} may not support structured output: pick a model that lists structured_outputs in its supported parameters, or call json() without a schema for JSON mode`
+      }
+      throw err
     })
     const result = await schema['~standard'].validate(parseJson(text))
     if (result.issues) {

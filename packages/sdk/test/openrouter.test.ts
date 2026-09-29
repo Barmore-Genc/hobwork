@@ -102,6 +102,59 @@ test("OpenRouter errors throw with OpenRouter's message and status", async () =>
   )
 })
 
+test("provider errors include the provider's message", async () => {
+  const { fetch } = fakeFetch({
+    status: 429,
+    body: {
+      error: {
+        code: 429,
+        message: 'Provider returned error',
+        metadata: { raw: 'qwen/qwen3:free is temporarily rate-limited upstream.', provider_name: 'ModelRun' },
+      },
+    },
+  })
+  const err = await openrouter(createTestContext({ fetch, secrets })).chat({ model: 'm', messages }).catch((e: unknown) => e)
+  expect(err).toMatchObject({
+    status: 429,
+    code: 429,
+    message: 'Provider returned error (ModelRun): qwen/qwen3:free is temporarily rate-limited upstream.',
+    metadata: { provider_name: 'ModelRun' },
+  })
+})
+
+test('an error in an HTTP 200 answer throws with its code as the status', async () => {
+  const { fetch } = fakeFetch({ body: { error: { code: 502, message: 'JSON error injected into SSE stream' } } })
+  await expect(openrouter(createTestContext({ fetch, secrets })).chat({ model: 'm', messages })).rejects.toMatchObject({
+    status: 502,
+    code: 502,
+    message: 'JSON error injected into SSE stream',
+  })
+})
+
+test('json with a schema explains a model without structured output', async () => {
+  const { fetch } = fakeFetch({
+    status: 404,
+    body: {
+      error: {
+        code: 404,
+        message: 'No endpoints found that can handle the requested parameters.',
+        metadata: { failed_routing_step: 'Filter by Parameters' },
+      },
+    },
+  })
+  const ai = openrouter(createTestContext({ fetch, secrets }))
+  await expect(ai.json({ model: 'stealth/model', messages, schema: z.object({ color: z.string() }) })).rejects.toMatchObject({
+    status: 404,
+    message: expect.stringContaining('stealth/model may not support structured output'),
+  })
+})
+
+test('the answer may start with whitespace', async () => {
+  const fetch = (async () => new Response(`\n\n   ${JSON.stringify(completion('pong'))}`)) as typeof globalThis.fetch
+  const reply = await openrouter(createTestContext({ fetch, secrets })).chat({ model: 'm', messages })
+  expect(reply.text).toBe('pong')
+})
+
 test('explains a missing secret and accepts another one', async () => {
   const { fetch, sent } = fakeFetch({ body: completion('hi') })
   await expect(openrouter(createTestContext({ fetch })).chat({ model: 'm', messages })).rejects.toThrow(

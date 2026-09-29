@@ -1,0 +1,15 @@
+name: hobwork-pocket-id
+services:
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v2.16.0
+    container_name: hobwork-pocket-id
+    ports:
+      - '127.0.0.1:11411:1411'
+    volumes:
+      - ./data:/app/data
+    environment:
+      APP_URL: http://localhost:11411
+      # Development only. This instance is bound to localhost and holds test users.
+      ENCRYPTION_KEY: hobwork-dev-encryption-key-not-secret
+      STATIC_API_KEY: hobwork-dev-static-api-key
+      ANALYTICS_DISABLED: 'true'

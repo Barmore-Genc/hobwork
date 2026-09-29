@@ -10,6 +10,7 @@ import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
+import { signedIn, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
@@ -106,6 +107,27 @@ afterEach(async () => {
   }
   await runtime?.stop()
   host.dispose()
+})
+
+test('signed-in users call routes with their session, with the CSRF header for writes', async () => {
+  start()
+  await deploy()
+  server = createApp(host, {
+    runtime,
+    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+  })
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const { cookie } = signedIn(host)
+
+  expect((await fetch(`${base}/p/filament/api/spools`, { headers: { cookie: 'hobwork_session=forged' } })).status).toBe(401)
+  expect((await fetch(`${base}/p/filament/api/spools`, { headers: { cookie } })).status).toBe(200)
+  expect((await fetch(`${base}/p/filament/api/fail`, { method: 'POST', headers: { cookie } })).status).toBe(401)
+  const write = await fetch(`${base}/p/filament/api/fail`, { method: 'POST', headers: writeHeaders(cookie) })
+  expect(write.status).toBe(500)
+
+  const [project] = (await (await fetch(`${base}/api/projects`, { headers: { cookie } })).json()) as unknown[]
+  expect(project).toMatchObject({ name: 'filament', status: 'running', currentVersion: { number: 2 } })
 })
 
 test('serves routes over HTTP for agents and records the invocation', async () => {

@@ -1,17 +1,25 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createApiRoutes } from './api/routes.ts'
+import { createAuth } from './auth/auth.ts'
+import { createOidcLogin } from './auth/oidc.ts'
+import { createAuthRoutes } from './auth/routes.ts'
+import type { Allowlist, OidcConfig } from './config.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import { GIT_PREFIX, handleGit } from './git-http.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import type { Host } from './host.ts'
+import { json } from './http.ts'
 import { bearerTokenAuth, createMcpHandler, MCP_PATH, type McpAuthenticator } from './mcp/http.ts'
-import { listProjects } from './projects.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import { createStaticRoutes } from './static.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify(body))
+export type WebOptions = {
+  publicUrl: string
+  allowlist: Allowlist
+  oidc?: OidcConfig
+  webDist?: string
 }
 
 export function createApp(
@@ -22,21 +30,34 @@ export function createApp(
     authenticate?: McpAuthenticator
     homeAssistant?: HomeAssistant
     runtime?: Runtime
+    web?: WebOptions
   } = {},
 ): Server {
   const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
+  const delivery = options.delivery ?? createDelivery(host, { workspaces })
   const authenticate = options.authenticate ?? bearerTokenAuth(host)
-  const handleRuntime = options.runtime && createRuntimeHttp(host, options.runtime, (req) => authenticate(req) !== undefined)
   const handleMcp = createMcpHandler({
     host,
     workspaces,
-    delivery: options.delivery ?? createDelivery(host, { workspaces }),
+    delivery,
     authenticate,
     homeAssistant: options.homeAssistant,
     runtime: options.runtime,
   })
 
-  return createServer((req: IncomingMessage, res: ServerResponse) => {
+  const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
+  const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
+  const handleAuth = createAuthRoutes({
+    auth,
+    oidc: web.oidc && createOidcLogin({ oidc: web.oidc, publicUrl: web.publicUrl, db: host.db, allowlist: web.allowlist, auth }),
+  })
+  const handleApi = createApiRoutes({ host, auth, delivery, runtime: options.runtime })
+  const handleRuntime =
+    options.runtime &&
+    createRuntimeHttp(host, options.runtime, (req) => authenticate(req) !== undefined || auth.sessionUser(req) !== undefined)
+  const handleStatic = createStaticRoutes({ webDist: web.webDist })
+
+  return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
 
     if (pathname.startsWith(GIT_PREFIX)) {
@@ -49,13 +70,15 @@ export function createApp(
     if (req.method === 'GET' && pathname === '/api/health') {
       return json(res, 200, { ok: true })
     }
-    if (req.method === 'GET' && pathname === '/api/projects') {
-      return json(
-        res,
-        200,
-        listProjects(host).map(({ name, defaultBranch }) => ({ name, defaultBranch })),
-      )
+    try {
+      if (await handleAuth(req, res, pathname, new URLSearchParams(search))) return
+      if (await handleApi(req, res, pathname)) return
+      if (!pathname.startsWith('/api/') && handleStatic(req, res, pathname)) return
+      json(res, 404, { error: 'not found' })
+    } catch (err) {
+      console.error(`${req.method} ${pathname} failed`, err)
+      if (!res.headersSent) json(res, 500, { error: 'Something went wrong on the Hobwork server' })
+      else res.destroy()
     }
-    json(res, 404, { error: 'not found' })
   })
 }

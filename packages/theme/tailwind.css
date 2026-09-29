@@ -1,0 +1,32 @@
+/*
+ * Maps the theme variables to Tailwind v4 utilities (bg-surface, text-muted,
+ * rounded-md, font-display, ...). Import after "tailwindcss". The variables
+ * themselves come from theme.css, which the page loads from the host.
+ * `inline` makes utilities reference the variables directly, so they follow
+ * light and dark mode without dark: variants.
+ */
+
+@theme inline {
+  --color-bg: var(--hw-bg);
+  --color-surface: var(--hw-surface);
+  --color-surface-raised: var(--hw-surface-raised);
+  --color-border: var(--hw-border);
+  --color-fg: var(--hw-fg);
+  --color-muted: var(--hw-muted);
+  --color-accent: var(--hw-accent);
+  --color-accent-fg: var(--hw-accent-fg);
+  --color-on-accent: var(--hw-on-accent);
+  --color-success: var(--hw-success);
+  --color-warning: var(--hw-warning);
+  --color-danger: var(--hw-danger);
+  --color-on-danger: var(--hw-on-danger);
+  --color-focus: var(--hw-focus);
+
+  --radius-sm: var(--hw-radius-sm);
+  --radius-md: var(--hw-radius-md);
+  --radius-lg: var(--hw-radius-lg);
+
+  --font-sans: var(--hw-font-sans);
+  --font-display: var(--hw-font-display);
+  --font-mono: var(--hw-font-mono);
+}

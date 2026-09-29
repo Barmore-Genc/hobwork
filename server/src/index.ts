@@ -63,7 +63,18 @@ const delivery = createDelivery(host, {
 homeAssistant.start()
 await runtime.start()
 
-const server = createApp(host, { workspaces, delivery, homeAssistant, runtime })
+if (!config.oidc) console.warn('HOBWORK_OIDC_ISSUER is not set, so nobody can sign in to the web UI.')
+else if (!config.allowlist.emails.length && !config.allowlist.subjects.length) {
+  console.warn('HOBWORK_ALLOWED_USERS is empty, so nobody can sign in to the web UI.')
+}
+
+const server = createApp(host, {
+  workspaces,
+  delivery,
+  homeAssistant,
+  runtime,
+  web: { publicUrl: config.publicUrl, allowlist: config.allowlist, oidc: config.oidc, webDist: config.webDist },
+})
 
 server.listen(config.port, config.host, () => {
   console.log(`hobwork host listening on http://${config.host}:${config.port}`)

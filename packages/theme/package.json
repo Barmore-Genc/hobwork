@@ -1,0 +1,14 @@
+{
+  "name": "@hobwork/theme",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./theme.css": "./theme.css",
+    "./tailwind.css": "./tailwind.css"
+  },
+  "dependencies": {
+    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0"
+  }
+}

@@ -1,0 +1,113 @@
+import { createReadStream, statSync, type Stats } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createRequire } from 'node:module'
+import { dirname, extname, join, resolve, sep } from 'node:path'
+
+export const themeDir = resolve(import.meta.dirname, '../../packages/theme')
+export const THEME_PREFIX = '/theme/'
+
+const FONT_PACKAGES = ['@fontsource-variable/bricolage-grotesque', '@fontsource-variable/atkinson-hyperlegible-next']
+const FONT_FILE = /^[a-z0-9-]+\.woff2$/
+
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+}
+
+function fileStats(path: string): Stats | undefined {
+  try {
+    const stats = statSync(path)
+    return stats.isFile() ? stats : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function sendFile(req: IncomingMessage, res: ServerResponse, path: string, stats: Stats, cacheControl: string) {
+  const etag = `"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { etag, 'cache-control': cacheControl }).end()
+    return
+  }
+  res.writeHead(200, {
+    'content-type': CONTENT_TYPES[extname(path)] ?? 'application/octet-stream',
+    'content-length': stats.size,
+    'cache-control': cacheControl,
+    etag,
+  })
+  if (req.method === 'HEAD') res.end()
+  else createReadStream(path).pipe(res)
+}
+
+// Resolves a URL path inside `root`, or undefined when it would leave it.
+function within(root: string, pathname: string): string | undefined {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {
+    return undefined
+  }
+  if (decoded.includes('\0')) return undefined
+  const path = resolve(join(root, decoded))
+  return path.startsWith(root + sep) ? path : undefined
+}
+
+// Serves the theme at stable URLs for the web UI and project UIs, and, when
+// given webDist, the built web UI with a fallback to index.html for client-side routes. Returns false
+// for requests it does not serve.
+export function createStaticRoutes(options: { webDist?: string }) {
+  const webDist = options.webDist && resolve(options.webDist)
+  const requireFromTheme = createRequire(join(themeDir, 'package.json'))
+  const fontDirs = FONT_PACKAGES.map((pkg) => join(dirname(requireFromTheme.resolve(`${pkg}/package.json`)), 'files'))
+
+  return (req: IncomingMessage, res: ServerResponse, pathname: string): boolean => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return false
+
+    if (pathname === `${THEME_PREFIX}theme.css`) {
+      const path = join(themeDir, 'theme.css')
+      sendFile(req, res, path, statSync(path), 'no-cache')
+      return true
+    }
+    if (pathname.startsWith(`${THEME_PREFIX}fonts/`)) {
+      const name = pathname.slice(`${THEME_PREFIX}fonts/`.length)
+      if (!FONT_FILE.test(name)) return false
+      for (const dir of fontDirs) {
+        const stats = fileStats(join(dir, name))
+        if (stats) {
+          sendFile(req, res, join(dir, name), stats, 'public, max-age=604800')
+          return true
+        }
+      }
+      return false
+    }
+
+    if (!webDist) return false
+    const path = within(webDist, pathname)
+    const stats = path ? fileStats(path) : undefined
+    if (path && stats) {
+      // Vite puts a content hash in every file name under assets/.
+      const immutable = pathname.startsWith('/assets/')
+      sendFile(req, res, path, stats, immutable ? 'public, max-age=31536000, immutable' : 'no-cache')
+      return true
+    }
+    if (extname(pathname) !== '') return false
+    const index = join(webDist, 'index.html')
+    const indexStats = fileStats(index)
+    if (!indexStats) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('The web UI is not built. Run "pnpm -C web build", or use the Vite dev server with "pnpm dev".\n')
+      return true
+    }
+    sendFile(req, res, index, indexStats, 'no-cache')
+    return true
+  }
+}

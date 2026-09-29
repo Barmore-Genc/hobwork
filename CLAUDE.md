@@ -5,7 +5,8 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 ## Layout
 
 - `server/` (`@hobwork/server`): the host. Node runs the TypeScript directly, no build step.
-- `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api` to the host on port 7420.
+- `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api`, `/auth` and `/theme` to the host on port 7420. The host serves the build (`pnpm -C web build`, `web/dist`) itself.
+- `packages/theme/` (`@hobwork/theme`): theme stylesheet (CSS variables, served at `/theme/theme.css`) and its Tailwind mapping, shared by the web UI and project UIs.
 - `packages/sdk/` (`@hobwork/sdk`): SDK types, the `hobwork.json` JSON schema (`hobwork.schema.json`), and the runner (`src/runner/`) that the host mounts into project runtime VMs.
 - `templates/project/`: template for new projects (not a workspace package).
 - `apple/` (planned): Xcode projects for the iOS and macOS apps, bundle ID prefix `dev.bgenc.hobwork`. Not part of the pnpm workspace.
@@ -13,7 +14,8 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 - `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin. `server/src/guest-vm.ts` builds the workspace and pipeline VM backends on it.
 - `server/src/runtime/`: project runtime VMs, builds, invocations and logs, crons, routes and webhooks.
 - `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). The host connects to HA when `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN` are set. Integration tests against it run with `HOBWORK_HA_TESTS=1`. See its README.
-- `data/`: runtime data (gitignored). Override with `HOBWORK_DATA_DIR`. Port: `HOBWORK_PORT` (default 7420). Guest image: `HOBWORK_IMAGE_DIR` (default `images/build/<arch>`). Workspace VM idle stop: `HOBWORK_WORKSPACE_IDLE_MINUTES` (default 30).
+- `dev/pocket-id/`: scripted local Pocket ID in Docker for web UI sign-in (`node dev/pocket-id/setup.ts` writes host settings to the gitignored `.env.local`, `login-link` prints a passkey-free login link). See its README.
+- `data/`: runtime data (gitignored). Override with `HOBWORK_DATA_DIR`. Port: `HOBWORK_PORT` (default 7420). Guest image: `HOBWORK_IMAGE_DIR` (default `images/build/<arch>`). Workspace VM idle stop: `HOBWORK_WORKSPACE_IDLE_MINUTES` (default 30). Web sign-in: `HOBWORK_PUBLIC_URL` (origin the browser uses, default `http://localhost:<port>`; use `http://localhost:5173` with the Vite dev server), `HOBWORK_OIDC_ISSUER`, `HOBWORK_OIDC_CLIENT_ID`, `HOBWORK_OIDC_CLIENT_SECRET`, `HOBWORK_OIDC_NAME`, `HOBWORK_ALLOWED_USERS` (emails and `sub:<subject>`).
 
 Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspace.yaml`). Root scripts use `pnpm -r`, and tsconfig and oxlint are configured per package, so non-JS directories are never scanned. Do not add a root-level tsconfig `include` or root oxlint config.
 

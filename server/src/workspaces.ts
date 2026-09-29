@@ -27,7 +27,7 @@ export type WorkspaceVm = {
   busy?(): boolean
   // True when the VM no longer matches the workspace (e.g. its egress
   // allowlist changed). The next start replaces it unless it is busy.
-  isStale?(): boolean
+  isStale?(): boolean | Promise<boolean>
 }
 
 export type ExecOptions = {
@@ -235,7 +235,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
       const workspace = await openUnlocked(project, branch)
       const existing = vms.get(workspace.id)
       if (existing) {
-        if (existing.busy?.() || !existing.isStale?.()) return existing
+        if (existing.busy?.() || !(await existing.isStale?.())) return existing
         await stopUnlocked(project, branch)
       }
       setStatus(workspace.id, 'starting')

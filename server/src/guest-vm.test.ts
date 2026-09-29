@@ -214,13 +214,13 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     const blocked = queryLogs(host, { project: 'filament', limit: 10 }).find((line) => line.event === 'egress-blocked')
     expect(blocked).toMatchObject({ event: 'egress-blocked', message: expect.stringContaining('Workspace spools: blocked') })
 
-    expect(vm.isStale?.()).toBe(false)
+    expect(await vm.isStale?.()).toBe(false)
     secrets.create({ name: 'Other', value: 'o', hosts: ['o.example'], assign: { project: 'filament', envName: 'OTHER' } }, { kind: 'host' })
-    expect(vm.isStale?.()).toBe(true)
+    expect(await vm.isStale?.()).toBe(true)
     secrets.unassign('filament', 'OTHER', { kind: 'host' })
-    expect(vm.isStale?.()).toBe(false)
+    expect(await vm.isStale?.()).toBe(false)
     secrets.update(secret.id, { value: 'rotated' }, { kind: 'host' })
-    expect(vm.isStale?.()).toBe(true)
+    expect(await vm.isStale?.()).toBe(true)
     await vm.stop()
   } finally {
     await data.stop()
@@ -318,11 +318,11 @@ test('workspace VMs list devices but cannot notify them', async () => {
 
 test('a workspace VM is stale once the egress allowlist changes', async () => {
   const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
-  expect(vm.isStale?.()).toBe(false)
+  expect(await vm.isStale?.()).toBe(false)
   writeFileSync(join(dir, 'hobwork.json'), JSON.stringify({ egress: ['api.example.com'] }))
-  expect(vm.isStale?.()).toBe(true)
+  expect(await vm.isStale?.()).toBe(true)
   writeFileSync(join(dir, 'hobwork.json'), '{ not json')
-  expect(vm.isStale?.()).toBe(false)
+  expect(await vm.isStale?.()).toBe(false)
 })
 
 test('pipeline VMs only reach the registry and are stopped on shutdown', async () => {

@@ -428,9 +428,9 @@ export function AgentsPage() {
     <div>
       <PageHeading>Agent access</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
-        Agents such as Claude build and change projects. They sign in through your browser, or use a key if they cannot.
-        An SSH key lets an agent open a shell in a project workspace. Each key and sign-in can be limited to reading or
-        to some projects. Revoke what you no longer use.
+        Agents such as Claude build and change hobs. They sign in through your browser, or use a key if they cannot.
+        An SSH key lets an agent open a shell in a hob workspace. Each key and sign-in can be limited to reading or
+        to some hobs. Revoke what you no longer use.
       </p>
 
       <div className="mt-10 space-y-10">

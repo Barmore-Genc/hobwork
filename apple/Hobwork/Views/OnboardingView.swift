@@ -19,7 +19,7 @@ struct OnboardingView: View {
                         Image(systemName: "house.fill")
                             .font(.largeTitle)
                             .foregroundStyle(.tint)
-                        Text("Connect to your Hobwork host to see your projects and get their notifications on this device.")
+                        Text("Connect to your Hobwork host to see your hobs and get their notifications on this device.")
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -47,7 +47,7 @@ struct OnboardingView: View {
                 } header: {
                     Text("Device name")
                 } footer: {
-                    Text("Projects reach this device by name. You can adjust it when you approve the connection.")
+                    Text("Hobs reach this device by name. You can adjust it when you approve the connection.")
                 }
 
                 if let error {

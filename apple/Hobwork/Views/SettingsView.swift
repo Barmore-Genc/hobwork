@@ -132,7 +132,7 @@ private struct AlarmsSection: View {
                 Button("Allow Alarms") { Task { await model.requestAlarms() } }
             }
         } footer: {
-            Text("Projects can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
+            Text("Hobs can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
         }
     }
 }
@@ -152,9 +152,9 @@ private struct FocusSection: View {
             }
         } footer: {
             #if os(macOS)
-                Text("To let projects know when a Focus turns on or off, open System Settings, go to Focus, choose a Focus, click Add Filter, choose Hobwork and enter a label such as work.")
+                Text("To let hobs know when a Focus turns on or off, open System Settings, go to Focus, choose a Focus, click Add Filter, choose Hobwork and enter a label such as work.")
             #else
-                Text("To let projects know when a Focus turns on or off, open Settings, go to Focus, choose a Focus, tap Add Filter, choose Hobwork and enter a label such as work.")
+                Text("To let hobs know when a Focus turns on or off, open Settings, go to Focus, choose a Focus, tap Add Filter, choose Hobwork and enter a label such as work.")
             #endif
         }
         .task { labels = FocusLabels.file.read() }
@@ -174,7 +174,7 @@ private struct NFCSection: View {
                 LabeledContent("NFC", value: "Not available")
             }
         } footer: {
-            Text("Scanning a tag written by a project runs that project's handler for it. Tags with other links go to the projects that handle those links. To use a tag without opening Hobwork, create a personal automation for it in the Shortcuts app and add Send Tag to Hobwork with the tag's link.")
+            Text("Scanning a tag written by a hob runs that hob's handler for it. Tags with other links go to the hobs that handle those links. To use a tag without opening Hobwork, create a personal automation for it in the Shortcuts app and add Send Tag to Hobwork with the tag's link.")
         }
     }
 }

@@ -136,17 +136,17 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
 
   // The JSON body of a route's response in invoke's output.
   async function route(name: string): Promise<Record<string, unknown>> {
-    const text = await ok('invoke', { project: 'filament', kind: 'route', name })
+    const text = await ok('invoke', { hob: 'filament', kind: 'route', name })
     const body = text.split('\n\n')[1] ?? ''
     return JSON.parse(body.split('\n')[0] ?? '') as Record<string, unknown>
   }
 
-  const p = { project: 'filament', branch: 'data' }
+  const p = { hob: 'filament', branch: 'data' }
 
   test('handlers keep data in the project DB, tests get a fresh one, the workspace a copy', async () => {
-    await ok('create_project', { name: 'filament' })
+    await ok('create_hob', { name: 'filament' })
     secrets.create({ name: 'Echo key', value: SECRET_VALUE, hosts: [ECHO_HOST] }, { kind: 'host' })
-    await ok('assign_secret', { project: 'filament', secret: 'Echo key', env_name: 'ECHO_KEY' })
+    await ok('assign_secret', { hob: 'filament', secret: 'Echo key', env_name: 'ECHO_KEY' })
     await ok('create_branch', p)
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     config.routes['POST /hits'] = { handler: 'src/hits.ts' }
@@ -174,7 +174,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
 
     expect(await route('POST /hits')).toEqual({ n: 1 })
     expect(await route('POST /hits')).toEqual({ n: 2 })
-    const project = JSON.parse(await ok('get_project', { project: 'filament' }))
+    const project = JSON.parse(await ok('get_hob', { hob: 'filament' }))
     expect(project.database.sizeBytes).toBeGreaterThan(0)
     expect(project.egress).toEqual([ECHO_HOST])
   })
@@ -189,7 +189,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
   test('requests to other hosts are blocked and logged, including hosts that do not resolve', async () => {
     expect(await route('GET /blocked')).toEqual({ known: 403, unresolvable: 403 })
     await vi.waitFor(async () => {
-      const logs = await ok('get_logs', { project: 'filament', source: 'runtime' })
+      const logs = await ok('get_logs', { hob: 'filament', source: 'runtime' })
       expect(logs).toContain('Blocked outgoing request to example.com:443')
       expect(logs).toContain('Blocked outgoing request to nothing-here.invalid:443')
     })

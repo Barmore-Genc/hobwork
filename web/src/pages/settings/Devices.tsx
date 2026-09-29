@@ -39,7 +39,7 @@ function RenameForm({ device, onDone }: { device: Device; onDone: (renamed: bool
   return (
     <form onSubmit={save} className="mt-3 space-y-3">
       <label htmlFor={`device-${device.id}-name`} className="sr-only">
-        Name in projects
+        Name in hobs
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
         <input
@@ -62,7 +62,7 @@ function RenameForm({ device, onDone }: { device: Device; onDone: (renamed: bool
           </Button>
         </div>
       </div>
-      <p className="text-sm text-muted">Projects that use the old name stop reaching this device until they are changed.</p>
+      <p className="text-sm text-muted">Hobs that use the old name stop reaching this device until they are changed.</p>
       {error && <Notice tone="error">{error}</Notice>}
     </form>
   )
@@ -94,7 +94,7 @@ function DeviceRow({
           </p>
           <p className="text-sm text-muted">
             {PLATFORM_NAMES[device.platform]} of {device.owner}
-            {!device.ownerAllowed && ', who can no longer sign in, so projects cannot reach it'}
+            {!device.ownerAllowed && ', who can no longer sign in, so hobs cannot reach it'}
             {' · '}
             {device.connected ? (
               'connected now'
@@ -158,7 +158,7 @@ export function DevicesSection() {
         Devices
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Phones and computers with the Hobwork app. Projects reach them by name, for example to send a notification. To
+        Phones and computers with the Hobwork app. Hobs reach them by name, for example to send a notification. To
         add one, open the Hobwork app on it and connect to this Hobwork.
       </p>
 
@@ -201,7 +201,7 @@ export function DevicesSection() {
         onCancel={() => setRemoving(null)}
       >
         <p>
-          The Hobwork app on “{removing?.name}” is signed out right away, and projects can no longer reach the device. To
+          The Hobwork app on “{removing?.name}” is signed out right away, and hobs can no longer reach the device. To
           use it again, connect it from the Hobwork app.
         </p>
       </ConfirmDialog>

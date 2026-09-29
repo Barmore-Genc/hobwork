@@ -175,7 +175,7 @@ final class AppModel {
             do {
                 let records = try await nfc.read()
                 guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
-                    nfcNotice = "This tag has no link, so there is nothing to send to your projects."
+                    nfcNotice = "This tag has no link, so there is nothing to send to your hobs."
                     return
                 }
                 await send(event)

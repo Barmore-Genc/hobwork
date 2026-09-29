@@ -26,7 +26,7 @@ const MAX_NAME_LENGTH = 40
 export function validateProjectName(name: string): void {
   if (!PROJECT_NAME.test(name) || name.length > MAX_NAME_LENGTH) {
     throw new ProjectError(
-      `Invalid project name "${name}": use lowercase letters, digits and single hyphens (kebab-case), at most ${MAX_NAME_LENGTH} characters`,
+      `Invalid hob name "${name}": use lowercase letters, digits and single hyphens (kebab-case), at most ${MAX_NAME_LENGTH} characters`,
     )
   }
 }
@@ -98,7 +98,7 @@ export function requireProject(host: Host, name: string): Project {
   if (!project) {
     const renamed = renamedProject(host, name)
     throw new ProjectError(
-      renamed ? `Project "${name}" was renamed to "${renamed.name}"` : `Project "${name}" does not exist`,
+      renamed ? `Hob "${name}" was renamed to "${renamed.name}"` : `Hob "${name}" does not exist`,
     )
   }
   return project
@@ -111,7 +111,7 @@ export function claimName(host: Host, name: string): void {
 
 export async function createProject(host: Host, name: string): Promise<Project> {
   validateProjectName(name)
-  if (getProject(host, name)) throw new ProjectError(`Project "${name}" already exists`)
+  if (getProject(host, name)) throw new ProjectError(`Hob "${name}" already exists`)
   const repo = repoPath(host, name)
   if (existsSync(repo)) throw new ProjectError(`Repository for "${name}" already exists`)
 
@@ -139,7 +139,7 @@ export async function createProject(host: Host, name: string): Promise<Project> 
   }
 }
 
-const TEMPLATE_COMMIT_MESSAGE = 'Create project from template'
+const TEMPLATE_COMMIT_MESSAGE = 'Create hob from template'
 
 async function commitTemplate(repo: string, name: string, staging: string): Promise<string> {
   const tree = join(staging, 'tree')

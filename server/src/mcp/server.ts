@@ -55,35 +55,35 @@ export type McpContext = {
   appOrigin?: (target: AppTarget) => string | undefined
 }
 
-export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
+export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. A hob is a project: a git repository with handlers, a DB and an optional UI. The main branch is the deployed version and changes only by merging another branch.
 
-Before changing a project, read its AGENTS.md (read_file on main or on your branch). It explains the layout, the SDK and the workflow.
+Before changing a hob, read its AGENTS.md (read_file on main or on your branch). It explains the layout, the SDK and the workflow.
 
 Workflow: create a branch, change files on it (write_file, edit_file), run checks in the branch workspace with bash (pnpm typecheck, pnpm lint, pnpm test), then commit. File changes stay in the branch workspace until you commit. When the change is done, merge the branch with a summary: this runs the pipeline and deploys the change as a new version, or returns the failing step's output.
 
 Rules:
-- Handlers are like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the project DB through the SDK.
+- Handlers are like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the hob DB through the SDK.
 - There are no long-running processes. Use a cron for recurring work.
 - Every change needs tests. Merging runs typecheck, lint, tests and build, and refuses on failure.
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.
 - Debug from logs and invocation records. Do not guess.
-- When a project uses Home Assistant, read data Home Assistant already has (states, history, device details) from it instead of copying it into the project DB. Store a copy only when the user asks for one or the feature cannot work without it.
-- Only people can delete, rename or restore a project, in the Hobwork web UI. There are no tools for it.
-- Only the user creates secrets and sets their values, in the Hobwork UI. When a project needs one, look for it with list_secrets and assign it to the project with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>.
+- When a hob uses Home Assistant, read data Home Assistant already has (states, history, device details) from it instead of copying it into the hob DB. Store a copy only when the user asks for one or the feature cannot work without it.
+- Only people can delete, rename or restore a hob, in the Hobwork web UI. There are no tools for it.
+- Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
 
 const MAX_READ_LINES = 2000
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120
 const MAX_BASH_TIMEOUT_SECONDS = 600
 
-const project = z.string().describe('Project name, e.g. "filament-tracker"')
+const hob = z.string().describe('Hob name, e.g. "filament-tracker"')
 const branch = z
   .string()
   .describe(`Branch name. ${DEFAULT_BRANCH} can be read but not changed; make changes on another branch`)
 const writableBranch = z
   .string()
   .describe(`Branch to change. Must not be ${DEFAULT_BRANCH}; create a branch with create_branch first`)
-const filePath = z.string().describe('File path relative to the project root, e.g. "src/scan.ts"')
+const filePath = z.string().describe('File path relative to the hob root, e.g. "src/scan.ts"')
 
 function text(value: string): CallToolResult {
   return { content: [{ type: 'text', text: value }] }
@@ -161,10 +161,10 @@ export function createMcpServer({
   }
 
   server.registerTool(
-    'list_projects',
+    'list_hobs',
     {
       description:
-        'List the Hobwork projects you have access to, with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
+        'List the hobs you have access to, with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
       annotations: { readOnlyHint: true },
     },
     () =>
@@ -181,12 +181,12 @@ export function createMcpServer({
   )
 
   server.registerTool(
-    'create_project',
+    'create_hob',
     {
       description:
-        'Create a project from the Hobwork template (AGENTS.md, hobwork.json, an example route, cron and test). Then create a branch and read AGENTS.md before changing anything.',
+        'Create a hob from the Hobwork template (AGENTS.md, hobwork.json, an example route, cron and test). Then create a branch and read AGENTS.md before changing anything.',
       inputSchema: {
-        name: z.string().describe('Project name in kebab-case, e.g. "sleep-alarms"'),
+        name: z.string().describe('Hob name in kebab-case, e.g. "sleep-alarms"'),
       },
     },
     async ({ name }) => {
@@ -200,20 +200,20 @@ export function createMcpServer({
     const { hostModels, projectModels, limits } = effectiveAiSettings(host.db, projectId)
     const { lastMinute, lastHour, day, month } = projectUsage(host.db, projectId, Date.now())
     return {
-      models: { host: hostModels, project: projectModels },
+      models: { host: hostModels, hob: projectModels },
       limits,
       usage: { requestsLastMinute: lastMinute, requestsLastHour: lastHour, last24Hours: day, last30Days: month },
     }
   }
 
   server.registerTool(
-    'get_project',
+    'get_hob',
     {
-      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, the disk space it uses in bytes (project DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
-      inputSchema: { project },
+      description: `Show a hob: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), hob DB size and slow query warnings, the disk space it uses in bytes (hob DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
+      inputSchema: { hob },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: name }) => {
+    async ({ hob: name }) => {
       const record = requireProject(host, name)
       const raw = await readFileAtRef(host, name, DEFAULT_BRANCH, 'hobwork.json')
       let config: Record<string, unknown> = {}
@@ -254,22 +254,22 @@ export function createMcpServer({
     {
       description: `Create a branch to work on. Changes are always made on a branch, never on ${DEFAULT_BRANCH}.`,
       inputSchema: {
-        project,
+        hob,
         branch: z.string().describe('New branch name, e.g. "add-spool-route". Letters, digits, ".", "_", "-" and "/"'),
         from: z.string().default(DEFAULT_BRANCH).describe('Branch or commit to start from'),
       },
     },
-    async ({ project: p, branch: b, from }) => json(await createBranch(host, p, b, from)),
+    async ({ hob: p, branch: b, from }) => json(await createBranch(host, p, b, from)),
   )
 
   server.registerTool(
     'list_branches',
     {
-      description: 'List the branches of a project with their latest commit, workspace state and app URL (the dashboard and routes of that branch).',
-      inputSchema: { project },
+      description: 'List the branches of a hob with their latest commit, workspace state and app URL (the dashboard and routes of that branch).',
+      inputSchema: { hob },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p }) => {
+    async ({ hob: p }) => {
       const statuses = new Map(workspaces.list(p).map((w) => [w.branch, w.status]))
       return json(
         withAppUrls(p, await listBranches(host, p)).map((b) => ({ ...b, workspace: statuses.get(b.name) ?? 'none' })),
@@ -283,7 +283,7 @@ export function createMcpServer({
       description:
         'Read a text file on a branch, including uncommitted changes in its workspace. Returns the exact file content, suitable for edit_file.',
       inputSchema: {
-        project,
+        hob,
         branch,
         path: filePath,
         offset: z.number().int().min(1).default(1).describe('First line to return, starting at 1'),
@@ -291,7 +291,7 @@ export function createMcpServer({
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, branch: b, path, offset, limit }) => {
+    async ({ hob: p, branch: b, path, offset, limit }) => {
       const content = await readCheckoutFile(await readableDir(p, b), path)
       if (content.subarray(0, 8000).includes(0)) return text(`"${path}" is a binary file (${content.length} bytes)`)
       return text(formatReadResult(content.toString('utf8'), offset, limit))
@@ -304,13 +304,13 @@ export function createMcpServer({
       description:
         'Create or overwrite a file on a branch with the given content. Parent directories are created as needed. Prefer edit_file for changes to existing files.',
       inputSchema: {
-        project,
+        hob,
         branch: writableBranch,
         path: filePath,
         content: z.string().describe('The complete new file content'),
       },
     },
-    async ({ project: p, branch: b, path, content }) => {
+    async ({ hob: p, branch: b, path, content }) => {
       const { created } = await writeCheckoutFile(await writableDir(p, b), path, content)
       return text(`${created ? 'Created' : 'Updated'} ${path}`)
     },
@@ -322,7 +322,7 @@ export function createMcpServer({
       description:
         'Replace an exact string in a file on a branch. old_string must match the file exactly (whitespace and indentation included) and must occur once, unless replace_all is set.',
       inputSchema: {
-        project,
+        hob,
         branch: writableBranch,
         path: filePath,
         old_string: z.string().describe('Exact text to replace'),
@@ -330,7 +330,7 @@ export function createMcpServer({
         replace_all: z.boolean().default(false).describe('Replace every occurrence instead of exactly one'),
       },
     },
-    async ({ project: p, branch: b, path, old_string, new_string, replace_all }) => {
+    async ({ hob: p, branch: b, path, old_string, new_string, replace_all }) => {
       const { replacements } = await editCheckoutFile(
         await writableDir(p, b),
         path,
@@ -346,10 +346,10 @@ export function createMcpServer({
     'delete_file',
     {
       description: 'Delete a file on a branch. Directories cannot be deleted directly; delete the files in them.',
-      inputSchema: { project, branch: writableBranch, path: filePath },
+      inputSchema: { hob, branch: writableBranch, path: filePath },
       annotations: { destructiveHint: true },
     },
-    async ({ project: p, branch: b, path }) => {
+    async ({ hob: p, branch: b, path }) => {
       await deleteCheckoutFile(await writableDir(p, b), path)
       return text(`Deleted ${path}`)
     },
@@ -361,14 +361,14 @@ export function createMcpServer({
       description:
         'List files on a branch. Recursive listings return files only and skip .git and node_modules; non-recursive listings also show directories with a trailing "/".',
       inputSchema: {
-        project,
+        hob,
         branch,
-        path: z.string().default('.').describe('Directory relative to the project root'),
+        path: z.string().default('.').describe('Directory relative to the hob root'),
         recursive: z.boolean().default(true),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, branch: b, path, recursive }) => {
+    async ({ hob: p, branch: b, path, recursive }) => {
       const { entries, truncated } = await listCheckoutFiles(await readableDir(p, b), path, recursive)
       if (!entries.length) return text('(no files)')
       return text(entries.join('\n') + (truncated ? `\n[Listing cut at ${entries.length} entries. List a subdirectory.]` : ''))
@@ -381,17 +381,17 @@ export function createMcpServer({
       description:
         'Search file contents on a branch with a regular expression (JavaScript syntax), line by line. Returns "path:line: text" for each matching line. Skips .git, node_modules, binary files and files over 1 MB.',
       inputSchema: {
-        project,
+        hob,
         branch,
         pattern: z.string().describe('Regular expression, e.g. "export default" or "fetch\\\\("'),
-        path: z.string().default('.').describe('Directory or file to search, relative to the project root'),
+        path: z.string().default('.').describe('Directory or file to search, relative to the hob root'),
         glob: z.string().optional().describe('Only search files matching this glob, e.g. "*.ts" or "src/**/*.tsx"'),
         ignore_case: z.boolean().default(false),
         max_results: z.number().int().min(1).max(500).default(100),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, branch: b, pattern, path, glob, ignore_case, max_results }) => {
+    async ({ hob: p, branch: b, pattern, path, glob, ignore_case, max_results }) => {
       const result = await searchCheckout(await readableDir(p, b), {
         path,
         pattern,
@@ -413,10 +413,10 @@ export function createMcpServer({
       description:
         'Run a shell command in the branch workspace VM, with the branch files as the working tree. Use it for pnpm install, pnpm typecheck, pnpm lint, pnpm test and similar. The VM starts on first use. Returns the exit code, stdout and stderr (long output is cut in the middle). The VM also has a hobwork command (hobwork status, commit, merge, logs), mainly for SSH sessions.',
       inputSchema: {
-        project,
+        hob,
         branch: writableBranch,
         command: z.string().describe('Shell command line, e.g. "pnpm test"'),
-        cwd: z.string().default('.').describe('Working directory relative to the project root'),
+        cwd: z.string().default('.').describe('Working directory relative to the hob root'),
         timeout_seconds: z
           .number()
           .int()
@@ -425,7 +425,7 @@ export function createMcpServer({
           .default(DEFAULT_BASH_TIMEOUT_SECONDS),
       },
     },
-    async ({ project: p, branch: b, command, cwd, timeout_seconds }, extra) => {
+    async ({ hob: p, branch: b, command, cwd, timeout_seconds }, extra) => {
       if (!workspaces.canStartVms) {
         throw new ProjectError(
           'This Hobwork host cannot run commands: no workspace VM backend is configured. File tools, commit, diff and log still work',
@@ -451,12 +451,12 @@ export function createMcpServer({
       description:
         'Commit all changes in the branch workspace (new, changed and deleted files) and push them to the branch. You are recorded as the author.',
       inputSchema: {
-        project,
+        hob,
         branch: writableBranch,
         message: z.string().describe('Commit message: a short summary line, optionally followed by a blank line and details'),
       },
     },
-    async ({ project: p, branch: b, message }) => {
+    async ({ hob: p, branch: b, message }) => {
       await writableDir(p, b)
       const sha = await workspaces.commit(p, b, message, {
         name: agent.name,
@@ -471,13 +471,13 @@ export function createMcpServer({
     {
       description: `Show a unified diff for a branch. scope "uncommitted" shows workspace changes not yet committed; scope "branch" shows everything committed on the branch since it diverged from ${DEFAULT_BRANCH}, which is what a merge would apply.`,
       inputSchema: {
-        project,
+        hob,
         branch: writableBranch,
         scope: z.enum(['uncommitted', 'branch']).default('uncommitted'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, branch: b, scope }) => {
+    async ({ hob: p, branch: b, scope }) => {
       let diff: string
       if (scope === 'branch') diff = await diffBranch(host, p, b)
       else {
@@ -493,13 +493,13 @@ export function createMcpServer({
     {
       description: 'Show recent commits on a branch, newest first.',
       inputSchema: {
-        project,
+        hob,
         ref: z.string().default(DEFAULT_BRANCH).describe('Branch or commit'),
         limit: z.number().int().min(1).max(100).default(20),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, ref, limit }) => json(await log(host, p, ref, limit)),
+    async ({ hob: p, ref, limit }) => json(await log(host, p, ref, limit)),
   )
 
   registerDeliveryTools(server, { host, delivery, agent })

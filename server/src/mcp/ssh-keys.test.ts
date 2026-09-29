@@ -23,7 +23,7 @@ test('agents add named SSH keys, list them and revoke them', async () => {
 
   const added = await mcp.call('add_ssh_key', { name: 'Claude Code on the laptop', public_key: publicKey })
   expect(textOf(added)).toMatch(
-    /^Added SSH key "Claude Code on the laptop" \(SHA256:\S+\)\. Connect with ssh -p 2222 <project>\/<branch>@localhost\.$/,
+    /^Added SSH key "Claude Code on the laptop" \(SHA256:\S+\)\. Connect with ssh -p 2222 <hob>\/<branch>@localhost\.$/,
   )
   expect(findSshKey(mcp.host.db, keyData(publicKey))?.agent.name).toBe('claude')
 

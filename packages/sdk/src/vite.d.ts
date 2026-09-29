@@ -4,6 +4,6 @@ import type { ViteUserConfig } from 'vitest/config'
 // `dir`/hobwork.json.
 export function handlerEntries(dir: string): Record<string, string>
 
-// The Vite and Vitest config of a Hobwork project in `dir` (default: the
+// The Vite and Vitest config of a hob in `dir` (default: the
 // current directory): the dashboard, the handlers from hobwork.json and tests.
 export function hobworkViteConfig(dir?: string): ViteUserConfig

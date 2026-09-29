@@ -88,7 +88,7 @@ test('a project cannot have two secrets under one env name, or one secret twice'
   const a = store.create({ name: 'A', value: 'a', hosts: ['a.example'], assign: { project: 'filament', envName: 'TOKEN' } }, HOST)
   store.create({ name: 'B', value: 'b', hosts: ['b.example'] }, HOST)
   expect(() => store.assign('filament', 'B', 'TOKEN', HOST)).toThrow('already has TOKEN (the secret "A")')
-  expect(() => store.assign('filament', a.id, 'OTHER', HOST)).toThrow('already assigned to this project as TOKEN')
+  expect(() => store.assign('filament', a.id, 'OTHER', HOST)).toThrow('already assigned to this hob as TOKEN')
   expect(() => store.assign('filament', 'Missing', 'X', HOST)).toThrow('There is no secret called "Missing"')
   expect(() => store.assign('filament', 'B', 'PATH', HOST)).toThrow('reserved')
   expect(() => store.assign('filament', 'B', 'lower', HOST)).toThrow('capital letters')

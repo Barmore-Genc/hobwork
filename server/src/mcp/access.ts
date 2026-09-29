@@ -2,25 +2,25 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import { allowsProject, type Access } from '../access.ts'
 import { ProjectError } from '../projects.ts'
 
-// Tools that act across projects rather than on one, so they need access to all of them.
-const EVERY_PROJECT_TOOLS = new Set(['create_project'])
+// Tools that act across hobs rather than on one, so they need access to all of them.
+const EVERY_PROJECT_TOOLS = new Set(['create_hob'])
 
 type ToolConfig = { inputSchema?: object; annotations?: { readOnlyHint?: boolean } }
 type Register = (name: string, config: ToolConfig, cb: (...args: unknown[]) => unknown) => RegisteredTool
 
 // Applies a credential's access to every tool registered after this call: tools
-// it may not use are left out of the tool list, and a tool's `project` argument
-// must be one of its projects. Read-only access keeps the tools marked
+// it may not use are left out of the tool list, and a tool's `hob` argument
+// must be one of its hobs. Read-only access keeps the tools marked
 // readOnlyHint, so every new tool is refused to it unless marked.
 export function limitTools(server: McpServer, access: Access) {
   const register = server.registerTool.bind(server) as unknown as Register
   const limited: Register = (name, config, cb) => {
-    const takesProject = config.inputSchema !== undefined && 'project' in config.inputSchema
+    const takesProject = config.inputSchema !== undefined && 'hob' in config.inputSchema
     const handler = takesProject
       ? (args: unknown, ...rest: unknown[]) => {
-          const project = (args as { project?: unknown }).project
+          const project = (args as { hob?: unknown }).hob
           if (typeof project === 'string' && !allowsProject(access, project)) {
-            throw new ProjectError(`This connection has no access to the project "${project}"`)
+            throw new ProjectError(`This connection has no access to the hob "${project}"`)
           }
           return cb(args, ...rest)
         }

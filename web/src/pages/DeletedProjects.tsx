@@ -38,13 +38,13 @@ export function DeletedProjectsPage() {
   return (
     <div>
       <Link to="/" className="text-sm text-muted hover:text-fg">
-        All projects
+        All hobs
       </Link>
       <div className="mt-3">
-        <PageHeading>Deleted projects</PageHeading>
+        <PageHeading>Deleted hobs</PageHeading>
       </div>
       <p className="mt-3 max-w-prose text-muted">
-        Deleted projects are kept for {data?.trashDays ?? 7} days. Restoring one brings back its code, versions, saved
+        Deleted hobs are kept for {data?.trashDays ?? 7} days. Restoring one brings back its code, versions, saved
         data, secrets and webhooks. Its run history and log stay deleted.
       </p>
 
@@ -53,7 +53,7 @@ export function DeletedProjectsPage() {
         {data?.projects.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-6 py-10">
             <h2 className="text-xl font-semibold">Nothing deleted</h2>
-            <p className="mt-2 max-w-prose text-muted">Projects you delete show up here until they are removed for good.</p>
+            <p className="mt-2 max-w-prose text-muted">Hobs you delete show up here until they are removed for good.</p>
           </div>
         )}
         {data && data.projects.length > 0 && (
@@ -87,14 +87,14 @@ export function DeletedProjectsPage() {
       <ConfirmDialog
         open={target !== null}
         title={`Restore ${target?.project}?`}
-        confirmLabel="Restore project"
+        confirmLabel="Restore hob"
         busy={busy}
         confirmDisabled={!validProjectName(trimmed)}
         error={restoreError}
         onConfirm={restore}
         onCancel={() => setTarget(null)}
       >
-        {target?.nameTaken && <p>Another project is called {target.project} now. Pick a name for this one.</p>}
+        {target?.nameTaken && <p>Another hob is called {target.project} now. Pick a name for this one.</p>}
         <label htmlFor="restore-name" className="block pt-1 text-fg">
           Name
         </label>

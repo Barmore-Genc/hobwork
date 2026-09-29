@@ -10,14 +10,14 @@ export function registerBranchHaTools(server: McpServer, { host, agent }: { host
   server.registerTool(
     'set_branch_home_assistant',
     {
-      description: `Let a branch preview call Home Assistant services and fire events, or stop it. Previews always read states; without this, service calls fail with code not_approved. It applies to the next call. The deployed version (${DEFAULT_BRANCH}) always may. The user sees on the project page that you turned it on.`,
+      description: `Let a branch preview call Home Assistant services and fire events, or stop it. Previews always read states; without this, service calls fail with code not_approved. It applies to the next call. The deployed version (${DEFAULT_BRANCH}) always may. The user sees on the hob page that you turned it on.`,
       inputSchema: {
-        project: z.string().describe('Project name, e.g. "filament-tracker"'),
+        hob: z.string().describe('Hob name, e.g. "filament-tracker"'),
         branch: z.string().describe(`Branch name, not ${DEFAULT_BRANCH}`),
         allowed: z.boolean().describe('true to let the branch control Home Assistant, false to stop it'),
       },
     },
-    async ({ project, branch, allowed }) => {
+    async ({ hob: project, branch, allowed }) => {
       requireProject(host, project)
       if (branch === DEFAULT_BRANCH) throw new ProjectError(`${DEFAULT_BRANCH} always controls Home Assistant`)
       if (!(await branchExists(host, project, branch))) throw new ProjectError(`Branch "${branch}" does not exist in ${project}`)

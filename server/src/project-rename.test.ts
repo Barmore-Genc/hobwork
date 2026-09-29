@@ -177,7 +177,7 @@ test('old webhook URLs, app links and project pages lead to the renamed project'
   const logs = await fetch(`${app.base}/api/projects/filament/logs`, { headers: { cookie } })
   expect(logs.status).toBe(404)
   expect(await logs.json()).toEqual({ error: 'filament is now called spools' })
-  expect(() => requireProject(host, 'filament')).toThrow('Project "filament" was renamed to "spools"')
+  expect(() => requireProject(host, 'filament')).toThrow('Hob "filament" was renamed to "spools"')
 })
 
 test('storage use and agent access follow the renamed project', async () => {

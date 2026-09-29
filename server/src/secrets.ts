@@ -421,14 +421,14 @@ export function createSecretStore(host: Host, key: Buffer) {
       const other = requireSecret(Number(clash.secret_id))
       throw new SecretConflictError(
         other.id === row.id
-          ? `"${row.name}" is already assigned to this project as ${envName}`
-          : `This project already has ${envName} (the secret "${other.name}"). Unassign it first or pick another env name`,
+          ? `"${row.name}" is already assigned to this hob as ${envName}`
+          : `This hob already has ${envName} (the secret "${other.name}"). Unassign it first or pick another env name`,
       )
     }
     const existing = host.db
       .prepare('SELECT env_name FROM secret_assignments WHERE project_id = ? AND secret_id = ?')
       .get(projectId, row.id)
-    if (existing) throw new SecretConflictError(`"${row.name}" is already assigned to this project as ${String(existing.env_name)}`)
+    if (existing) throw new SecretConflictError(`"${row.name}" is already assigned to this hob as ${String(existing.env_name)}`)
     host.db
       .prepare(
         `INSERT INTO secret_assignments (project_id, secret_id, env_name, assigned_by_user_id, assigned_by_agent_id)

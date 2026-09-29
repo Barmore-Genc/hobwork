@@ -1,4 +1,4 @@
-// Test helpers for project code: `import { createTestDb, createTestContext } from '@hobwork/sdk/testing'`.
+// Test helpers for hob code: `import { createTestDb, createTestContext } from '@hobwork/sdk/testing'`.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -11,11 +11,11 @@ import { createDbClient } from './runner/db-client.ts'
 
 export type TestDbOptions = {
   // Directory with the migrations. Default: migrations/ in the current directory
-  // (the project root when running `pnpm test`).
+  // (the hob root when running `pnpm test`).
   migrations?: string
 }
 
-// A fresh in-memory project DB with every migration applied. It follows the
+// A fresh in-memory hob DB with every migration applied. It follows the
 // same rules as the deployed DB (one statement per call, no schema changes, no
 // interactive transactions), so tests catch what would fail after deploy.
 export function createTestDb(options: TestDbOptions = {}): Db {

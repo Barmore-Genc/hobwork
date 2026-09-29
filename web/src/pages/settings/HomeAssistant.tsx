@@ -186,7 +186,7 @@ function ConnectionForm({
         onCancel={() => setConfirmDisconnect(false)}
       >
         <p>
-          Projects can no longer read or control your home, and they stop running when something happens at home. Hobwork
+          Hobs can no longer read or control your home, and they stop running when something happens at home. Hobwork
           forgets the access token.
         </p>
       </ConfirmDialog>
@@ -243,7 +243,7 @@ export function HomeAssistantSection() {
         Home Assistant
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Projects use Home Assistant to run when something happens at home and to control your devices.
+        Hobs use Home Assistant to run when something happens at home and to control your devices.
       </p>
 
       {error && (

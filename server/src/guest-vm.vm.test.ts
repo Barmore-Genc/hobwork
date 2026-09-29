@@ -57,11 +57,11 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     return text
   }
 
-  const p = { project: 'filament', branch: 'greeting' }
+  const p = { hob: 'filament', branch: 'greeting' }
   const checks = 'pnpm typecheck && pnpm lint && pnpm test && pnpm build'
 
   test('an agent checks, merges and breaks the template project', async () => {
-    await ok('create_project', { name: 'filament' })
+    await ok('create_hob', { name: 'filament' })
     await ok('create_branch', p)
 
     const passing = await ok('bash', { ...p, command: checks, timeout_seconds: 300 })
@@ -83,7 +83,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     const { text, isError } = await call('merge', { ...p, summary: 'Say hi' })
     expect(isError, text).toBe(true)
     expect(text).toContain('the test step failed')
-    expect(JSON.parse(await ok('list_versions', { project: p.project }))).toHaveLength(2)
+    expect(JSON.parse(await ok('list_versions', { hob: p.hob }))).toHaveLength(2)
   })
 
   test('egress follows hobwork.json and the VM restarts when it changes', async () => {
@@ -100,10 +100,10 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
       idleTimeoutMs: 1000,
     })
     await ok('create_branch', { ...p, branch: 'idle' })
-    const vm = await idle.start(p.project, 'idle')
+    const vm = await idle.start(p.hob, 'idle')
     expect((await vm.exec('echo up', { cwd: '.', timeoutMs: 10_000 })).stdout).toBe('up\n')
-    expect(idle.get(p.project, 'idle')?.status).toBe('running')
-    await vi.waitFor(() => expect(idle.get(p.project, 'idle')?.status).toBe('stopped'), { timeout: 10_000, interval: 200 })
+    expect(idle.get(p.hob, 'idle')?.status).toBe('running')
+    await vi.waitFor(() => expect(idle.get(p.hob, 'idle')?.status).toBe('stopped'), { timeout: 10_000, interval: 200 })
     await expect(vm.exec('true', { cwd: '.', timeoutMs: 5000 })).rejects.toThrow()
   })
 })

@@ -24,7 +24,7 @@ afterEach(() => mcp.close())
 
 test('list_secrets shows the library and per project env names, never values', async () => {
   expect(textOf(await mcp.call('list_secrets'))).toContain('There are no secrets yet. Ask the user')
-  expect(textOf(await mcp.call('list_secrets', { project: 'filament' }))).toContain('filament has no secrets assigned')
+  expect(textOf(await mcp.call('list_secrets', { hob: 'filament' }))).toContain('filament has no secrets assigned')
   secrets.create(
     { name: 'Spoolman API key', value: 'the-real-value', hosts: ['api.spools.example'], assign: { project: 'filament', envName: 'SPOOLMAN_TOKEN' } },
     HOST,
@@ -34,10 +34,10 @@ test('list_secrets shows the library and per project env names, never values', a
   expect(library).not.toContain('real-value')
   expect(library).not.toContain('weather-value')
   expect(JSON.parse(library)).toEqual([
-    { name: 'Spoolman API key', hosts: ['api.spools.example'], projects: [{ project: 'filament', envName: 'SPOOLMAN_TOKEN' }] },
-    { name: 'Weather', hosts: ['weather.example'], projects: [] },
+    { name: 'Spoolman API key', hosts: ['api.spools.example'], hobs: [{ hob: 'filament', envName: 'SPOOLMAN_TOKEN' }] },
+    { name: 'Weather', hosts: ['weather.example'], hobs: [] },
   ])
-  expect(JSON.parse(textOf(await mcp.call('list_secrets', { project: 'filament' })))).toEqual([
+  expect(JSON.parse(textOf(await mcp.call('list_secrets', { hob: 'filament' })))).toEqual([
     { envName: 'SPOOLMAN_TOKEN', secret: 'Spoolman API key', hosts: ['api.spools.example'] },
   ])
 })
@@ -45,7 +45,7 @@ test('list_secrets shows the library and per project env names, never values', a
 test('agents assign and unassign existing secrets, and the project log names the agent', async () => {
   secrets.create({ name: 'Spoolman API key', value: 'v', hosts: ['api.spools.example'] }, HOST)
   const before = secrets.fingerprint('alarms')
-  const assigned = await mcp.call('assign_secret', { project: 'alarms', secret: 'spoolman api key', env_name: 'API_KEY' })
+  const assigned = await mcp.call('assign_secret', { hob: 'alarms', secret: 'spoolman api key', env_name: 'API_KEY' })
   expect(textOf(assigned)).toBe(
     'Assigned "Spoolman API key" to alarms as API_KEY. Handlers can send ctx.secrets.API_KEY to api.spools.example.',
   )
@@ -54,19 +54,19 @@ test('agents assign and unassign existing secrets, and the project log names the
   expect(secrets.fingerprint('alarms')).not.toBe(before)
   expect(secrets.assigned('alarms')[0]?.assignedBy).toEqual({ kind: 'agent', name: 'claude' })
 
-  const clash = await mcp.call('assign_secret', { project: 'alarms', secret: 'Spoolman API key', env_name: 'OTHER' })
+  const clash = await mcp.call('assign_secret', { hob: 'alarms', secret: 'Spoolman API key', env_name: 'OTHER' })
   expect(clash.isError).toBe(true)
-  expect(textOf(clash)).toContain('already assigned to this project as API_KEY')
-  const missing = await mcp.call('assign_secret', { project: 'alarms', secret: 'Nope', env_name: 'NOPE' })
+  expect(textOf(clash)).toContain('already assigned to this hob as API_KEY')
+  const missing = await mcp.call('assign_secret', { hob: 'alarms', secret: 'Nope', env_name: 'NOPE' })
   expect(textOf(missing)).toContain('There is no secret called "Nope"')
-  const reserved = await mcp.call('assign_secret', { project: 'filament', secret: 'Spoolman API key', env_name: 'NODE_OPTIONS' })
+  const reserved = await mcp.call('assign_secret', { hob: 'filament', secret: 'Spoolman API key', env_name: 'NODE_OPTIONS' })
   expect(textOf(reserved)).toContain('reserved')
 
-  expect(textOf(await mcp.call('unassign_secret', { project: 'alarms', env_name: 'API_KEY' }))).toBe('Unassigned API_KEY from alarms.')
+  expect(textOf(await mcp.call('unassign_secret', { hob: 'alarms', env_name: 'API_KEY' }))).toBe('Unassigned API_KEY from alarms.')
   expect(secrets.forSandbox('alarms')).toEqual({})
   expect(secrets.hosts('alarms')).toEqual([])
   expect(secrets.fingerprint('alarms')).toBe(before)
-  expect((await mcp.call('unassign_secret', { project: 'alarms', env_name: 'API_KEY' })).isError).toBe(true)
+  expect((await mcp.call('unassign_secret', { hob: 'alarms', env_name: 'API_KEY' })).isError).toBe(true)
   expect(secrets.get('Spoolman API key')).toBeDefined()
 
   expect(queryLogs(mcp.host, { project: 'alarms', eventsOnly: true, limit: 10 }).map((l) => [l.event, l.message])).toEqual([
@@ -85,17 +85,17 @@ test('no tool lets an agent create secrets, set values or set hosts without appr
   }
 
   secrets.create({ name: 'Key', value: 'v', hosts: ['a.example'] }, HOST)
-  await mcp.call('assign_secret', { project: 'filament', secret: 'Key', env_name: 'KEY', hosts: ['evil.example'], value: 'x' })
+  await mcp.call('assign_secret', { hob: 'filament', secret: 'Key', env_name: 'KEY', hosts: ['evil.example'], value: 'x' })
   expect(secrets.forSandbox('filament')).toEqual({ KEY: { value: 'v', hosts: ['a.example'] } })
 })
 
-test('get_project shows reachable hosts, secret env names and DB warnings', async () => {
+test('get_hob shows reachable hosts, secret env names and DB warnings', async () => {
   secrets.create(
     { name: 'Spools', value: 'the-real-value', hosts: ['api.spools.example'], assign: { project: 'filament', envName: 'SPOOL_API_KEY' } },
     HOST,
   )
   await data.execute({ project: 'filament' }, { statements: [{ sql: 'SELECT 1' }], transaction: false })
-  const text = textOf(await mcp.call('get_project', { project: 'filament' }))
+  const text = textOf(await mcp.call('get_hob', { hob: 'filament' }))
   expect(text).not.toContain('the-real-value')
   const project = JSON.parse(text)
   expect(project.egress).toEqual(['api.spools.example'])
@@ -105,7 +105,7 @@ test('get_project shows reachable hosts, secret env names and DB warnings', asyn
 
 test('request_secret_hosts returns a link for the user and changes nothing until approved', async () => {
   secrets.create({ name: 'Spools', value: 'v', assign: { project: 'filament', envName: 'SPOOLS' } }, HOST)
-  expect(textOf(await mcp.call('assign_secret', { project: 'alarms', secret: 'Spools', env_name: 'SPOOLS' }))).toContain(
+  expect(textOf(await mcp.call('assign_secret', { hob: 'alarms', secret: 'Spools', env_name: 'SPOOLS' }))).toContain(
     'It has no hosts yet, so it is not sent anywhere. Ask for them with request_secret_hosts.',
   )
   const noReason = await mcp.call('request_secret_hosts', { secret: 'Spools', hosts: ['api.spools.example'], reason: ' ' })
@@ -126,9 +126,9 @@ test('request_secret_hosts returns a link for the user and changes nothing until
       name: 'Spools',
       hosts: [],
       pendingHosts: ['api.spools.example'],
-      projects: [
-        { project: 'alarms', envName: 'SPOOLS' },
-        { project: 'filament', envName: 'SPOOLS' },
+      hobs: [
+        { hob: 'alarms', envName: 'SPOOLS' },
+        { hob: 'filament', envName: 'SPOOLS' },
       ],
     },
   ])

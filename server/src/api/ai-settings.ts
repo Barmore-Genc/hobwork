@@ -32,14 +32,14 @@ function settingsCall<T>(fn: () => T): T {
   }
 }
 
-// For users only: agents see the limits in get_project but cannot raise them.
+// For users only: agents see the limits in get_hob but cannot raise them.
 export function aiSettingsRoutes(options: { host: Host; now?: () => number }): ApiRoute[] {
   const { host } = options
   const now = options.now ?? Date.now
 
   function projectId(name: string): number {
     const project = getProject(host, name)
-    if (!project) throw new HttpError(404, `There is no project called "${name}"`)
+    if (!project) throw new HttpError(404, `There is no hob called "${name}"`)
     return project.id
   }
 

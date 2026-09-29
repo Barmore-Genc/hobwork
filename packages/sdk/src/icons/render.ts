@@ -39,10 +39,10 @@ function twemoji(emoji: string): Buffer {
 function projectImage(dir: string, path: string): Buffer {
   const full = join(dir, normalize(path))
   if (!full.startsWith(join(dir, '/'))) {
-    throw new IconError(`hobwork.json: "icon" must be a path inside the project, got "${path}"`)
+    throw new IconError(`hobwork.json: "icon" must be a path inside the hob, got "${path}"`)
   }
   if (!existsSync(full) || !lstatSync(full).isFile()) {
-    throw new IconError(`hobwork.json: "icon" is "${path}", which is not a file in the project`)
+    throw new IconError(`hobwork.json: "icon" is "${path}", which is not a file in the hob`)
   }
   return readFileSync(full)
 }

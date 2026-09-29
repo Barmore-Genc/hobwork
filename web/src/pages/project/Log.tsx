@@ -85,9 +85,9 @@ function ProjectLog({ project }: { project: string }) {
   const [live, setLive] = useState(true)
 
   return (
-    <section className="mt-8" aria-label="Project log">
+    <section className="mt-8" aria-label="Hob log">
       <p className="max-w-prose text-muted">
-        What the project wrote while it ran, and what happened to it: updates, starts and stops, crashes and blocked
+        What the hob wrote while it ran, and what happened to it: updates, starts and stops, crashes and blocked
         requests. Newest first.
       </p>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

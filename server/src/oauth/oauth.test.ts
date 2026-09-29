@@ -263,7 +263,7 @@ test('an MCP client registers, gets consent, and calls tools with its access tok
     loopback: true,
     agentName: 'Test Connector',
   })
-  const result = await client.callTool({ name: 'list_projects', arguments: {} })
+  const result = await client.callTool({ name: 'list_hobs', arguments: {} })
   expect(result.isError).toBeFalsy()
   await client.close()
 
@@ -284,7 +284,7 @@ test('a client with a metadata document connects without registering', async () 
   expect(provider.info?.client_id).toBe(CIMD_URL)
   expect(fetched).toEqual([CIMD_URL])
   expect(info).toMatchObject({ client: { name: 'Claude Code', domain: 'claude.example' }, loopback: true })
-  expect((await client.callTool({ name: 'list_projects', arguments: {} })).isError).toBeFalsy()
+  expect((await client.callTool({ name: 'list_hobs', arguments: {} })).isError).toBeFalsy()
   await client.close()
   expect(host.db.prepare('SELECT count(*) AS n FROM oauth_clients').get()?.n).toBe(0)
 })
@@ -625,15 +625,15 @@ test('the consent page limits a connection to some projects and to reading', asy
   const names = (await client.listTools()).tools.map((tool) => tool.name)
   expect(names).toContain('read_file')
   expect(names).not.toContain('write_file')
-  expect(names).not.toContain('create_project')
-  const listed = await client.callTool({ name: 'list_projects', arguments: {} })
+  expect(names).not.toContain('create_hob')
+  const listed = await client.callTool({ name: 'list_hobs', arguments: {} })
   expect(JSON.parse((listed.content as { text: string }[])[0]!.text).map((p: { name: string }) => p.name)).toEqual([
     'filament',
     'garden',
   ])
-  const other = await client.callTool({ name: 'list_versions', arguments: { project: 'sleep' } })
+  const other = await client.callTool({ name: 'list_versions', arguments: { hob: 'sleep' } })
   expect(other.isError).toBe(true)
-  expect(JSON.stringify(other.content)).toContain('no access to the project \\"sleep\\"')
+  expect(JSON.stringify(other.content)).toContain('no access to the hob \\"sleep\\"')
   await client.close()
 
   const [agent] = await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))
@@ -643,8 +643,8 @@ test('the consent page limits a connection to some projects and to reading', asy
 test('approving with an unknown project or no project is refused', async () => {
   const { client_id } = await registeredClient()
   for (const [projects, error] of [
-    [['nope'], 'Project "nope" does not exist'],
-    [[], 'Choose at least one project'],
+    [['nope'], 'Hob "nope" does not exist'],
+    [[], 'Choose at least one hob'],
   ] as const) {
     const res = await fetch(authorizeUrl(client_id).url, { redirect: 'manual' })
     const id = new URL(res.headers.get('location')!, app.base).searchParams.get('request')

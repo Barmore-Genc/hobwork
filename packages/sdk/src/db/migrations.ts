@@ -1,4 +1,4 @@
-// Project DB migrations: migrations/NNNN_name.sql, applied in order and
+// Hob DB migrations: migrations/NNNN_name.sql, applied in order and
 // recorded in the DB. Shared by the host (deploy, dry run, branch DBs) and
 // `@hobwork/sdk/testing`.
 import { createHash } from 'node:crypto'

@@ -279,7 +279,7 @@ export async function restoreProject(
 ): Promise<Project> {
   const dir = trashEntryDir(deps.host, id)
   const info = dir && readTrashInfo(dir)
-  if (!dir || !info) throw new ProjectError('This deleted project is no longer in the trash')
+  if (!dir || !info) throw new ProjectError('This deleted hob is no longer in the trash')
   const name = options.name ?? info.project
   const run = () => restoreNow(deps, dir, info, name, options.user)
   return deps.delivery ? deps.delivery.exclusive(name, run) : run()
@@ -288,7 +288,7 @@ export async function restoreProject(
 async function restoreNow(deps: ProjectRestoreDeps, dir: string, info: TrashInfo, name: string, user?: User): Promise<Project> {
   const { host } = deps
   assertNameFree(host, name)
-  if (!existsSync(join(dir, 'repo.git'))) throw new ProjectError('This deleted project is no longer in the trash')
+  if (!existsSync(join(dir, 'repo.git'))) throw new ProjectError('This deleted hob is no longer in the trash')
   const repo = repoPath(host, name)
   const data = join(host.dataDir, 'projects', name)
   // Left over from an earlier project with this name; nothing uses them.
@@ -314,7 +314,7 @@ async function restoreNow(deps: ProjectRestoreDeps, dir: string, info: TrashInfo
     source: 'runtime',
     level: 'info',
     event: 'project',
-    message: `Restored from deleted projects${user ? ` by ${user.name}` : ''}${formerly}`,
+    message: `Restored from deleted hobs${user ? ` by ${user.name}` : ''}${formerly}`,
   })
   await deps.runtime?.load(name).catch((err: unknown) => console.error(`Loading ${name} after restoring it failed`, err))
   return project

@@ -59,24 +59,24 @@ export function AccessPicker({ access, onChange }: { access: Access; onChange: (
         />
       </fieldset>
       <fieldset>
-        <legend className="font-semibold">Projects</legend>
+        <legend className="font-semibold">Hobs</legend>
         <Choice
           name={`${id}-projects`}
           checked={chosen === null}
           onChange={() => onChange({ ...access, projects: null })}
-          label="All projects"
-          hint="Including projects created later."
+          label="All hobs"
+          hint="Including hobs created later."
         />
         <Choice
           name={`${id}-projects`}
           checked={chosen !== null}
           onChange={() => onChange({ ...access, projects: chosen ?? [] })}
-          label="Only some projects"
-          hint="It cannot create projects."
+          label="Only some hobs"
+          hint="It cannot create hobs."
         />
         {chosen !== null && (
           <div className="mt-1 ml-7">
-            {projects?.length === 0 && <p className="text-sm text-muted">There are no projects yet.</p>}
+            {projects?.length === 0 && <p className="text-sm text-muted">There are no hobs yet.</p>}
             <ul className="space-y-1">
               {projects?.map((project) => (
                 <li key={project.name}>

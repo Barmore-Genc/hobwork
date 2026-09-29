@@ -129,18 +129,18 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'bash',
       'commit',
       'create_branch',
-      'create_project',
+      'create_hob',
       'delete_file',
       'diff',
       'edit_file',
       'get_logs',
-      'get_project',
+      'get_hob',
       'invoke',
       'list_branches',
       'list_devices',
       'list_files',
       'list_invocations',
-      'list_projects',
+      'list_hobs',
       'list_secrets',
       'list_ssh_keys',
       'list_versions',
@@ -162,29 +162,29 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
 })
 
 test('creates a project, edits files on a branch and commits as the agent', async () => {
-  await ok('create_project', { name: 'filament' })
-  expect(JSON.parse(await ok('list_projects'))).toMatchObject([{ name: 'filament' }])
-  const project = JSON.parse(await ok('get_project', { project: 'filament' }))
+  await ok('create_hob', { name: 'filament' })
+  expect(JSON.parse(await ok('list_hobs'))).toMatchObject([{ name: 'filament' }])
+  const project = JSON.parse(await ok('get_hob', { hob: 'filament' }))
   expect(project.entryPoints.routes).toHaveProperty(['GET /greeting'])
   expect(project.entryPoints.crons).toEqual({})
   expect(project.appUrl).toBe('http://filament.apps.localhost')
   expect(project.ai).toMatchObject({
-    models: { host: null, project: null },
+    models: { host: null, hob: null },
     limits: { throttle: true, requestsPerMinute: 20 },
     usage: { requestsLastMinute: 0, last30Days: { requests: 0, cost: 0 } },
   })
 
-  expect(await ok('read_file', { project: 'filament', branch: 'main', path: 'AGENTS.md' })).toContain(
+  expect(await ok('read_file', { hob: 'filament', branch: 'main', path: 'AGENTS.md' })).toContain(
     'Hobwork project',
   )
-  await ok('create_branch', { project: 'filament', branch: 'spools' })
-  const branches = JSON.parse(await ok('list_branches', { project: 'filament' }))
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const branches = JSON.parse(await ok('list_branches', { hob: 'filament' }))
   expect(branches.map((b: { name: string; appUrl: string }) => [b.name, b.appUrl])).toEqual([
     ['main', 'http://filament.apps.localhost'],
     ['spools', 'http://spools--filament.apps.localhost'],
   ])
 
-  const b = { project: 'filament', branch: 'spools' }
+  const b = { hob: 'filament', branch: 'spools' }
   expect(await ok('write_file', { ...b, path: 'src/spools.ts', content: 'export const spools = []\n' })).toBe(
     'Created src/spools.ts',
   )
@@ -206,16 +206,16 @@ test('creates a project, edits files on a branch and commits as the agent', asyn
   expect(await ok('diff', b)).toBe('No changes')
   expect(await ok('diff', { ...b, scope: 'branch' })).toContain('src/spools.ts')
 
-  const commits = JSON.parse(await ok('log', { project: 'filament', ref: 'spools' }))
+  const commits = JSON.parse(await ok('log', { hob: 'filament', ref: 'spools' }))
   expect(commits[0]).toMatchObject({ subject: 'Add spools', author: 'claude' })
 
   // main is unchanged and still readable.
-  await fails('read_file', { project: 'filament', branch: 'main', path: 'src/spools.ts' })
+  await fails('read_file', { hob: 'filament', branch: 'main', path: 'src/spools.ts' })
 })
 
 test('refuses changes on main', async () => {
-  await ok('create_project', { name: 'filament' })
-  const main = { project: 'filament', branch: 'main' }
+  await ok('create_hob', { name: 'filament' })
+  const main = { hob: 'filament', branch: 'main' }
   expect(await fails('write_file', { ...main, path: 'x.ts', content: '' })).toContain('create_branch')
   await fails('edit_file', { ...main, path: 'AGENTS.md', old_string: 'Hobwork', new_string: 'X' })
   await fails('delete_file', { ...main, path: 'AGENTS.md' })
@@ -224,12 +224,12 @@ test('refuses changes on main', async () => {
 })
 
 test('rejects paths outside the checkout', async () => {
-  await ok('create_project', { name: 'filament' })
-  await ok('create_branch', { project: 'filament', branch: 'spools' })
-  const b = { project: 'filament', branch: 'spools' }
-  expect(await fails('read_file', { ...b, path: '../../../hobwork.db' })).toContain('outside the project')
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const b = { hob: 'filament', branch: 'spools' }
+  expect(await fails('read_file', { ...b, path: '../../../hobwork.db' })).toContain('outside the hob')
   expect(await fails('write_file', { ...b, path: '../main/files/x', content: '' })).toContain(
-    'outside the project',
+    'outside the hob',
   )
   expect(await fails('read_file', { ...b, path: '/etc/passwd' })).toContain('relative')
   await fails('list_files', { ...b, path: '..' })
@@ -238,17 +238,17 @@ test('rejects paths outside the checkout', async () => {
 })
 
 test('reports unknown projects and branches as tool errors', async () => {
-  expect(await fails('get_project', { project: 'nope' })).toContain('does not exist')
-  await ok('create_project', { name: 'filament' })
-  expect(await fails('read_file', { project: 'filament', branch: 'nope', path: 'x' })).toContain(
+  expect(await fails('get_hob', { hob: 'nope' })).toContain('does not exist')
+  await ok('create_hob', { name: 'filament' })
+  expect(await fails('read_file', { hob: 'filament', branch: 'nope', path: 'x' })).toContain(
     'does not exist',
   )
 })
 
 test('bash runs in the branch workspace VM', async () => {
-  await ok('create_project', { name: 'filament' })
-  await ok('create_branch', { project: 'filament', branch: 'spools' })
-  const b = { project: 'filament', branch: 'spools' }
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  const b = { hob: 'filament', branch: 'spools' }
 
   const out = await ok('bash', { ...b, command: 'echo made > made.txt && ls && echo oops >&2' })
   expect(out).toMatch(/^exit code: 0/)
@@ -270,10 +270,10 @@ test('bash runs in the branch workspace VM', async () => {
 })
 
 test('bash stops commands at the timeout', async () => {
-  await ok('create_project', { name: 'filament' })
-  await ok('create_branch', { project: 'filament', branch: 'spools' })
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
   const out = await fails('bash', {
-    project: 'filament',
+    hob: 'filament',
     branch: 'spools',
     command: 'echo started; sleep 10',
     timeout_seconds: 1,
@@ -287,9 +287,9 @@ test('bash without a VM backend returns a tool error', async () => {
   await new Promise((resolve) => server.close(resolve))
   await listen(false)
   client = await connect()
-  await ok('create_project', { name: 'filament' })
-  await ok('create_branch', { project: 'filament', branch: 'spools' })
-  expect(await fails('bash', { project: 'filament', branch: 'spools', command: 'ls' })).toContain(
+  await ok('create_hob', { name: 'filament' })
+  await ok('create_branch', { hob: 'filament', branch: 'spools' })
+  expect(await fails('bash', { hob: 'filament', branch: 'spools', command: 'ls' })).toContain(
     'no workspace VM backend',
   )
 })

@@ -27,7 +27,7 @@ export const EVENT_LABELS: Record<string, string> = {
   migration: 'Data change',
   db: 'Data',
   secret: 'Secret',
-  project: 'Project',
+  project: 'Hob',
   'ai-limit': 'AI limit',
 }
 

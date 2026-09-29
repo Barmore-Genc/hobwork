@@ -93,7 +93,7 @@ function requireProjectByName(host: Host, name: string): Project {
   const project = getProject(host, name)
   if (!project) {
     const renamed = renamedProject(host, name)
-    throw new HttpError(404, renamed ? `${name} is now called ${renamed.name}` : `There is no project called "${name}"`)
+    throw new HttpError(404, renamed ? `${name} is now called ${renamed.name}` : `There is no hob called "${name}"`)
   }
   return project
 }

@@ -12,7 +12,7 @@ const RECENT_RUNS = 5
 
 function projectOf(host: Host, name: string): Project {
   const project = getProject(host, name)
-  if (!project) throw new HttpError(404, `There is no project called "${name}"`)
+  if (!project) throw new HttpError(404, `There is no hob called "${name}"`)
   return project
 }
 

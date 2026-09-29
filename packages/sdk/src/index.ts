@@ -35,7 +35,7 @@ export type Context = {
   fetch: typeof fetch
   // Log lines are stored with the invocation. console.log and friends work too.
   log: Logger
-  // The project DB. See `Db`.
+  // The hob DB. See `Db`.
   db: Db
   // Home Assistant service calls and states, through the Hobwork host.
   ha: HomeAssistant

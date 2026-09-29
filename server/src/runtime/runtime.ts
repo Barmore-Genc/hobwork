@@ -334,7 +334,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (body.length > MAX_INTERNAL_BODY_BYTES) return Response.json({ error: 'Request body too large' }, { status: 413 })
     if (route === 'POST /v1/db') {
       const data = options.data
-      if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
+      if (!data) return Response.json({ error: 'This Hobwork host has no hob DBs' }, { status: 503 })
       if (branch === undefined) return dbResponse(body, (request) => data.execute({ project }, request))
       deployed.migrations ??= readMigrationsFromGit(repoPath(host, project), deployed.commit)
       const migrations = deployed.migrations
@@ -709,7 +709,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       s.deployed = deployed
       const message = `Version ${version} did not start: ${errorMessage(err)}`
       event(project, 'error', 'migration', message)
-      const target = scheduleAutoRevert(project, deployed, 'could not migrate the project DB')
+      const target = scheduleAutoRevert(project, deployed, 'could not migrate the hob DB')
       throw new Error(target ? `${message}\nRestoring version ${target} automatically.` : message)
     }
     s.deployed = deployed

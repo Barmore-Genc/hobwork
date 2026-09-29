@@ -25,13 +25,13 @@ export function parseAccess(db: DatabaseSync, value: unknown): Access {
   if (typeof readOnly !== 'boolean') throw new AccessError('readOnly must be true or false')
   if (projects === null) return { readOnly, projects: null }
   if (!Array.isArray(projects) || !projects.every((p) => typeof p === 'string')) {
-    throw new AccessError('projects must be a list of project names, or null for every project')
+    throw new AccessError('projects must be a list of hob names, or null for every hob')
   }
   const names = [...new Set(projects as string[])]
-  if (names.length === 0) throw new AccessError('Choose at least one project')
+  if (names.length === 0) throw new AccessError('Choose at least one hob')
   for (const name of names) {
     if (!db.prepare('SELECT 1 FROM projects WHERE name = ?').get(name)) {
-      throw new AccessError(`Project "${name}" does not exist`)
+      throw new AccessError(`Hob "${name}" does not exist`)
     }
   }
   return { readOnly, projects: names.sort() }

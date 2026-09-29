@@ -85,7 +85,7 @@ export function LimitsFields({
         <span>
           <span className="font-semibold">Limit requests and spending</span>
           <span className="block text-sm text-muted">
-            Past a limit, the project gets an error until it is under the limit again. Leave a field empty for no limit.
+            Past a limit, the hob gets an error until it is under the limit again. Leave a field empty for no limit.
           </span>
         </span>
       </label>

@@ -46,7 +46,7 @@ struct ScreenTimeSection: View {
         } header: {
             Text("Screen Time")
         } footer: {
-            Text("Projects block, schedule and limit app sets by name, such as social. They never see which apps a set holds.")
+            Text("Hobs block, schedule and limit app sets by name, such as social. They never see which apps a set holds.")
         }
         .task { reload() }
     }
@@ -83,7 +83,7 @@ private struct AppSetEditor: View {
             } header: {
                 Text("Name")
             } footer: {
-                Text("Lowercase letters, digits and dashes. Projects use this name.")
+                Text("Lowercase letters, digits and dashes. Hobs use this name.")
             }
             Section {
                 Button("Choose Apps and Websites") { picking = true }

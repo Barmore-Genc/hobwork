@@ -65,7 +65,7 @@ export function createNfcPage(options: { db: DatabaseSync; auth: Auth; publicUrl
     }
     const project = NFC_TAG_ID.test(tag) ? nfcTagProject(db, tag) : undefined
     if (!project) {
-      page(res, 404, 'Unknown tag', '<p>This tag does not belong to a project on this Hobwork host.</p>')
+      page(res, 404, 'Unknown tag', '<p>This tag does not belong to a hob on this Hobwork host.</p>')
       return
     }
     const path = `/nfc/${tag}`

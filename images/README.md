@@ -1,6 +1,6 @@
 # Guest image
 
-`hobwork.json` is a [Gondolin build config](https://github.com/earendil-works/gondolin/blob/main/docs/custom-images.md): Alpine, Node with the full ICU data (`build.sh` copies it in, since the builder would install only English), npm, pnpm, git, curl, tzdata, e2fsprogs (`resize2fs` is needed to grow the root disk), the platform dependency set from `platform/` installed at `/opt/hobwork/platform`, plus `@hobwork/sdk` copied from `packages/sdk` into its `node_modules`, and Inter with `fonts/fonts.conf` in `/opt/hobwork/fonts` for the letter of default project icons (`build.sh` copies only `InterVariable.ttf` out of Alpine's `font-inter`).
+`hobwork.json` is a [Gondolin build config](https://github.com/earendil-works/gondolin/blob/main/docs/custom-images.md): Alpine, Node with the full ICU data (`build.sh` copies it in, since the builder would install only English), npm, pnpm, git, curl, tzdata, e2fsprogs (`resize2fs` is needed to grow the root disk), the platform dependency set from `platform/` installed at `/opt/hobwork/platform`, plus `@hobwork/sdk` copied from `packages/sdk` into its `node_modules`, and Inter with `fonts/fonts.conf` in `/opt/hobwork/fonts` for the letter of default hob icons (`build.sh` copies only `InterVariable.ttf` out of Alpine's `font-inter`).
 
 ## Building
 

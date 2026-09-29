@@ -27,7 +27,7 @@ export function RenameProjectSection({ name }: { name: string }) {
   return (
     <section className="mt-16 border-t border-border pt-8" aria-labelledby="rename-project">
       <h2 id="rename-project" className="text-xl font-semibold">
-        Rename project
+        Rename hob
       </h2>
       <p className="mt-2 max-w-prose text-muted">The name is part of the app address, webhook URLs and git remote.</p>
       <Button
@@ -45,7 +45,7 @@ export function RenameProjectSection({ name }: { name: string }) {
       <ConfirmDialog
         open={open}
         title={`Rename ${name}`}
-        confirmLabel="Rename project"
+        confirmLabel="Rename hob"
         busy={busy}
         confirmDisabled={!ready}
         error={error}
@@ -74,7 +74,7 @@ export function RenameProjectSection({ name }: { name: string }) {
         <ul className="list-disc space-y-1 pt-2 pl-5">
           <li>Anything {name} is running right now is stopped. It starts again under the new name when it is next needed.</li>
           <li>
-            Its app address and webhook URLs change to the new name. The old ones keep working until another project
+            Its app address and webhook URLs change to the new name. The old ones keep working until another hob
             takes the name.
           </li>
           <li>Agents and git remotes need the new name.</li>

@@ -50,22 +50,22 @@ async function ok(name: string, args: Record<string, unknown>): Promise<string> 
 }
 
 test('invoke runs a route and shows its response and logs', async () => {
-  const text = await ok('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/42' })
+  const text = await ok('invoke', { hob: 'filament', kind: 'route', name: 'GET /spools/42' })
   expect(text).toMatch(/^Invocation \d+ \(route "GET \/spools\/:id", version 2\): ok in \d+ms/)
   expect(text).toContain('HTTP 200')
   expect(text).toContain('{"id":"42"}')
   expect(text).toContain('looking up 42')
 
-  const missing = await mcp.call('invoke', { project: 'filament', kind: 'route', name: 'GET /nope' })
+  const missing = await mcp.call('invoke', { hob: 'filament', kind: 'route', name: 'GET /nope' })
   expect(missing.isError).toBe(true)
   expect(textOf(missing)).toContain('Routes: GET /spools/:id')
 })
 
 test('invoke passes webhook bodies and trigger payloads', async () => {
-  const webhook = await ok('invoke', { project: 'filament', kind: 'webhook', name: 'scanned', body: 'spool 3' })
+  const webhook = await ok('invoke', { hob: 'filament', kind: 'webhook', name: 'scanned', body: 'spool 3' })
   expect(webhook).toContain('{"method":"POST","body":"spool 3"}')
   const trigger = await ok('invoke', {
-    project: 'filament',
+    hob: 'filament',
     kind: 'trigger',
     name: 'button',
     payload: { trigger: { to_state: 'on' } },
@@ -74,42 +74,42 @@ test('invoke passes webhook bodies and trigger payloads', async () => {
 })
 
 test('an agent finds a thrown error and its stack trace', async () => {
-  const invoked = await mcp.call('invoke', { project: 'filament', kind: 'cron', name: 'cleanup' })
+  const invoked = await mcp.call('invoke', { hob: 'filament', kind: 'cron', name: 'cleanup' })
   expect(invoked.isError).toBe(true)
   expect(textOf(invoked)).toContain("TypeError: Cannot read properties of undefined (reading 'length')")
 
-  const list = await ok('list_invocations', { project: 'filament', status: 'error' })
+  const list = await ok('list_invocations', { hob: 'filament', status: 'error' })
   const id = Number(/^#(\d+) /.exec(list)?.[1])
   expect(list).toContain('cron "cleanup" v2 (manual) error')
 
-  const logs = await ok('get_logs', { project: 'filament', invocation_id: id })
+  const logs = await ok('get_logs', { hob: 'filament', invocation_id: id })
   expect(logs).toContain('at default (')
   expect(logs).toContain('cleanup.js')
   expect(logs).toContain('cleaning up')
 })
 
 test('get_logs shows runtime events and pages with after_id', async () => {
-  const logs = await ok('get_logs', { project: 'filament', source: 'runtime', limit: 2 })
+  const logs = await ok('get_logs', { hob: 'filament', source: 'runtime', limit: 2 })
   expect(logs).toContain('[runtime deploy]')
   const firstId = Number(/^#(\d+) /.exec(logs)?.[1])
-  const next = await ok('get_logs', { project: 'filament', after_id: firstId, limit: 1 })
+  const next = await ok('get_logs', { hob: 'filament', after_id: firstId, limit: 1 })
   expect(next).toContain(`#${firstId + 1} `)
   expect(next).toContain(`continue with after_id ${firstId + 1}`)
 })
 
 test('tail_logs returns lines logged while it waits', async () => {
-  const tail = mcp.call('tail_logs', { project: 'filament', wait_seconds: 10 })
+  const tail = mcp.call('tail_logs', { hob: 'filament', wait_seconds: 10 })
   await new Promise((r) => setTimeout(r, 200))
-  await ok('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/7' })
+  await ok('invoke', { hob: 'filament', kind: 'route', name: 'GET /spools/7' })
   const text = textOf(await tail)
   expect(text).toContain('looking up 7')
   const cursor = Number(/\[cursor: (\d+)\]/.exec(text)?.[1])
-  const empty = await ok('tail_logs', { project: 'filament', cursor, wait_seconds: 0 })
+  const empty = await ok('tail_logs', { hob: 'filament', cursor, wait_seconds: 0 })
   expect(empty).toContain('No new log lines')
 })
 
 test('rotate_webhook_token returns a working URL path', async () => {
-  const text = await ok('rotate_webhook_token', { project: 'filament', webhook: 'scanned' })
+  const text = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'scanned' })
   expect(text).toMatch(/\/hooks\/filament\/scanned\/[\w-]{43}/)
 })
 
@@ -125,25 +125,25 @@ test('invoke runs a branch preview, and branch webhooks get their own URL', asyn
     'handlers/cleanup.js': `export default async () => { console.log('cleaned on the branch') }`,
     'handlers/scanned.js': `export default async (ctx) => ({ url: ctx.request.url })`,
   })
-  const route = await ok('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'add-spools' })
+  const route = await ok('invoke', { hob: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'add-spools' })
   expect(route).toMatch(/^Invocation \d+ \(route "GET \/spools\/:id", branch add-spools\): ok/)
   expect(route).toContain('"branch":"5"')
-  const cron = await ok('invoke', { project: 'filament', kind: 'cron', name: 'cleanup', branch: 'add-spools' })
+  const cron = await ok('invoke', { hob: 'filament', kind: 'cron', name: 'cleanup', branch: 'add-spools' })
   expect(cron).toContain('cleaned on the branch')
-  const hook = await ok('invoke', { project: 'filament', kind: 'webhook', name: 'scanned', branch: 'add-spools' })
+  const hook = await ok('invoke', { hob: 'filament', kind: 'webhook', name: 'scanned', branch: 'add-spools' })
   expect(hook).toContain('/hooks/add-spools--filament/scanned')
 
-  const list = await ok('list_invocations', { project: 'filament', branch: 'add-spools' })
+  const list = await ok('list_invocations', { hob: 'filament', branch: 'add-spools' })
   expect(list).toContain('cron "cleanup" branch add-spools (manual) ok')
   expect(list).not.toContain(' v2 ')
-  expect(await ok('list_invocations', { project: 'filament', branch: 'main' })).toBe('No invocations match')
-  const logs = await ok('get_logs', { project: 'filament', source: 'handler' })
+  expect(await ok('list_invocations', { hob: 'filament', branch: 'main' })).toBe('No invocations match')
+  const logs = await ok('get_logs', { hob: 'filament', source: 'handler' })
   expect(logs).toContain('branch add-spools')
 
-  const missing = await mcp.call('invoke', { project: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'nope' })
+  const missing = await mcp.call('invoke', { hob: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'nope' })
   expect(missing.isError).toBe(true)
   expect(textOf(missing)).toContain('Branch "nope" does not exist')
 
-  const rotated = await ok('rotate_webhook_token', { project: 'filament', webhook: 'scanned', branch: 'add-spools' })
+  const rotated = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'scanned', branch: 'add-spools' })
   expect(rotated).toMatch(/\/hooks\/add-spools--filament\/scanned\/[\w-]{43}/)
 })

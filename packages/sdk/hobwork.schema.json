@@ -57,7 +57,7 @@
         "properties": {
           "homeassistant": { "type": "object" },
           "device": {
-            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this project sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this project wrote was scanned, or with url any scanned URL starting with it), health/samples (new Health samples). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
+            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this hob sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this hob wrote was scanned, or with url any scanned URL starting with it), health/samples (new Health samples). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
             "type": "object",
             "additionalProperties": false,
             "required": ["capability", "event"],
@@ -69,7 +69,7 @@
                 "$ref": "#/definitions/name"
               },
               "url": {
-                "description": "nfc/scanned only: runs the handler for scanned URLs that start with this, such as \"https://example.com/spools/\", from tags Hobwork did not write too. Tags reach Hobwork through the app's Scan Tag button or the \"Send Tag to Hobwork\" Shortcuts action. Without it, only tags this project wrote.",
+                "description": "nfc/scanned only: runs the handler for scanned URLs that start with this, such as \"https://example.com/spools/\", from tags Hobwork did not write too. Tags reach Hobwork through the app's Scan Tag button or the \"Send Tag to Hobwork\" Shortcuts action. Without it, only tags this hob wrote.",
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 2048
@@ -94,7 +94,7 @@
     },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
     "icon": {
-      "description": "The project's icon, shown as its app's favicon and home screen icon and in project lists: one emoji (\"🧵\") or the path of an SVG, PNG, JPEG or WebP image in the repo (\"ui/icon.svg\"). Hobwork renders it to every size it needs. Without it, the icon is the project's first letter.",
+      "description": "The hob's icon, shown as its app's favicon and home screen icon and in hob lists: one emoji (\"🧵\") or the path of an SVG, PNG, JPEG or WebP image in the repo (\"ui/icon.svg\"). Hobwork renders it to every size it needs. Without it, the icon is the hob's first letter.",
       "type": "string",
       "anyOf": [
         { "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]+\\.(svg|png|jpe?g|webp)$" },

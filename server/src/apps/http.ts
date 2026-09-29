@@ -138,7 +138,7 @@ export function createAppHttp(options: {
   }
 
   async function serveUi(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string) {
-    if (!runtime) return sendUiText(res, publicUrl, 503, 'This Hobwork host does not run project apps.')
+    if (!runtime) return sendUiText(res, publicUrl, 503, 'This Hobwork host does not run hob apps.')
     let build: string
     try {
       build = await runtime.build(app.target.project, app.target.branch)

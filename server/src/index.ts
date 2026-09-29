@@ -120,7 +120,7 @@ else console.warn('HOBWORK_BACKUP_S3_BUCKET is not set, so nothing is backed up.
 
 if (new URL(config.publicUrl).hostname === 'localhost') {
   console.warn(
-    `Project apps at ${config.appsUrl} are a different site from ${config.publicUrl}, so they cannot sign in inside the Hobwork UI. Use HOBWORK_PUBLIC_URL=http://hobwork.localhost:${config.port} instead.`,
+    `Hob apps at ${config.appsUrl} are a different site from ${config.publicUrl}, so they cannot sign in inside the Hobwork UI. Use HOBWORK_PUBLIC_URL=http://hobwork.localhost:${config.port} instead.`,
   )
 }
 

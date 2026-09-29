@@ -74,7 +74,7 @@ function failedRuns(host: Host, filter: { project?: string; since?: string; befo
 
 function projectFilter(host: Host, query: URLSearchParams): string | undefined {
   const project = query.get('project') || undefined
-  if (project && !getProject(host, project)) throw new HttpError(404, `There is no project called "${project}"`)
+  if (project && !getProject(host, project)) throw new HttpError(404, `There is no hob called "${project}"`)
   return project
 }
 

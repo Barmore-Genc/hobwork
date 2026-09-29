@@ -1,6 +1,6 @@
 // The `hobwork` command in workspace VMs. The host mounts this directory into
 // every workspace VM; calls go to the VM's own handler at hobwork.internal,
-// which knows the project and branch. HOBWORK_SESSION names the agent.
+// which knows the hob and branch. HOBWORK_SESSION names the agent.
 import { request } from 'node:http'
 
 const BASE_URL = process.env.HOBWORK_INTERNAL_URL ?? 'http://hobwork.internal'
@@ -12,7 +12,7 @@ const USAGE = `Usage: hobwork <command>
   diff                   uncommitted changes
   commit "<message>"     commit all changes and push them to the branch
   merge "<summary>"      run the pipeline, merge into main and deploy
-  logs [-f] [-n <lines>] project logs; -f keeps printing new lines
+  logs [-f] [-n <lines>] hob logs; -f keeps printing new lines
   invocations [-n <count>]  recent handler invocations
   sql "<statement>"      run one SQL statement on the branch DB, a copy of the
                          production DB taken when the workspace VM started

@@ -13,12 +13,12 @@ function record(host: Host, project: string, level: LogLevel, message: string) {
   }
 }
 
-// The trigger registry names the project in its messages ('... of project "x"').
+// The trigger registry names the project in its messages ('... of hob "x"').
 // They also go to the project's log so agents see refused and failed triggers.
 export function triggerRegistryLogger(host: Host): Logger {
   const forward = (level: 'warn' | 'error', args: unknown[]) => {
     const message = format(...args)
-    const project = /of project "([^"]+)"/.exec(message)?.[1]
+    const project = /of hob "([^"]+)"/.exec(message)?.[1]
     if (project) record(host, project, level, message)
   }
   return {

@@ -169,7 +169,7 @@ test('deleting a project stops everything it runs and removes it, keeping its re
   expect(existsSync(join(entry, 'data', 'db.sqlite'))).toBe(true)
   const info = JSON.parse(readFileSync(join(entry, 'deleted.json'), 'utf8')) as TrashInfo
   expect(info).toMatchObject({ project: 'filament', deletedBy: 'kaan@example.com' })
-  expect(info.versions.map((v) => v.summary)).toEqual(['Track spools', 'Create project from template'])
+  expect(info.versions.map((v) => v.summary)).toEqual(['Track spools', 'Create hob from template'])
 
   const sleep = await runtime.invoke('sleep', { kind: 'cron', name: 'tick', manual: true })
   expect(sleep.ok).toBe(true)
@@ -305,7 +305,7 @@ test('a deleted project whose name is taken is restored under another name', asy
 
   const taken = await restoreRequest(entry!.id)
   expect(taken.status).toBe(409)
-  expect(await taken.json()).toEqual({ error: 'There is already a project called "filament"' })
+  expect(await taken.json()).toEqual({ error: 'There is already a hob called "filament"' })
   expect((await restoreRequest(entry!.id, { name: 'sleep' })).status).toBe(409)
 
   const res = await restoreRequest(entry!.id, { name: 'old-filament' })

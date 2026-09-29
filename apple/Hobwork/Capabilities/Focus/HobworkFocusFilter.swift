@@ -5,10 +5,10 @@ import AppIntents
 struct HobworkFocusFilter: SetFocusFilterIntent {
     static let title: LocalizedStringResource = "Tell Hobwork"
     static let description: IntentDescription? = IntentDescription(
-        "Lets your Hobwork projects know when this Focus turns on or off. The label tells them which Focus it is."
+        "Lets your Hobwork hobs know when this Focus turns on or off. The label tells them which Focus it is."
     )
 
-    @Parameter(title: "Label", description: "A short name projects use for this Focus, such as work.")
+    @Parameter(title: "Label", description: "A short name hobs use for this Focus, such as work.")
     var label: String?
 
     var displayRepresentation: DisplayRepresentation {

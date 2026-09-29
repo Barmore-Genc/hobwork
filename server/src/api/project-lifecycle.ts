@@ -29,7 +29,7 @@ export function projectLifecycleRoutes(deps: ProjectRenameDeps & ProjectRestoreD
       pattern: /^\/api\/projects\/([^/]+)\/rename$/,
       handle: async ({ req, res, user, params }) => {
         const from = params[0]!
-        if (!getProject(deps.host, from)) throw new HttpError(404, `There is no project called "${from}"`)
+        if (!getProject(deps.host, from)) throw new HttpError(404, `There is no hob called "${from}"`)
         const to = nameOf(await readJson(req))
         if (!to) throw new HttpError(400, 'Enter a new name')
         const project = await asConflict(() => renameProject(deps, from, to, { user }))
@@ -47,7 +47,7 @@ export function projectLifecycleRoutes(deps: ProjectRenameDeps & ProjectRestoreD
       handle: async ({ req, res, user, params }) => {
         const id = params[0]!
         if (!listTrash(deps.host).some((entry) => entry.id === id)) {
-          throw new HttpError(404, `This deleted project is no longer kept. Projects are removed for good ${TRASH_DAYS} days after deletion`)
+          throw new HttpError(404, `This deleted hob is no longer kept. Hobs are removed for good ${TRASH_DAYS} days after deletion`)
         }
         const name = nameOf(await readJson(req))
         const project = await asConflict(() => restoreProject(deps, id, { name: name || undefined, user }))

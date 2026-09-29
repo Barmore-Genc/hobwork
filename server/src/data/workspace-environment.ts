@@ -38,7 +38,7 @@ export function createWorkspaceEnvironment(
           if (body.length > MAX_INTERNAL_BODY_BYTES) return Response.json({ error: 'Request body too large' }, { status: 413 })
           if (url.pathname === '/v1/ha') return haResponse(body, { ha: homeAssistant, access: 'read' })
           if (url.pathname === '/v1/devices') return devicesResponse(body, { devices, project, access: 'read' })
-          if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
+          if (!data) return Response.json({ error: 'This Hobwork host has no hob DBs' }, { status: 503 })
           return dbResponse(body, (dbRequest) => data.executeOnBranch(project, branch, workspace.dir, dbRequest))
         },
         onEgressBlocked: ({ hostname, ip, port }) => {

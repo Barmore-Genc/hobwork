@@ -70,7 +70,7 @@ function Field({
 
 function EnvNameField({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
   return (
-    <Field id={id} label="Name in the project" hint="The name the project's code uses for it. Use the one your agent asked for.">
+    <Field id={id} label="Name in the hob" hint="The name the hob's code uses for it. Use the one your agent asked for.">
       {(fieldId) => (
         <input
           id={fieldId}
@@ -292,7 +292,7 @@ function AssignForm({
   }
 
   return (
-    <FormFrame title={title} onSubmit={save} error={error} busy={busy} submitLabel="Add to project" onCancel={onCancel}>
+    <FormFrame title={title} onSubmit={save} error={error} busy={busy} submitLabel="Add to hob" onCancel={onCancel}>
       <Field id="assign-choice" label={label}>
         {(fieldId) => (
           <select
@@ -437,9 +437,9 @@ function SecretCard({
 
       <div className="mt-4 rounded-md border border-border">
         {secret.assignments.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No project uses it yet.</p>
+          <p className="px-4 py-3 text-sm text-muted">No hob uses it yet.</p>
         ) : (
-          <ul className="divide-y divide-border" aria-label={`Projects that use ${secret.name}`}>
+          <ul className="divide-y divide-border" aria-label={`Hobs that use ${secret.name}`}>
             {secret.assignments.map((a) => (
               <li key={a.project} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2.5">
                 <div className="min-w-0">
@@ -467,8 +467,8 @@ function SecretCard({
       {editing === 'assign' ? (
         <div className="mt-4">
           <AssignForm
-            title={`Add ${secret.name} to a project`}
-            label="Project"
+            title={`Add ${secret.name} to a hob`}
+            label="Hob"
             choices={free.map((p) => ({ key: p, label: p }))}
             fixed={{ secret }}
             onSaved={(envName) => onChanged(`Added ${secret.name} as ${envName}.`)}
@@ -478,7 +478,7 @@ function SecretCard({
       ) : (
         free.length > 0 && (
           <Button variant="quiet" className="mt-2 -ml-4" onClick={() => onEdit('assign')}>
-            Add to a project
+            Add to a hob
           </Button>
         )
       )}
@@ -512,12 +512,12 @@ export function SecretsPage() {
     <div>
       <PageHeading>Secrets</PageHeading>
       <p className="mt-3 max-w-prose text-muted">
-        Passwords and keys your projects use to sign in to other services. A project can only use the secrets added
+        Passwords and keys your hobs use to sign in to other services. A hob can only use the secrets added
         to it, and each secret is only sent to the sites listed with it.
       </p>
       <div className="mt-8 space-y-6">
         {editing?.id === 'new' ? (
-          <SecretForm onSaved={(name) => changed(`Added ${name}. Add it to the projects that need it.`)} onCancel={() => setEditing(null)} />
+          <SecretForm onSaved={(name) => changed(`Added ${name}. Add it to the hobs that need it.`)} onCancel={() => setEditing(null)} />
         ) : (
           <Button variant="primary" onClick={() => edit({ id: 'new', mode: 'secret' })}>
             Add a secret
@@ -561,7 +561,7 @@ export function SecretsPage() {
             add a new one.
           </p>
         ) : (
-          <p>No project uses it.</p>
+          <p>No hob uses it.</p>
         )}
       </ConfirmDialog>
       <ConfirmDialog

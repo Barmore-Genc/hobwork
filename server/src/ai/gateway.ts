@@ -25,7 +25,7 @@ export const AI_ERROR_CODES = {
   spend: 'hobwork_spend_limit',
 } as const
 
-const WHERE_TO_CHANGE = "People change this on the project's AI page in Hobwork"
+const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
 // Endpoints that report usage and cost only when asked to.
 const USAGE_PATHS = /\/(chat\/)?completions$/
 
@@ -61,7 +61,7 @@ function modelRefusal(models: string[], settings: EffectiveAiSettings): Refusal 
     return {
       kind: 'model',
       status: 403,
-      message: `Hobwork only passes on requests that name their model, since this project may only use some models. ${allowedText(settings)}.`,
+      message: `Hobwork only passes on requests that name their model, since this hob may only use some models. ${allowedText(settings)}.`,
       metadata,
     }
   }
@@ -98,8 +98,8 @@ function limitRefusal(hit: LimitHit): Refusal {
   const window = WINDOWS[hit.limit]
   const what =
     hit.kind === 'rate'
-      ? `This project sent ${hit.used} requests to OpenRouter in the last ${window}, and Hobwork allows ${hit.max}`
-      : `This project spent ${dollars(hit.used)} on OpenRouter in the last ${window}, and Hobwork stops it at ${dollars(hit.max)}`
+      ? `This hob sent ${hit.used} requests to OpenRouter in the last ${window}, and Hobwork allows ${hit.max}`
+      : `This hob spent ${dollars(hit.used)} on OpenRouter in the last ${window}, and Hobwork stops it at ${dollars(hit.max)}`
   return {
     kind: hit.kind,
     status: 429,

@@ -237,7 +237,7 @@ test('merges of one project run one at a time and each lands on the previous one
   expect(listVersions(host, project).map((v) => [v.number, v.summary])).toEqual([
     [3, 'Two'],
     [2, 'One'],
-    [1, 'Create project from template'],
+    [1, 'Create hob from template'],
   ])
   const files = await inRepo(['ls-tree', '-r', '--name-only', DEFAULT_BRANCH])
   expect(files).toContain('src/one.ts')

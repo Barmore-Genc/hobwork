@@ -11,7 +11,7 @@ import { truncateMiddle } from './output.ts'
 
 const PASSED_STEP_OUTPUT_CHARS = 2_000
 
-const project = z.string().describe('Project name, e.g. "filament-tracker"')
+const hob = z.string().describe('Hob name, e.g. "filament-tracker"')
 
 function text(value: string, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: value }], ...(isError ? { isError } : {}) }
@@ -75,14 +75,14 @@ export function registerDeliveryTools(server: McpServer, { host, delivery, agent
     {
       description: `Merge a branch into ${DEFAULT_BRANCH} and deploy it. Only committed changes are merged, so commit first. The branch's changes are squashed and rebased onto the current ${DEFAULT_BRANCH}, then the pipeline runs in a fresh VM: validate hobwork.json, install extra dependencies, typecheck, lint, test, build. If every step passes, the change lands on ${DEFAULT_BRANCH} as one commit with the summary as its message, becomes a new version and is deployed. Otherwise ${DEFAULT_BRANCH} is unchanged and the failing step's output is returned. After a successful merge the branch and its workspace are reset to the new ${DEFAULT_BRANCH}, so you can keep working on the same branch. Can take several minutes.`,
       inputSchema: {
-        project,
+        hob,
         branch: z.string().describe(`Branch to merge. Must not be ${DEFAULT_BRANCH}`),
         summary: z
           .string()
           .describe('What the change does and why, for the version list: a short summary line, optionally followed by a blank line and details'),
       },
     },
-    async ({ project: p, branch, summary }) =>
+    async ({ hob: p, branch, summary }) =>
       formatMerge(branch, await delivery.merge({ project: p, branch, summary, agent })),
   )
 
@@ -90,15 +90,15 @@ export function registerDeliveryTools(server: McpServer, { host, delivery, agent
     'pipeline_status',
     {
       description:
-        'Show a pipeline run with the status, duration and output of each step. Without run_id, shows the latest run of the project, or of a branch if given.',
+        'Show a pipeline run with the status, duration and output of each step. Without run_id, shows the latest run of the hob, or of a branch if given.',
       inputSchema: {
-        project,
+        hob,
         run_id: z.number().int().optional().describe('Pipeline run ID, as returned by merge'),
         branch: z.string().optional().describe('Show the latest run for this branch'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, run_id, branch }) => {
+    async ({ hob: p, run_id, branch }) => {
       requireProject(host, p)
       const run = run_id === undefined ? latestRun(host, p, branch) : getRun(host, run_id)
       if (!run || run.project !== p) {
@@ -111,11 +111,11 @@ export function registerDeliveryTools(server: McpServer, { host, delivery, agent
   server.registerTool(
     'list_versions',
     {
-      description: `List the versions of a project, newest first. Every merge and every restore creates a version; the newest is what runs on ${DEFAULT_BRANCH}.`,
-      inputSchema: { project, limit: z.number().int().min(1).max(200).default(20) },
+      description: `List the versions of a hob, newest first. Every merge and every restore creates a version; the newest is what runs on ${DEFAULT_BRANCH}.`,
+      inputSchema: { hob, limit: z.number().int().min(1).max(200).default(20) },
       annotations: { readOnlyHint: true },
     },
-    async ({ project: p, limit }) => {
+    async ({ hob: p, limit }) => {
       requireProject(host, p)
       return text(JSON.stringify(listVersions(host, p, limit), null, 2))
     },
@@ -125,10 +125,10 @@ export function registerDeliveryTools(server: McpServer, { host, delivery, agent
     'restore_version',
     {
       description: `Restore the code of an earlier version: commits that version's files as a new commit on ${DEFAULT_BRANCH}, records it as a new version and deploys it. History is kept, so a restore can itself be undone by restoring again. Data is not rolled back. The pipeline does not run.`,
-      inputSchema: { project, version: z.number().int().min(1).describe('Version number from list_versions') },
+      inputSchema: { hob, version: z.number().int().min(1).describe('Version number from list_versions') },
       annotations: { destructiveHint: true },
     },
-    async ({ project: p, version }) => {
+    async ({ hob: p, version }) => {
       const result = await delivery.restore({ project: p, version, agent })
       const lines = [
         `Restored version ${version} as version ${result.version.number} (commit ${result.version.commit}).`,

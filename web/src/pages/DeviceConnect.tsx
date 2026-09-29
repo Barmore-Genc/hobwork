@@ -52,13 +52,13 @@ function ConnectForm({ query, request }: { query: Record<string, string>; reques
         Connect {request.displayName}?
       </h1>
       <p className="mt-3 text-muted">
-        The Hobwork app on this {PLATFORM_NAMES[request.platform]} will open your projects signed in as you, and your
-        projects can send it notifications.
+        The Hobwork app on this {PLATFORM_NAMES[request.platform]} will open your hobs signed in as you, and your
+        hobs can send it notifications.
       </p>
 
       <div className="mt-6">
         <label htmlFor="device-name" className="font-semibold">
-          Name in projects
+          Name in hobs
         </label>
         <input
           id="device-name"
@@ -111,7 +111,7 @@ export function DeviceConnectPage({ search }: { search: URLSearchParams }) {
           </div>
           <p className="mt-6">
             <Link to="/" className="rounded-sm text-muted underline decoration-border underline-offset-4 hover:text-fg">
-              Go to your projects
+              Go to your hobs
             </Link>
           </p>
         </>

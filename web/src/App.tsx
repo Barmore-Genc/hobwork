@@ -46,7 +46,7 @@ function Page({ pathname }: { pathname: string }) {
   return (
     <div className="space-y-4">
       <h1 className="text-3xl font-semibold">Nothing here</h1>
-      <p className="text-muted">This page does not exist. Go back to your projects.</p>
+      <p className="text-muted">This page does not exist. Go back to your hobs.</p>
     </div>
   )
 }

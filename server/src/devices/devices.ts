@@ -363,7 +363,7 @@ export function createDevices(options: {
     }
     const notification = parseNotification(args)
     const projectRow = getProject(host, project)
-    if (!projectRow) throw new DeviceError('bad_request', `Project "${project}" does not exist`)
+    if (!projectRow) throw new DeviceError('bad_request', `Hob "${project}" does not exist`)
     checkPushSize(project, notification)
     const id = recordNotification(host.db, {
       deviceId: device.id,
@@ -430,7 +430,7 @@ export function createDevices(options: {
     if (args !== undefined && args !== null && !isObject(args)) bad(`${capability}.${method} takes an object`)
     const parsed = spec.parse((args ?? {}) as Record<string, unknown>, now())
     const projectRow = getProject(host, project)
-    if (!projectRow) bad(`Project "${project}" does not exist`)
+    if (!projectRow) bad(`Hob "${project}" does not exist`)
     const tag = capability === 'nfc' && method === 'write' && parsed.url === undefined ? newNfcTagId() : undefined
     const sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
     const id = randomUUID()
@@ -746,7 +746,7 @@ export function createDevices(options: {
     try {
       entries = (await options.triggers?.(project)) ?? {}
     } catch (err) {
-      projectLog(project, 'warn', `${from}: NFC tag ${tag} was scanned, but the project's triggers could not be read: ${(err as Error).message}`)
+      projectLog(project, 'warn', `${from}: NFC tag ${tag} was scanned, but the hob's triggers could not be read: ${(err as Error).message}`)
       return true
     }
     const names = matching(entries, 'nfc', 'scanned', device, { url, foreign: false })
@@ -777,7 +777,7 @@ export function createDevices(options: {
       projectLog(
         record.project,
         'warn',
-        `${device.name}: action "${action}" was tapped, but the project's triggers could not be read: ${(err as Error).message}`,
+        `${device.name}: action "${action}" was tapped, but the hob's triggers could not be read: ${(err as Error).message}`,
       )
       return
     }

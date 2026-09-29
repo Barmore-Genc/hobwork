@@ -400,7 +400,7 @@ test('agents let a branch control Home Assistant and take it back', async () => 
   await createProject(mcp.host, 'lights')
   await seedMain(mcp.host, 'lights')
   await createBranch(mcp.host, 'lights', 'dim')
-  const set = (branch: string, allowed: boolean) => mcp.call('set_branch_home_assistant', { project: 'lights', branch, allowed })
+  const set = (branch: string, allowed: boolean) => mcp.call('set_branch_home_assistant', { hob: 'lights', branch, allowed })
 
   expect(textOf(await set('dim', true))).toBe('Branch "dim" of lights can now control Home Assistant.')
   expect(getBranchHaApproval(mcp.host, 'lights', 'dim')).toMatchObject({ by: 'claude', byAgent: true })

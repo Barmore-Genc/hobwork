@@ -33,9 +33,9 @@ export function projectPaths(host: Host, name: string): string[] {
 // Refuses a name that is invalid, taken, or still has files on disk.
 export function assertNameFree(host: Host, name: string): void {
   validateProjectName(name)
-  if (getProject(host, name)) throw new ProjectError(`There is already a project called "${name}"`)
+  if (getProject(host, name)) throw new ProjectError(`There is already a hob called "${name}"`)
   if (existsSync(repoPath(host, name)) || existsSync(join(host.dataDir, 'projects', name))) {
-    throw new ProjectError(`Hobwork still has files of a project called "${name}". Pick another name`)
+    throw new ProjectError(`Hobwork still has files of a hob called "${name}". Pick another name`)
   }
 }
 
@@ -57,7 +57,7 @@ export async function renameProject(
 async function renameNow(deps: ProjectRenameDeps, from: string, to: string, by: { user?: User }): Promise<Project> {
   const { host, runtime, data, workspaces } = deps
   const project = requireProject(host, from)
-  if (to === from) throw new ProjectError(`The project is already called "${to}"`)
+  if (to === from) throw new ProjectError(`The hob is already called "${to}"`)
   assertNameFree(host, to)
 
   const branches = workspaces.list(from).map((w) => w.branch)

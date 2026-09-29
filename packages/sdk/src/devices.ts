@@ -25,7 +25,7 @@ export type NotificationAction = {
 export type Notification = {
   title: string
   body?: string
-  // Up to 4 buttons. A tap runs the project's device triggers for
+  // Up to 4 buttons. A tap runs the hob's device triggers for
   // notification actions (see NotificationActionEvent).
   actions?: NotificationAction[]
   // Any JSON (up to 4 KB), handed back with an action.
@@ -123,12 +123,12 @@ export type NfcRecord = { type: 'url' | 'text' | 'other'; value: string }
 // so the device shows a notification to tap first, and the call waits up to
 // two minutes. App error codes: "cancelled", "not_writable", "too_small".
 export interface Nfc {
-  // Writes a new Hobwork tag owned by this project, plus text when given.
-  // Scanning it runs the project's NfcScannedEvent triggers.
+  // Writes a new Hobwork tag owned by this hob, plus text when given.
+  // Scanning it runs the hob's NfcScannedEvent triggers.
   write(tag?: { text?: string }): Promise<{ tag: string; url: string }>
   // Writes any URL instead: http, https, mailto, tel, sms, facetime,
   // facetime-audio or shortcuts, at most 2,048 bytes. Scans run triggers with
-  // a matching "url" prefix in every project. Returns the URL as written.
+  // a matching "url" prefix in every hob. Returns the URL as written.
   write(tag: { url: string; text?: string }): Promise<{ url: string }>
   // tag is set when the tag is a Hobwork tag of this host.
   read(): Promise<{ records: NfcRecord[]; tag?: string }>
@@ -195,7 +195,7 @@ export type FocusChangedEvent = {
 }
 
 // { "device": { "capability": "nfc", "event": "scanned" } }: someone scanned a
-// tag this project wrote (tag is set). With a "url" prefix on the trigger, also
+// tag this hob wrote (tag is set). With a "url" prefix on the trigger, also
 // scans of any other URL starting with it, from the app's Scan Tag button or a
 // Shortcut. device is null when a Hobwork tag was opened in a browser.
 export type NfcScannedEvent = {

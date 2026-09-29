@@ -48,7 +48,7 @@ export function BackupSettings() {
         Backups
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Hobwork copies every project, its data and its secrets to off-site storage. Each backup only sends what
+        Hobwork copies every hob, its data and its secrets to off-site storage. Each backup only sends what
         changed since the one before.
       </p>
 

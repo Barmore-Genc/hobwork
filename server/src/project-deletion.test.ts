@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createAgentToken } from './agents.ts'
+import { createAgentToken, verifyAgentToken } from './agents.ts'
 import { createProjectData, type ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
 import type { TriggerRegistry } from './homeassistant/triggers.ts'
@@ -313,6 +313,19 @@ test('a deleted project whose name is taken is restored under another name', asy
   expect(existsSync(join(host.dataDir, 'projects', 'old-filament', 'db.sqlite'))).toBe(true)
   expect(runtime.crons('old-filament')).toHaveLength(1)
   expect(await spools('old-filament')).toEqual([{ id: 1, color: 'red' }])
+})
+
+test('restoring gives agent tokens limited to the project their access to it again', async () => {
+  const limited = createAgentToken(host.db, 'claude', { readOnly: false, projects: ['filament', 'sleep'] }).token
+  const other = createAgentToken(host.db, 'other', { readOnly: true, projects: ['sleep'] }).token
+  const access = (token: string) => verifyAgentToken(host.db, token)!.access
+  await deleteProject({ host, workspaces, delivery, runtime, data }, 'filament')
+  expect(access(limited).projects).toEqual(['sleep'])
+  const [entry] = (await trashList()).projects
+
+  expect((await restoreRequest(entry!.id, { name: 'old-filament' })).status).toBe(200)
+  expect(access(limited).projects).toEqual(['old-filament', 'sleep'])
+  expect(access(other).projects).toEqual(['sleep'])
 })
 
 test('restoring needs a signed-in person and an entry still in the trash', async () => {

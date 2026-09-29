@@ -142,7 +142,14 @@ export function createApp(
       data: options.data,
       storage: options.storage,
     }),
-    ...projectLifecycleRoutes({ host, workspaces, delivery, runtime: options.runtime, data: options.data }),
+    ...projectLifecycleRoutes({
+      host,
+      workspaces,
+      delivery,
+      runtime: options.runtime,
+      data: options.data,
+      storage: options.storage,
+    }),
     ...homeAssistantSettingsRoutes({
       host,
       settings: options.homeAssistantSettings,

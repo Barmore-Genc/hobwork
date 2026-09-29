@@ -8,6 +8,7 @@ import { claimName, getProject, ProjectError, requireProject, validateProjectNam
 import { projectBuildsDir } from './runtime/builds.ts'
 import { appendLog } from './runtime/logs.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import type { StorageUsage } from './storage.ts'
 import type { WorkspaceManager, WorkspaceVm } from './workspaces.ts'
 
 export type ProjectRenameDeps = {
@@ -16,6 +17,7 @@ export type ProjectRenameDeps = {
   delivery?: Pick<Delivery, 'exclusive'>
   runtime?: Pick<Runtime, 'remove' | 'forget' | 'load'>
   data?: Pick<ProjectData, 'closeProject' | 'closeBranch'>
+  storage?: Pick<StorageUsage, 'measure'>
 }
 
 // Everything on disk that is named after the project.
@@ -118,6 +120,8 @@ async function renameNow(deps: ProjectRenameDeps, from: string, to: string, by: 
       .relink(to, branch)
       .catch((err: unknown) => console.error(`Pointing workspace ${to}/${branch} at the renamed repo failed`, err))
   }
+  // A measurement that was running on the old paths finds them gone.
+  void deps.storage?.measure({ id: project.id, name: to })
   appendLog(host, {
     project: to,
     source: 'runtime',

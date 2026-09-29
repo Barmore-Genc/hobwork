@@ -54,14 +54,16 @@ export function rotateBranchWebhookToken(host: Host, project: string, branch: st
   return token
 }
 
-export function verifyBranchWebhookToken(host: Host, project: string, branch: string, name: string, token: string): boolean {
-  const row = host.db
+// The token is checked before a preview's branch label is resolved, which runs
+// git, so a request without a valid token costs no git work.
+export function branchesWithWebhookToken(host: Host, project: string, name: string, token: string): string[] {
+  return host.db
     .prepare(
-      `SELECT 1 FROM branch_webhook_tokens w JOIN projects p ON p.id = w.project_id
-       WHERE p.name = ? AND w.branch = ? AND w.name = ? AND w.token_hash = ?`,
+      `SELECT w.branch FROM branch_webhook_tokens w JOIN projects p ON p.id = w.project_id
+       WHERE p.name = ? AND w.name = ? AND w.token_hash = ?`,
     )
-    .get(project, branch, name, hashToken(token))
-  return row !== undefined
+    .all(project, name, hashToken(token))
+    .map((row) => String(row.branch))
 }
 
 export function webhookTokenCreatedAt(host: Host, project: string, name: string): string | undefined {

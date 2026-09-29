@@ -25,6 +25,20 @@ function plain(res: ServerResponse, status: number, message: string, headers: Re
   res.end(`${message}\n`)
 }
 
+// git http-backend picks the service from a path suffix or the `service`
+// parameter. Anything that mentions receive-pack anywhere, in any case or
+// encoding, counts as a push, so no variation slips past a read-only token.
+function mentionsReceivePack(rest: string, query: string): boolean {
+  const decoded = (text: string) => {
+    try {
+      return decodeURIComponent(text.replace(/\+/g, ' '))
+    } catch {
+      return text
+    }
+  }
+  return [rest, query, decoded(rest), decoded(query)].some((part) => part.toLowerCase().includes('receive-pack'))
+}
+
 export function handleGit(
   host: Host,
   req: IncomingMessage,
@@ -54,7 +68,7 @@ export function handleGit(
     )
   }
   if (!allowsProject(agent.access, project)) return plain(res, 403, `This key has no access to ${project}`)
-  const push = rest === '/git-receive-pack' || new URLSearchParams(query).get('service') === 'git-receive-pack'
+  const push = mentionsReceivePack(rest, query)
   if (push && agent.access.readOnly) return plain(res, 403, 'This key can only read, so it cannot push')
 
   const header = (name: string) => {

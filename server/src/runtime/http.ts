@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
-import { getProjectOrRenamed, ProjectError } from '../projects.ts'
+import { parseLabel } from '../apps/origins.ts'
+import { getProject, getProjectOrRenamed, ProjectError } from '../projects.ts'
 import { matchRoute } from './routes.ts'
 import type { Runtime } from './runtime.ts'
-import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from './webhooks.ts'
+import { branchesWithWebhookToken, HOOKS_PREFIX, verifyWebhookToken } from './webhooks.ts'
 
 export const PROJECT_PREFIX = '/p/'
 
@@ -172,22 +173,25 @@ export function createRuntimeHttp(
   // /hooks/<branch label>--<project>/<name>/<token> a branch preview.
   async function handleWebhook(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
     const [target = '', name = '', token = '', ...rest] = segmentsOf(pathname, HOOKS_PREFIX)
-    const preview = target.includes('--') ? await options.resolvePreview(target) : undefined
-    // Webhook URLs live in other systems, so an old name of a renamed project still works.
-    const project = preview?.project ?? getProjectOrRenamed(host, target)?.name
-    const branch = preview?.branch
     // Unknown project, branch, webhook and token all look the same to the caller.
-    if (
-      rest.length ||
-      (target.includes('--') && !preview) ||
-      project === undefined ||
-      !(branch === undefined
-        ? verifyWebhookToken(host, project, name, token)
-        : verifyBranchWebhookToken(host, project, branch, name, token)) ||
-      !(await runtime.webhookExists(project, name, branch))
-    ) {
-      return sendJson(res, 404, { error: 'not found' })
+    const notFound = () => sendJson(res, 404, { error: 'not found' })
+    if (rest.length) return notFound()
+    let project: string | undefined
+    let branch: string | undefined
+    if (target.includes('--')) {
+      project = getProject(host, parseLabel(target).project)?.name
+      const tokenBranches = project === undefined ? [] : branchesWithWebhookToken(host, project, name, token)
+      if (project === undefined || !tokenBranches.length) return notFound()
+      // Resolving the label runs git, so it waits until the token is known to be valid.
+      const preview = await options.resolvePreview(target)
+      if (!preview || !tokenBranches.includes(preview.branch)) return notFound()
+      branch = preview.branch
+    } else {
+      // Webhook URLs live in other systems, so an old name of a renamed project still works.
+      project = getProjectOrRenamed(host, target)?.name
+      if (project === undefined || !verifyWebhookToken(host, project, name, token)) return notFound()
     }
+    if (!(await runtime.webhookExists(project, name, branch))) return notFound()
     const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${HOOKS_PREFIX}${target}/${name}${search}`)
     await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request }, {}, true)
   }

@@ -1,6 +1,7 @@
 import { basename, join, posix, resolve } from 'node:path'
 import { readRegularFile } from './files.ts'
 import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
+import { HeadTailOutput } from './mcp/output.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
 import type { EgressBlocked, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
@@ -129,7 +130,7 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
   return {
     busy: () => running > 0,
     async exec(command: string, { cwd, timeoutMs, signal, env, onOutput }: ExecOptions): Promise<ExecResult> {
-      const output = { stdout: '', stderr: '' }
+      const output = { stdout: new HeadTailOutput(), stderr: new HeadTailOutput() }
       running++
       try {
         const result = await sandbox.exec(command, {
@@ -138,11 +139,11 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
           signal,
           env,
           onOutput: ({ stream, text }) => {
-            output[stream] += text
+            output[stream].push(text)
             onOutput?.(stream, text)
           },
         }).result
-        return { exitCode: exitCode(result), ...output }
+        return { exitCode: exitCode(result), stdout: output.stdout.toString(), stderr: output.stderr.toString() }
       } finally {
         running--
       }

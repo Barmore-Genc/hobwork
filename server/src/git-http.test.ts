@@ -118,6 +118,27 @@ test('a limited token reads only its projects and a read-only one cannot push', 
   expect((await fetch(`${base}/git/filament.git/info/refs?service=git-receive-pack`, { headers: basic(writer) })).status).toBe(200)
 })
 
+test('a read-only token is refused on every path that could reach receive-pack', async () => {
+  const readOnly = createAgentToken(host.db, 'reader-2', { readOnly: true, projects: ['filament'] }).token
+  const auth = { authorization: `Basic ${Buffer.from(`agent:${readOnly}`).toString('base64')}` }
+  const paths = [
+    '/git/filament.git/git-receive-pack',
+    '/git/filament.git/foo/git-receive-pack',
+    '/git/filament.git//git-receive-pack',
+    '/git/filament.git/GIT-RECEIVE-PACK',
+    '/git/filament.git/info/refs?service=git-receive-pack',
+    '/git/filament.git/info/refs?service=git%2Dreceive%2Dpack',
+    '/git/filament.git/info/refs?service=git-upload-pack&service=git-receive-pack',
+    '/git/filament.git/info/refs?x=1&service=GIT-RECEIVE-PACK',
+  ]
+  for (const path of paths) {
+    for (const method of ['GET', 'POST']) {
+      const res = await fetch(`${base}${path}`, { method, headers: auth })
+      expect(res.status, `${method} ${path}`).toBe(403)
+    }
+  }
+})
+
 test('returns 404 for unknown projects and malformed paths', async () => {
   const auth = { authorization: `Basic ${Buffer.from(`agent:${token}`).toString('base64')}` }
   expect((await fetch(`${base}/git/missing.git/info/refs?service=git-upload-pack`, { headers: auth })).status).toBe(404)

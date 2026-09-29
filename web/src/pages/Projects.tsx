@@ -4,9 +4,10 @@ import { bytes, exactTime, timeAgo } from '../format.ts'
 import { Link } from '../router.tsx'
 import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { projectsChanged } from '../live.ts'
 
 export function ProjectsPage() {
-  const { data: projects, error } = useLoad(api.projects)
+  const { data: projects, error } = useLoad(api.projects, '', projectsChanged)
   const deleted = useLocation().search.get('deleted')
 
   return (

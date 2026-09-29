@@ -459,10 +459,10 @@ export const api = {
   attention: (since: string) => request<{ count: number; more: boolean }>('GET', `/api/activity/attention${query({ since })}`),
   invocation: (project: string, id: number) =>
     request<InvocationDetail>('GET', `/api/projects/${encodeURIComponent(project)}/invocations/${id}`),
-  logs: (project: string, options: { view: LogView; after?: number; wait?: boolean }, signal?: AbortSignal) =>
+  logs: (project: string, options: { view: LogView; after?: number; limit?: number }, signal?: AbortSignal) =>
     request<{ lines: LogLine[]; cursor: number }>(
       'GET',
-      `/api/projects/${encodeURIComponent(project)}/logs${query({ ...options, wait: options.wait ? 1 : undefined })}`,
+      `/api/projects/${encodeURIComponent(project)}/logs${query(options)}`,
       undefined,
       signal,
     ),

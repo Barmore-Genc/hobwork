@@ -23,7 +23,6 @@ import {
   latestInvocations,
   listInvocations,
   queryLogs,
-  waitForLogs,
   type InvocationKind,
   type InvocationRecord,
   type InvocationStatus,
@@ -54,7 +53,6 @@ const MAX_INVOCATION_PAGE = 200
 const INVOCATION_LOG_LINES = 1001
 const LOG_PAGE = 200
 const MAX_LOG_PAGE = 1000
-const LOG_WAIT_MS = 25_000
 const LIST_ERROR_CHARS = 300
 
 export const INVOCATION_KINDS: InvocationKind[] = ['route', 'webhook', 'cron', 'trigger']
@@ -366,7 +364,7 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects\/([^/]+)\/logs$/,
-      handle: async ({ res, params, query }) => {
+      handle: ({ res, params, query }) => {
         const project = requireProjectByName(host, params[0]!)
         const view = queryEnum(query, 'view', LOG_VIEWS) ?? 'all'
         const after = queryInt(query, 'after')
@@ -379,15 +377,7 @@ export function createApiRoutes(options: {
         }
         // Read before querying, so a line appended in between is not skipped.
         const last = lastLogId(host, project.name)
-        let lines = queryLogs(host, filter)
-        // Long poll: with wait=1 and nothing new, answer when a line arrives.
-        if (!lines.length && after !== undefined && after >= last && query.get('wait') === '1') {
-          const closed = new AbortController()
-          res.on('close', () => closed.abort())
-          await waitForLogs(project.name, LOG_WAIT_MS, closed.signal)
-          if (closed.signal.aborted) return
-          lines = queryLogs(host, filter)
-        }
+        const lines = queryLogs(host, filter)
         const cursor = lines.length ? lines.at(-1)!.id : Math.max(after ?? 0, last)
         json(res, 200, { lines, cursor })
       },

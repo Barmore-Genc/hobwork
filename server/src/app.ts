@@ -28,6 +28,7 @@ import type { HomeAssistant } from './homeassistant/client.ts'
 import type { HomeAssistantSettings } from './homeassistant/settings.ts'
 import type { Host } from './host.ts'
 import { json } from './http.ts'
+import { createLiveSockets } from './live.ts'
 import { bearerTokenAuth, createMcpHandler, MCP_PATH, mcpAuth, type McpAuthenticator } from './mcp/http.ts'
 import type { FetchedDocument } from './oauth/metadata-fetch.ts'
 import { createOAuthServer } from './oauth/routes.ts'
@@ -138,6 +139,7 @@ export function createApp(
     appleAppId: web.appleAppId,
   })
   const deviceSockets = createDeviceSockets({ db: host.db, allowlist: web.allowlist, devices })
+  const liveSockets = createLiveSockets({ db: host.db, auth, publicUrl: web.publicUrl })
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
     ...aiSettingsRoutes({ host }),
@@ -225,8 +227,16 @@ export function createApp(
     }
   })
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (apps.isAppRequest(req) || !deviceSockets.handleUpgrade(req, socket, head)) socket.destroy()
+    if (apps.isAppRequest(req)) return socket.destroy()
+    if (!deviceSockets.handleUpgrade(req, socket, head) && !liveSockets.handleUpgrade(req, socket, head)) socket.destroy()
   })
   server.on('close', () => deviceSockets.close())
+  // Upgraded sockets keep the server from closing, and nothing else ends
+  // these: pages stay connected as long as they are open.
+  const close = server.close.bind(server)
+  server.close = ((callback?: (err?: Error) => void) => {
+    liveSockets.close()
+    return close(callback)
+  }) as typeof server.close
   return server
 }

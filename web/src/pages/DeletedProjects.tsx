@@ -5,10 +5,11 @@ import { navigate } from '../navigation.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { trashChanged } from '../live.ts'
 import { PROJECT_NAME_HINT, projectPath, validProjectName } from './project/names.ts'
 
 export function DeletedProjectsPage() {
-  const { data, error } = useLoad(api.deletedProjects)
+  const { data, error } = useLoad(api.deletedProjects, '', trashChanged)
   const [target, setTarget] = useState<DeletedProject | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)

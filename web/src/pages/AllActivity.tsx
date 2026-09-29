@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { api, ApiError, type ActivityRun, type InvocationKind, type InvocationStatus, type Problem } from '../api.ts'
+import { api, type ActivityRun, type InvocationKind, type InvocationStatus, type Problem } from '../api.ts'
 import { markProblemsSeen, useAttention } from '../attention.ts'
 import { exactTime, timeAgo } from '../format.ts'
 import { navigate, useLocation } from '../navigation.ts'
 import { Link } from '../router.tsx'
 import { Button, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
+import { usePaged } from '../usePaged.ts'
+import { kindChanged } from '../live.ts'
 import { RunRow, selectClass } from './project/Activity.tsx'
 import { EVENT_LABELS, KIND_LABELS, projectPath } from './project/names.ts'
 
@@ -46,10 +47,6 @@ function filterPath(filter: Filter): string {
   return text ? `/activity?${text}` : '/activity'
 }
 
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : String(err)
-}
-
 function EventRow({ problem }: { problem: Extract<Problem, { type: 'event' }> }) {
   const { event } = problem
   const to =
@@ -86,46 +83,23 @@ function EventRow({ problem }: { problem: Extract<Problem, { type: 'event' }> })
 }
 
 function Runs({ filter }: { filter: Filter }) {
-  const [runs, setRuns] = useState<ActivityRun[] | null>(null)
-  const [more, setMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const query = {
     project: filter.project || undefined,
     kind: filter.kind || undefined,
     status: filter.status || undefined,
   }
-  const key = JSON.stringify(query)
-
-  useEffect(() => {
-    let current = true
-    api.activity(JSON.parse(key)).then(
-      (page) => {
-        if (!current) return
-        setRuns(page.invocations)
-        setMore(page.more)
-        setError(null)
-      },
-      (err: unknown) => current && setError(message(err)),
-    )
-    return () => {
-      current = false
-    }
-  }, [key])
-
-  async function loadMore() {
-    if (!runs?.length) return
-    setLoadingMore(true)
-    try {
-      const page = await api.activity({ ...query, before: runs.at(-1)!.id })
-      setRuns([...runs, ...page.invocations])
-      setMore(page.more)
-    } catch (err) {
-      setError(message(err))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  const {
+    items: runs,
+    more,
+    error,
+    loadingMore,
+    loadMore,
+  } = usePaged<ActivityRun>({
+    load: (oldest) => api.activity({ ...query, before: oldest?.id }).then((page) => ({ items: page.invocations, more: page.more })),
+    key: JSON.stringify(query),
+    isOlder: (run, than) => run.id < than.id,
+    live: (change) => change.kind === 'invocations' && (!filter.project || change.project === filter.project),
+  })
 
   const filtered = filter.project !== '' || filter.kind !== '' || filter.status !== ''
   return (
@@ -151,41 +125,14 @@ function Runs({ filter }: { filter: Filter }) {
 }
 
 function Problems({ project }: { project: string }) {
-  const [items, setItems] = useState<Problem[] | null>(null)
-  const [more, setMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let current = true
-    api.problems({ project: project || undefined }).then(
-      (page) => {
-        if (!current) return
-        setItems(page.items)
-        setMore(page.more)
-        setError(null)
-        markProblemsSeen()
-      },
-      (err: unknown) => current && setError(message(err)),
-    )
-    return () => {
-      current = false
-    }
-  }, [project])
-
-  async function loadMore() {
-    if (!items?.length) return
-    setLoadingMore(true)
-    try {
-      const page = await api.problems({ project: project || undefined, before: items.at(-1)!.time })
-      setItems([...items, ...page.items])
-      setMore(page.more)
-    } catch (err) {
-      setError(message(err))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  const { items, more, error, loadingMore, loadMore } = usePaged<Problem>({
+    load: (oldest) => api.problems({ project: project || undefined, before: oldest?.time }),
+    key: project,
+    isOlder: (item, than) => item.time < than.time,
+    // Failed runs and lifecycle events at warn or error level.
+    live: (change) => (change.kind === 'invocations' || change.kind === 'logs') && (!project || change.project === project),
+    onLoad: markProblemsSeen,
+  })
 
   return (
     <>
@@ -214,7 +161,7 @@ function Problems({ project }: { project: string }) {
 export function AllActivityPage() {
   const { pathname, search } = useLocation()
   const filter = readFilter(search)
-  const { data: projects } = useLoad(api.projects)
+  const { data: projects } = useLoad(api.projects, '', kindChanged('projects'))
   const attention = useAttention(pathname)
 
   function change(update: Partial<Filter>) {

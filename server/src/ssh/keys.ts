@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import ssh2, { type ParsedKey } from 'ssh2'
 import { FULL_ACCESS, loadAccess } from '../access.ts'
 import { getAgent, type AuthenticatedAgent, type Credential } from '../agents.ts'
+import { publishChange } from '../changes.ts'
 
 // Where a key was added. null for keys added before this was recorded.
 export type SshKeySource =
@@ -174,6 +175,7 @@ export function addSshKey(db: DatabaseSync, agentId: number, name: string, publi
     )
   const key = row && getSshKey(db, Number(row.id))
   if (!key) throw new Error('SSH key insert returned no row')
+  publishChange(db, { kind: 'agents' })
   return key
 }
 
@@ -194,6 +196,7 @@ export function revokeSshKey(db: DatabaseSync, id: number, agentId?: number): bo
        WHERE id = ? AND revoked_at IS NULL AND (? IS NULL OR agent_id = ?)`,
     )
     .run(id, agentId ?? null, agentId ?? null)
+  if (Number(result.changes) > 0) publishChange(db, { kind: 'agents' })
   return Number(result.changes) > 0
 }
 

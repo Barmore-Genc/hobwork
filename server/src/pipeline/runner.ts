@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { publishChange } from '../changes.ts'
 import { git, GitError } from '../git.ts'
 import type { Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
@@ -138,6 +139,8 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
     .get(projectId, candidate.branch ?? null, commit, candidate.agentId ?? null)
   if (!run) throw new Error('Pipeline run insert returned no row')
   const runId = Number(run.id)
+  // A running pipeline shows as the project's status.
+  publishChange(host.db, { kind: 'project', project: candidate.project })
   const insertStep = host.db.prepare('INSERT INTO pipeline_steps (run_id, position, name) VALUES (?, ?, ?)')
   PIPELINE_STEPS.forEach((name, position) => insertStep.run(runId, position, name))
   const updateStep = host.db.prepare(
@@ -231,6 +234,7 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
   host.db
     .prepare(`UPDATE pipeline_runs SET status = ?, failed_step = ?, finished_at = ${NOW} WHERE id = ?`)
     .run(failedStep ? 'failed' : 'passed', failedStep ?? null, runId)
+  publishChange(host.db, { kind: 'project', project: candidate.project })
   const finished = getRun(host, runId)
   if (!finished) throw new Error(`Pipeline run ${runId} missing after it finished`)
   return finished

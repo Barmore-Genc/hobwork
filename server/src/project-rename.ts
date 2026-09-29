@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { User } from './auth/users.ts'
+import { projectListChanges, publishChange } from './changes.ts'
 import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
 import { repoPath, type Host } from './host.ts'
@@ -97,6 +98,7 @@ async function renameNow(deps: ProjectRenameDeps, from: string, to: string, by: 
       throw err
     }
     renamed = true
+    publishChange(host.db, ...projectListChanges(from, to))
   } catch (err) {
     for (const [path, target] of moved.reverse()) {
       try {

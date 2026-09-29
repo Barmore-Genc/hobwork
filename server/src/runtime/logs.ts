@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { requireProject } from '../projects.ts'
@@ -101,7 +102,9 @@ export function startInvocation(
       invocation.manual ? 1 : 0,
     )
   if (!row) throw new Error('Invocation insert returned no row')
-  return Number(row.id)
+  const id = Number(row.id)
+  publishChange(host.db, { kind: 'invocations', project: invocation.project, id })
+  return id
 }
 
 export function finishInvocation(
@@ -109,9 +112,12 @@ export function finishInvocation(
   id: number,
   result: { status: 'ok' | 'error'; durationMs: number; httpStatus?: number; error?: string; stack?: string },
 ): void {
-  host.db
-    .prepare('UPDATE invocations SET status = ?, duration_ms = ?, http_status = ?, error = ?, stack = ? WHERE id = ?')
-    .run(
+  const row = host.db
+    .prepare(
+      `UPDATE invocations SET status = ?, duration_ms = ?, http_status = ?, error = ?, stack = ? WHERE id = ?
+       RETURNING (SELECT name FROM projects WHERE id = project_id) AS project`,
+    )
+    .get(
       result.status,
       Math.round(result.durationMs),
       result.httpStatus ?? null,
@@ -119,6 +125,7 @@ export function finishInvocation(
       result.stack === undefined ? null : truncateMiddle(result.stack, MAX_MESSAGE_CHARS),
       id,
     )
+  if (row) publishChange(host.db, { kind: 'invocations', project: String(row.project), id })
 }
 
 // Invocations do not survive a host restart.
@@ -241,7 +248,10 @@ export function appendLogs(host: Host, entries: NewLogEntry[]): void {
     host.db.exec('ROLLBACK')
     throw err
   }
-  for (const project of projects) appended.emit(project)
+  for (const project of projects) {
+    appended.emit(project)
+    publishChange(host.db, { kind: 'logs', project })
+  }
 }
 
 export function appendLog(host: Host, entry: NewLogEntry): void {

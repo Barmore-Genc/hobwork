@@ -1,8 +1,21 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 
 export function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
   res.end(JSON.stringify(body))
+}
+
+// Answers a WebSocket upgrade request with an HTTP error instead.
+export function refuseUpgrade(socket: Duplex, status: number, message: string) {
+  const body = JSON.stringify({ error: message })
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status] ?? 'Error'}\r\n` +
+      'content-type: application/json\r\n' +
+      `content-length: ${Buffer.byteLength(body)}\r\n` +
+      'connection: close\r\n\r\n' +
+      body,
+  )
 }
 
 export class HttpError extends Error {

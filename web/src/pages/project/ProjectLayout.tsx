@@ -4,6 +4,7 @@ import { navigate, useLocation } from '../../navigation.ts'
 import { Link } from '../../router.tsx'
 import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
+import { projectChanged } from '../../live.ts'
 import { projectPath } from './names.ts'
 
 export type ProjectTab = 'overview' | 'activity' | 'log' | 'secrets' | 'ai' | 'app'
@@ -27,7 +28,7 @@ export function ProjectLayout({
   tab: ProjectTab
   children: (project: ProjectDetail, reload: () => void) => ReactNode
 }) {
-  const { data: project, error, reload } = useLoad(() => api.project(name), name)
+  const { data: project, error, reload } = useLoad(() => api.project(name), name, projectChanged(name))
   const { pathname, search } = useLocation()
 
   // A link with the old name of a renamed project loads the project under its new name.

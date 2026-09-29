@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash, randomBytes } from 'node:crypto'
 import { FULL_ACCESS, loadAccess, loadAllAccess, saveAccess, type Access } from './access.ts'
+import { publishChange } from './changes.ts'
 
 export type Agent = { id: number; name: string }
 
@@ -44,6 +45,7 @@ export function createAgentToken(
     .get(agent.id, hashToken(token))
   if (!row) throw new Error('Token insert returned no row')
   saveAccess(db, 'token', Number(row.id), access)
+  publishChange(db, { kind: 'agents' })
   return { agent, token }
 }
 
@@ -67,6 +69,7 @@ export function freeAgentName(db: DatabaseSync, base: string): string {
 export function createAgent(db: DatabaseSync, name: string): Agent {
   const row = db.prepare('INSERT INTO agents (name) VALUES (?) RETURNING id, name').get(name)
   if (!row) throw new Error('Agent insert returned no row')
+  publishChange(db, { kind: 'agents' })
   return { id: Number(row.id), name: String(row.name) }
 }
 
@@ -129,6 +132,7 @@ export function revokeAgentToken(db: DatabaseSync, tokenId: number): boolean {
     `UPDATE agent_ssh_keys SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE added_by_token_id = ? AND revoked_at IS NULL`,
   ).run(tokenId)
+  if (Number(result.changes) > 0) publishChange(db, { kind: 'agents' })
   return Number(result.changes) > 0
 }
 

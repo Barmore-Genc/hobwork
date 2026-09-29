@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, type LogLine, type LogView } from '../../api.ts'
+import { subscribeLive } from '../../live.ts'
 import { Button, Notice } from '../../ui.tsx'
 import { LogLines } from './LogLines.tsx'
 import { ProjectLayout } from './ProjectLayout.tsx'
@@ -17,7 +18,7 @@ const EMPTY: Record<LogView, string> = {
 }
 
 const MAX_LINES = 1000
-const RETRY_MS = 5000
+const PAGE = 200
 
 // Mounted once per view, so switching views starts from a clean slate.
 function LogFeed({ project, view, live }: { project: string; view: LogView; live: boolean }) {
@@ -30,41 +31,53 @@ function LogFeed({ project, view, live }: { project: string; view: LogView; live
   useEffect(() => {
     const stop = new AbortController()
     const { signal } = stop
+    let fetching = false
+    let again = false
 
-    async function follow() {
-      if (cursor.current === null) {
-        try {
-          const first = await api.logs(project, { view }, signal)
-          if (signal.aborted) return
-          setLines(first.lines)
-          setError(null)
-          cursor.current = first.cursor
-        } catch (err) {
-          if (!signal.aborted) setError(err instanceof ApiError ? err.message : String(err))
-          return
-        }
+    // Loads the lines after the cursor. Changes that arrive meanwhile load once more after it.
+    async function fetchNew() {
+      if (fetching) {
+        again = true
+        return
       }
-      while (live && !signal.aborted) {
-        try {
-          // The host holds the request until a line arrives or 25 seconds pass.
-          const next = await api.logs(project, { view, after: cursor.current, wait: true }, signal)
-          if (signal.aborted) return
-          cursor.current = next.cursor
-          setError(null)
-          if (next.lines.length) {
-            setLines((current) => [...(current ?? []), ...next.lines].slice(-MAX_LINES))
-            setFresh(new Set(next.lines.map((line) => line.id)))
+      fetching = true
+      try {
+        do {
+          again = false
+          if (cursor.current === null) {
+            const first = await api.logs(project, { view }, signal)
+            if (signal.aborted) return
+            setLines(first.lines)
+            cursor.current = first.cursor
+          } else {
+            const next = await api.logs(project, { view, after: cursor.current, limit: PAGE }, signal)
+            if (signal.aborted) return
+            cursor.current = next.cursor
+            if (next.lines.length) {
+              setLines((current) => [...(current ?? []), ...next.lines].slice(-MAX_LINES))
+              setFresh(new Set(next.lines.map((line) => line.id)))
+            }
+            if (next.lines.length === PAGE) again = true
           }
-        } catch (err) {
-          if (signal.aborted) return
-          setError(err instanceof ApiError ? err.message : String(err))
-          await new Promise((resolve) => setTimeout(resolve, RETRY_MS))
-        }
+          setError(null)
+        } while (again && !signal.aborted)
+      } catch (err) {
+        if (!signal.aborted) setError(err instanceof ApiError ? err.message : String(err))
+      } finally {
+        fetching = false
       }
     }
 
-    void follow()
-    return () => stop.abort()
+    void fetchNew()
+    const unsubscribe = live
+      ? subscribeLive((changes) => {
+          if (!changes || changes.some((change) => change.kind === 'logs' && change.project === project)) void fetchNew()
+        })
+      : undefined
+    return () => {
+      stop.abort()
+      unsubscribe?.()
+    }
   }, [project, view, live])
 
   return (

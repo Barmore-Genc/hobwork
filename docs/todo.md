@@ -6,10 +6,6 @@ Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start
 
 Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in the image (no debug output, parallel `modprobe`, no `update-ca-certificates` at boot), about 100-200ms; a custom kernel with the virtio and fuse drivers built in.
 
-## Live updates in the web UI
-
-A WebSocket from the host that tells open pages when something changed (hobs, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The hob log's long poll could move onto it.
-
 ## Checking hobs against a new guest image
 
 A platform set or SDK update takes effect for every hob at once, on its next workspace, pipeline run or build. Before switching to a new image, run every hob's pipeline against it. Hobs that fail stay on the old image until an agent fixes them, which needs images to be versioned and hobs to record the image they were tested with.

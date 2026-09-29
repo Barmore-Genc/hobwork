@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
-import { api, ApiError, type Invocation, type InvocationKind, type InvocationStatus } from '../../api.ts'
+import { useState } from 'react'
+import { api, type Invocation, type InvocationKind, type InvocationStatus } from '../../api.ts'
 import { duration, exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
 import { Button, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
+import { usePaged } from '../../usePaged.ts'
+import { kindChanged } from '../../live.ts'
 import { projectPath, KIND_LABELS } from './names.ts'
 import { ProjectLayout } from './ProjectLayout.tsx'
 import { RunStatus } from './runs.tsx'
@@ -81,45 +83,23 @@ function Runs({ project }: { project: string }) {
     hours: '',
     branch: new URLSearchParams(window.location.search).get('branch') ?? '',
   }))
-  const { data: branches } = useLoad(() => api.branches(project), project)
-  const [runs, setRuns] = useState<Invocation[] | null>(null)
-  const [more, setMore] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let current = true
-    api.invocations(project, toQuery(filter)).then(
-      (page) => {
-        if (!current) return
-        setRuns(page.invocations)
-        setMore(page.more)
-        setError(null)
-      },
-      (err: unknown) => current && setError(err instanceof ApiError ? err.message : String(err)),
-    )
-    return () => {
-      current = false
-    }
-  }, [project, filter])
+  const { data: branches } = useLoad(() => api.branches(project), project, kindChanged('branches', project))
+  const {
+    items: runs,
+    more,
+    error,
+    loadingMore,
+    loadMore,
+  } = usePaged<Invocation>({
+    load: (oldest) =>
+      api.invocations(project, toQuery(filter, oldest?.id)).then((page) => ({ items: page.invocations, more: page.more })),
+    key: JSON.stringify([project, filter]),
+    isOlder: (run, than) => run.id < than.id,
+    live: kindChanged('invocations', project),
+  })
 
   function changeFilter(change: Partial<Filter>) {
-    setRuns(null)
     setFilter({ ...filter, ...change })
-  }
-
-  async function loadMore() {
-    if (!runs?.length) return
-    setLoadingMore(true)
-    try {
-      const page = await api.invocations(project, toQuery(filter, runs.at(-1)!.id))
-      setRuns([...runs, ...page.invocations])
-      setMore(page.more)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err))
-    } finally {
-      setLoadingMore(false)
-    }
   }
 
   const filtered = filter.kind !== '' || filter.status !== '' || filter.hours !== '' || filter.branch !== ''

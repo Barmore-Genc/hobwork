@@ -1,3 +1,4 @@
+import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { requireProject } from '../projects.ts'
 
@@ -35,6 +36,7 @@ export function grantBranchHa(host: Host, project: string, branch: string, grant
       'userId' in granter ? granter.userId : null,
       'agentId' in granter ? granter.agentId : null,
     )
+  publishChange(host.db, { kind: 'branches', project })
   return getBranchHaApproval(host, project, branch)!
 }
 
@@ -42,5 +44,6 @@ export function revokeBranchHa(host: Host, project: string, branch: string): boo
   const result = host.db
     .prepare('DELETE FROM branch_ha_approvals WHERE project_id = ? AND branch = ?')
     .run(requireProject(host, project).id, branch)
+  if (Number(result.changes) > 0) publishChange(host.db, { kind: 'branches', project })
   return Number(result.changes) > 0
 }

@@ -16,6 +16,7 @@ export type ProjectConfig = {
   triggers: Record<string, Entry & TriggerEntry>
   egress: string[]
   csp: CspSources
+  crossAppRequests: string[]
   idleTimeoutMs: number
   resources: ResourceRequest
 }
@@ -43,6 +44,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     egress: json.egress ?? [],
     csp: json.csp ?? {},
     resources: json.resources ?? {},
+    crossAppRequests: json.crossAppRequests ?? [],
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }

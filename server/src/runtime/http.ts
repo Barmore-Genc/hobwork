@@ -1,11 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
-import { parseLabel } from '../apps/origins.ts'
-import { getProject, getProjectOrRenamed, ProjectError } from '../projects.ts'
+import { getProjectOrRenamed, ProjectError } from '../projects.ts'
 import { matchRoute } from './routes.ts'
 import type { Runtime } from './runtime.ts'
-import { branchesWithWebhookToken, HOOKS_PREFIX, verifyWebhookToken } from './webhooks.ts'
+import { LEGACY_HOOKS_PREFIX } from './webhooks.ts'
 
 export const PROJECT_PREFIX = '/p/'
 
@@ -121,6 +120,21 @@ export async function serveRoute(
   )
 }
 
+// Calls a webhook whose token the caller has already checked. The response is
+// sandboxed like a route response on the Hobwork origin: the webhook is not the
+// hob's UI, so its output must not run as the app.
+export async function serveWebhook(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: Runtime,
+  options: { project: string; branch?: string; name: string; url: string },
+): Promise<void> {
+  const { project, branch, name, url } = options
+  if (!(await runtime.webhookExists(project, name, branch))) return sendJson(res, 404, { error: 'not found' })
+  const request = await serialize(req, url)
+  await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request }, {}, true)
+}
+
 export function sendRuntimeError(res: ServerResponse, err: unknown) {
   if (res.headersSent) return void res.destroy()
   if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message })
@@ -133,17 +147,15 @@ function segmentsOf(pathname: string, prefix: string): string[] {
   return pathname.slice(prefix.length).split('/')
 }
 
-// Serves project routes for agents (/p/<project>/api/...) and webhooks
-// (/hooks/<project>/<name>/<token>), and sends old project UI links
-// (/p/<project>/...) to the project's app origin. Returns false for other paths.
+// Serves project routes for agents (/p/<project>/api/...), sends old project
+// UI links (/p/<project>/...) to the project's app origin and refuses the old
+// webhook URLs. Returns false for other paths.
 export function createRuntimeHttp(
   host: Host,
   runtime: Runtime,
   options: {
     authorizeRoute: RouteAuthorizer
     appOrigin: (project: string) => string | undefined
-    // The branch whose preview label (<branch label>--<project>) this is.
-    resolvePreview: (label: string) => Promise<{ project: string; branch: string } | undefined>
   },
 ) {
   async function handleProject(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
@@ -169,41 +181,29 @@ export function createRuntimeHttp(
     await serveRoute(req, res, runtime, { project, path: `/${rest.join('/')}`, url, sandboxed: true })
   }
 
-  // /hooks/<project>/<name>/<token> calls the deployed version,
-  // /hooks/<branch label>--<project>/<name>/<token> a branch preview.
-  async function handleWebhook(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
-    const [target = '', name = '', token = '', ...rest] = segmentsOf(pathname, HOOKS_PREFIX)
-    // Unknown project, branch, webhook and token all look the same to the caller.
-    const notFound = () => sendJson(res, 404, { error: 'not found' })
-    if (rest.length) return notFound()
-    let project: string | undefined
-    let branch: string | undefined
-    if (target.includes('--')) {
-      project = getProject(host, parseLabel(target).project)?.name
-      const tokenBranches = project === undefined ? [] : branchesWithWebhookToken(host, project, name, token)
-      if (project === undefined || !tokenBranches.length) return notFound()
-      // Resolving the label runs git, so it waits until the token is known to be valid.
-      const preview = await options.resolvePreview(target)
-      if (!preview || !tokenBranches.includes(preview.branch)) return notFound()
-      branch = preview.branch
-    } else {
-      // Webhook URLs live in other systems, so an old name of a renamed project still works.
-      project = getProjectOrRenamed(host, target)?.name
-      if (project === undefined || !verifyWebhookToken(host, project, name, token)) return notFound()
+  // Webhook tokens still work, but at the hob's app origin. The old URL differs
+  // from the new one in host and path only, so the answer says how to rewrite it.
+  const warned = new Set<string>()
+  function handleLegacyWebhook(res: ServerResponse, pathname: string) {
+    const [target = '', name = ''] = segmentsOf(pathname, LEGACY_HOOKS_PREFIX)
+    const key = `${target}/${name}`
+    if (warned.size < 1000 && !warned.has(key)) {
+      warned.add(key)
+      console.warn(`A request to the old webhook URL /hooks/${key}/... was refused. Webhooks are called at the hob's app address now.`)
     }
-    if (!(await runtime.webhookExists(project, name, branch))) return notFound()
-    const request = await serialize(req, `http://${req.headers.host ?? 'localhost'}${HOOKS_PREFIX}${target}/${name}${search}`)
-    await invokeAndRespond(res, runtime, project, { kind: 'webhook', name, manual: false, branch, request }, {}, true)
+    sendJson(res, 410, {
+      error:
+        "Webhooks are no longer called on the Hobwork address. Call the same token at the hob's app address instead: <app origin of the hob>/_hobwork/hooks/<webhook>/<token>, for example https://<hob>.<apps host>/_hobwork/hooks/<webhook>/<token>. Hobwork shows the full URL when you create a new token.",
+    })
   }
 
   return (req: IncomingMessage, res: ServerResponse, pathname: string, search: string): boolean => {
-    const handler = pathname.startsWith(PROJECT_PREFIX)
-      ? handleProject
-      : pathname.startsWith(HOOKS_PREFIX)
-        ? handleWebhook
-        : undefined
-    if (!handler) return false
-    handler(req, res, pathname, search).catch((err: unknown) => sendRuntimeError(res, err))
+    if (pathname.startsWith(LEGACY_HOOKS_PREFIX)) {
+      handleLegacyWebhook(res, pathname)
+      return true
+    }
+    if (!pathname.startsWith(PROJECT_PREFIX)) return false
+    handleProject(req, res, pathname, search).catch((err: unknown) => sendRuntimeError(res, err))
     return true
   }
 }

@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
-import { appLabel } from '../apps/origins.ts'
+import type { AppTarget } from '../apps/origins.ts'
 import type { Host } from '../host.ts'
 import { DEFAULT_BRANCH, ProjectError, requireProject } from '../projects.ts'
 import { branchExists } from '../repo.ts'
@@ -17,7 +17,7 @@ import {
 } from '../runtime/logs.ts'
 import { matchRoute } from '../runtime/routes.ts'
 import type { InvokeOutcome, Runtime } from '../runtime/runtime.ts'
-import { HOOKS_PREFIX, rotateBranchWebhookToken, rotateWebhookToken, webhookPath } from '../runtime/webhooks.ts'
+import { HOOKS_PREFIX, rotateBranchWebhookToken, rotateWebhookToken, webhookUrl } from '../runtime/webhooks.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 
 const RESPONSE_BODY_CHARS = 10_000
@@ -30,13 +30,6 @@ const branch = z.string().optional().describe(`Branch to run as a preview (its l
 
 function previewBranch(value: string | undefined): string | undefined {
   return value === undefined || value === DEFAULT_BRANCH ? undefined : value
-}
-
-// The label of a branch preview, which its webhook URLs and app origin use.
-function previewLabel(project: string, branch: string): string {
-  const label = appLabel({ project, branch })
-  if (!label) throw new ProjectError(`The hob name ${project} is too long for branch previews`)
-  return label
 }
 
 function text(value: string, isError = false): CallToolResult {
@@ -102,7 +95,16 @@ function formatOutcome(host: Host, projectName: string, label: string, outcome: 
   return text(truncateMiddle(lines.join('\n')), !outcome.ok)
 }
 
-export function registerRuntimeTools(server: McpServer, { host, runtime }: { host: Host; runtime?: Runtime }) {
+export function registerRuntimeTools(
+  server: McpServer,
+  { host, runtime, appOrigin }: { host: Host; runtime?: Runtime; appOrigin?: (target: AppTarget) => string | undefined },
+) {
+  const originOf = (target: AppTarget): string => {
+    const origin = appOrigin?.(target)
+    if (!origin) throw new ProjectError(`${target.project} has no app address: ${appOrigin ? 'the hob name is too long for branch previews' : 'this Hobwork host does not serve apps'}`)
+    return origin
+  }
+
   server.registerTool(
     'invoke',
     {
@@ -155,7 +157,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
         })
         return formatOutcome(host, p, `route "${found.route.key}", ${where(outcome)}`, outcome)
       }
-      const hook = `${HOOKS_PREFIX}${b === undefined ? p : previewLabel(p, b)}/${name}`
+      const hook = `${HOOKS_PREFIX}${name}`
       const outcome = await runtime.invoke(p, {
         kind: k,
         name,
@@ -290,7 +292,7 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     'rotate_webhook_token',
     {
       description:
-        'Create or replace the secret token of a webhook and return its URL path (/hooks/<hob>/<name>/<token>), to be called on the Hobwork host. With branch, the URL calls that branch\'s preview instead (/hooks/<branch label>--<hob>/<name>/<token>) and has its own token. The token is shown only now; rotating again invalidates the old URL right away. A webhook without a token cannot be called from outside.',
+        'Create or replace the secret token of a webhook and return its full URL (<hob app origin>/_hobwork/hooks/<name>/<token>): webhooks are called on the hob\'s own app address, not on the Hobwork address. With branch, the URL is on that branch\'s preview origin and calls the preview instead, with its own token. The token is shown only now; rotating again invalidates the old URL right away. A webhook without a token cannot be called from outside.',
       inputSchema: {
         hob,
         webhook: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Webhook name from hobwork.json'),
@@ -301,14 +303,14 @@ export function registerRuntimeTools(server: McpServer, { host, runtime }: { hos
     async ({ hob: p, webhook, branch: rawBranch }) => {
       const b = previewBranch(rawBranch)
       if (b === undefined) {
+        const origin = originOf({ project: p })
         const token = rotateWebhookToken(host, p, webhook)
-        return text(`Webhook URL path: ${webhookPath(p, webhook, token)}\nPrefix it with the Hobwork host's URL. Any HTTP method works.`)
+        return text(`Webhook URL: ${webhookUrl(origin, webhook, token)}\nAny HTTP method works.`)
       }
       if (!(await branchExists(host, p, b))) throw new ProjectError(`Branch "${b}" does not exist in ${p}`)
+      const origin = originOf({ project: p, branch: b })
       const token = rotateBranchWebhookToken(host, p, b, webhook)
-      return text(
-        `Webhook URL path for branch ${b}: ${webhookPath(previewLabel(p, b), webhook, token)}\nPrefix it with the Hobwork host's URL. Any HTTP method works. It runs the branch's latest commit.`,
-      )
+      return text(`Webhook URL for branch ${b}: ${webhookUrl(origin, webhook, token)}\nAny HTTP method works. It runs the branch's latest commit.`)
     },
   )
 }

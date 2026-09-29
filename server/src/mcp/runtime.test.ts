@@ -108,9 +108,9 @@ test('tail_logs returns lines logged while it waits', async () => {
   expect(empty).toContain('No new log lines')
 })
 
-test('rotate_webhook_token returns a working URL path', async () => {
+test('rotate_webhook_token returns a working URL on the hob app origin', async () => {
   const text = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'scanned' })
-  expect(text).toMatch(/\/hooks\/filament\/scanned\/[\w-]{43}/)
+  expect(text).toMatch(/https?:\/\/filament\.[^/\s]+\/_hobwork\/hooks\/scanned\/[\w-]{43}/)
 })
 
 test('invoke runs a branch preview, and branch webhooks get their own URL', async () => {
@@ -131,7 +131,7 @@ test('invoke runs a branch preview, and branch webhooks get their own URL', asyn
   const cron = await ok('invoke', { hob: 'filament', kind: 'cron', name: 'cleanup', branch: 'add-spools' })
   expect(cron).toContain('cleaned on the branch')
   const hook = await ok('invoke', { hob: 'filament', kind: 'webhook', name: 'scanned', branch: 'add-spools' })
-  expect(hook).toContain('/hooks/add-spools--filament/scanned')
+  expect(hook).toContain('/_hobwork/hooks/scanned')
 
   const list = await ok('list_invocations', { hob: 'filament', branch: 'add-spools' })
   expect(list).toContain('cron "cleanup" branch add-spools (manual) ok')
@@ -145,5 +145,5 @@ test('invoke runs a branch preview, and branch webhooks get their own URL', asyn
   expect(textOf(missing)).toContain('Branch "nope" does not exist')
 
   const rotated = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'scanned', branch: 'add-spools' })
-  expect(rotated).toMatch(/\/hooks\/add-spools--filament\/scanned\/[\w-]{43}/)
+  expect(rotated).toMatch(/https?:\/\/add-spools--filament\.[^/\s]+\/_hobwork\/hooks\/scanned\/[\w-]{43}/)
 })

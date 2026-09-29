@@ -161,11 +161,11 @@ test('old webhook URLs, app links and project pages lead to the renamed project'
   await renameProject({ host, workspaces, delivery, runtime, data }, 'filament', 'spools')
 
   for (const name of ['filament', 'spools']) {
-    const hook = await fetch(`${app.base}/hooks/${name}/scanned/${webhookToken}`, { method: 'POST' })
+    const hook = await sendTo(app.base, `http://${name}.${TEST_APPS_DOMAIN}/_hobwork/hooks/scanned/${webhookToken}`, { method: 'POST' })
     expect(hook.status, name).toBe(200)
-    expect(await hook.json()).toEqual({ scanned: true })
+    expect(JSON.parse(hook.body)).toEqual({ scanned: true })
   }
-  expect((await fetch(`${app.base}/hooks/filament/scanned/wrong`, { method: 'POST' })).status).toBe(404)
+  expect((await sendTo(app.base, `http://filament.${TEST_APPS_DOMAIN}/_hobwork/hooks/scanned/wrong`, { method: 'POST' })).status).toBe(404)
 
   const page = await sendTo(app.base, `http://filament.${TEST_APPS_DOMAIN}/shelf?x=1`)
   expect(page.status).toBe(302)
@@ -196,7 +196,7 @@ test('a new project can take the old name', async () => {
   await renameProject({ host, workspaces, delivery, runtime, data }, 'filament', 'spools')
   await createProject(host, 'filament')
 
-  const hook = await fetch(`${app.base}/hooks/filament/scanned/${webhookToken}`, { method: 'POST' })
+  const hook = await sendTo(app.base, `http://filament.${TEST_APPS_DOMAIN}/_hobwork/hooks/scanned/${webhookToken}`, { method: 'POST' })
   expect(hook.status).toBe(404)
   const detail = await fetch(`${app.base}/api/projects/filament`, { headers: { cookie } })
   expect(await detail.json()).toMatchObject({ name: 'filament' })

@@ -96,6 +96,7 @@ test('a project without a rendered icon gets its first letter', async () => {
   const res = await get('/api/projects/filament/icon')
   expect(res.status).toBe(200)
   expect(res.headers.get('content-type')).toBe('image/svg+xml')
+  expect(res.headers.get('x-content-type-options')).toBe('nosniff')
   expect(await res.text()).toContain('>F</text>')
   expect((await get('/api/projects/nope/icon')).status).toBe(404)
 })

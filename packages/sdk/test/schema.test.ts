@@ -19,6 +19,10 @@ test.each(['🧵', '👨‍👩‍👧', '❤️', 'ui/icon.svg', 'icon.png', 'u
   expect(validate({ icon }), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts hob names in crossAppRequests', () => {
+  expect(validate({ crossAppRequests: ['filament', 'add-spools'] }), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -36,6 +40,9 @@ test.each([
   ],
   ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
+  ['crossAppRequests with a URL', { crossAppRequests: ['https://filament.apps.example.com'] }],
+  ['crossAppRequests with a wildcard', { crossAppRequests: ['*'] }],
+  ['crossAppRequests not an array', { crossAppRequests: 'filament' }],
   ['bad idleTimeout', { idleTimeout: 'soon' }],
   ['empty icon', { icon: '' }],
   ['icon with an unsupported image type', { icon: 'ui/icon.gif' }],

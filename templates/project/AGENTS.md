@@ -8,6 +8,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 - Hob icon: set `icon` in hobwork.json (emoji or image path).
 - `src/`: handlers. Each default-exports a function typed `Handler` (`RequestHandler` for routes and webhooks) from `@hobwork/sdk`. It gets `ctx`: `request`, `params`, `payload`, `invocation`, `fetch`, `log`, `db`, `secrets`, `ha`, `device(name)`, `devices()`.
 - `ui/`, `index.html`: the dashboard (React + Tailwind) at the hob's app origin, also shown in the Hobwork app. Call routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`). Style with theme utilities (`bg-bg`, `bg-surface`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-danger`, ...), not fixed colors or `dark:`. `/_hobwork/` is reserved.
+- Other hobs' apps cannot send requests to this app, whatever the method. To let one, list its name in `hobwork.json`: `"crossAppRequests": ["other-hob"]`. The app's own UI and the Hobwork UI need no entry.
 - The app runs under a strict Content-Security-Policy: scripts only from the app's own origin (no inline `<script>`, no `eval`, no CDN scripts), and connections, images, fonts and styles from its own origin (plus `data:`/`blob:` images and inline styles). Bundle dependencies with Vite instead of loading them from a CDN. If the UI really needs another source, add it in `hobwork.json`, e.g. `"csp": { "connect-src": ["https://api.example.com"], "img-src": ["https://*.tiles.example.com"] }` (directives: `script-src`, `style-src`, `img-src`, `font-src`, `connect-src`, `media-src`, `frame-src`, `worker-src`, `manifest-src`, `form-action`; sources are `https://host`, `wss://host` or `data:`/`blob:`). `'unsafe-inline'` and `'unsafe-eval'` are only accepted in `script-src` and remove the protection against injected scripts, so avoid them.
 - `migrations/`: `0001_name.sql`, ..., applied in order on deploy.
 - `tests/`: Vitest. Test files share one module cache; mocks, globals and env vars reset after each test.
@@ -16,7 +17,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 ## Handlers
 
 - Route `"GET /spools/:id"` answers `GET /api/spools/42` on the app origin, with `ctx.params.id`. A returned `Response` is sent as is, other values as JSON, `undefined` as 204. A thrown error answers 500.
-- Crons use 5-field syntax in the host's time zone. Webhooks are called at a secret URL from `rotate_webhook_token`.
+- Crons use 5-field syntax in the host's time zone. Webhooks are called at a secret URL on the hob's own app address (`https://<hob>.<apps host>/_hobwork/hooks/<name>/<token>`) from `rotate_webhook_token`, which returns the full URL once.
 - Handlers work like AWS Lambda functions: nothing in memory survives between invocations, and there are no servers, timers or background loops. Keep state in `ctx.db`, use a cron for recurring work.
 - `ctx.fetch` only reaches hosts in `egress` and the hosts of assigned secrets. Blocked requests get a 403 and an `egress-blocked` log line. Workspace changes to either apply from the next `bash` command.
 - Delete the greeting examples once the hob has its own handlers.

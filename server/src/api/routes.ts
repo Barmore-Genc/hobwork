@@ -29,7 +29,7 @@ import {
   type LogFilter,
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
-import { rotateWebhookToken, webhookPath, webhookTokenCreatedAt } from '../runtime/webhooks.ts'
+import { rotateWebhookToken, webhookTokenCreatedAt, webhookUrl } from '../runtime/webhooks.ts'
 import { fileStats, sendFile } from '../static.ts'
 import {
   SecretConflictError,
@@ -328,9 +328,14 @@ export function createApiRoutes(options: {
         const build = await runtime?.storedBuild(project.name).catch(() => undefined)
         const path = build && join(build, ICONS_DIR, iconFile(LIST_ICON_SIZE))
         const stats = path ? fileStats(path) : undefined
-        if (path && stats) return sendFile(req, res, path, stats, 'no-cache')
+        if (path && stats) return sendFile(req, res, path, stats, 'no-cache', { 'x-content-type-options': 'nosniff' })
         const svg = Buffer.from(letterIconSvg(defaultIcon(project.name)))
-        res.writeHead(200, { 'content-type': 'image/svg+xml', 'content-length': svg.length, 'cache-control': 'no-cache' })
+        res.writeHead(200, {
+          'content-type': 'image/svg+xml',
+          'content-length': svg.length,
+          'cache-control': 'no-cache',
+          'x-content-type-options': 'nosniff',
+        })
         res.end(svg)
       },
     },
@@ -394,8 +399,10 @@ export function createApiRoutes(options: {
         const name = params[1]!
         const config = await deployedConfig(project.name)
         if (!config || !(name in config.webhooks)) throw new HttpError(404, `${project.name} has no webhook called "${name}"`)
+        const origin = options.appOrigin?.({ project: project.name })
+        if (!origin) throw new HttpError(409, `${project.name} has no app address, so it has no webhook URL`)
         const token = rotateWebhookToken(host, project.name, name)
-        json(res, 200, { url: `${options.publicUrl}${webhookPath(project.name, name, token)}` })
+        json(res, 200, { url: webhookUrl(origin, name, token) })
       },
     },
     {

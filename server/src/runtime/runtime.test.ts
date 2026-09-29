@@ -102,6 +102,8 @@ async function deploy(files: Files = projectFiles()) {
   return version
 }
 
+const TEST_APPS_DOMAIN_LOCALHOST = 'apps.localhost'
+
 async function listenApp(): Promise<string> {
   server = createApp(host, { runtime })
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
@@ -139,7 +141,7 @@ test('signed-in users call routes on the app origin, with the CSRF header for wr
   await deploy()
   server = createApp(host, {
     runtime,
-    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] }, anyHost: true },
   })
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -230,13 +232,27 @@ test('webhooks need their current token', async () => {
   start()
   await deploy()
   const base = await listenApp()
-  expect((await fetch(`${base}/hooks/filament/scanned/wrong`, { method: 'POST' })).status).toBe(404)
+  const hook = (name: string, token: string, init: Parameters<typeof sendTo>[2] = { method: 'POST' }) =>
+    sendTo(base, `http://filament.${TEST_APPS_DOMAIN_LOCALHOST}/_hobwork/hooks/${name}/${token}`, init)
+  expect((await hook('scanned', 'wrong')).status).toBe(404)
   const token = rotateWebhookToken(host, 'filament', 'scanned')
-  const res = await fetch(`${base}/hooks/filament/scanned/${token}`, { method: 'POST', body: 'spool 3' })
+  const res = await hook('scanned', token, { method: 'POST', body: 'spool 3' })
   expect(res.status).toBe(202)
-  expect(await res.text()).toBe('scanned spool 3')
+  expect(res.body).toBe('scanned spool 3')
   rotateWebhookToken(host, 'filament', 'scanned')
-  expect((await fetch(`${base}/hooks/filament/scanned/${token}`, { method: 'POST' })).status).toBe(404)
+  expect((await hook('scanned', token)).status).toBe(404)
+})
+
+test('the old webhook URL on the Hobwork origin is refused with the new shape', async () => {
+  start()
+  await deploy()
+  const base = await listenApp()
+  const token = rotateWebhookToken(host, 'filament', 'scanned')
+  const res = await fetch(`${base}/hooks/filament/scanned/${token}`, { method: 'POST' })
+  expect(res.status).toBe(410)
+  const { error } = (await res.json()) as { error: string }
+  expect(error).toContain('/_hobwork/hooks/<webhook>/<token>')
+  expect(error).not.toContain(token)
 })
 
 test('handler pages on the Hobwork origin are sandboxed and cannot set cookies', async () => {
@@ -244,15 +260,24 @@ test('handler pages on the Hobwork origin are sandboxed and cannot set cookies',
   await deploy()
   const base = await listenApp()
   const { token } = createAgentToken(host.db, 'claude')
-  const hook = await fetch(`${base}/hooks/filament/page/${rotateWebhookToken(host, 'filament', 'page')}`)
   const route = await fetch(`${base}/p/filament/api/page`, { headers: { authorization: `Bearer ${token}` } })
-  for (const res of [hook, route]) {
-    expect(res.headers.get('content-type')).toBe('text/html')
-    expect(await res.text()).toContain('<script>')
-    expect(res.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'")
-    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(res.headers.getSetCookie()).toEqual([])
-  }
+  expect(route.headers.get('content-type')).toBe('text/html')
+  expect(await route.text()).toContain('<script>')
+  expect(route.headers.get('content-security-policy')).toBe("sandbox; default-src 'none'")
+  expect(route.headers.get('x-content-type-options')).toBe('nosniff')
+  expect(route.headers.getSetCookie()).toEqual([])
+})
+
+test('webhook pages on the app origin are sandboxed and cannot set cookies', async () => {
+  start()
+  await deploy()
+  const base = await listenApp()
+  const hook = await sendTo(base, `http://filament.${TEST_APPS_DOMAIN_LOCALHOST}/_hobwork/hooks/page/${rotateWebhookToken(host, 'filament', 'page')}`)
+  expect(hook.headers['content-type']).toBe('text/html')
+  expect(hook.body).toContain('<script>')
+  expect(hook.headers['content-security-policy']).toBe("sandbox; default-src 'none'")
+  expect(hook.headers['x-content-type-options']).toBe('nosniff')
+  expect(hook.headers['set-cookie']).toBeUndefined()
 })
 
 test('app origin handler responses are not sandboxed', async () => {
@@ -260,7 +285,7 @@ test('app origin handler responses are not sandboxed', async () => {
   await deploy()
   server = createApp(host, {
     runtime,
-    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+    web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] }, anyHost: true },
   })
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`

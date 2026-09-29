@@ -21,7 +21,7 @@ import { rotateWebhookToken } from './runtime/webhooks.ts'
 import { createSecretStore, type SecretStore } from './secrets.ts'
 import { createTestHost } from './test-host.ts'
 import { fakePackageJson, seedMain } from './test-project.ts'
-import { signedIn, startTestApp, writeHeaders } from './test-web.ts'
+import { sendTo, signedIn, startTestApp, TEST_APPS_DOMAIN, writeHeaders } from './test-web.ts'
 import { recordVersion } from './versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
@@ -294,7 +294,7 @@ test('restoring brings a deleted project back as it was', async () => {
 
   expect(runtime.crons('filament')).toHaveLength(1)
   expect(await spools('filament')).toEqual([{ id: 1, color: 'red' }])
-  const hook = await fetch(`${app.base}/hooks/filament/scanned/${token}`, { method: 'POST' })
+  const hook = await sendTo(app.base, `http://filament.${TEST_APPS_DOMAIN}/_hobwork/hooks/scanned/${token}`, { method: 'POST' })
   expect(hook.status).toBe(204)
 })
 

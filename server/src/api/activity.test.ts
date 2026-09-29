@@ -10,7 +10,7 @@ import { verifyWebhookToken } from '../runtime/webhooks.ts'
 import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
-import { signedIn, startTestApp, TEST_PUBLIC_URL, writeHeaders } from '../test-web.ts'
+import { signedIn, startTestApp, TEST_APPS_DOMAIN, writeHeaders } from '../test-web.ts'
 import { recordVersion } from '../versions.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -217,7 +217,7 @@ test('rotating a webhook token shows its URL once', async () => {
     fetch(`${app.base}/api/projects/filament/webhooks/${name}/token`, { method: 'POST', headers: writeHeaders(cookie) })
   const res = await rotate('scanned')
   const { url } = (await res.json()) as { url: string }
-  expect(url).toMatch(new RegExp(`^${TEST_PUBLIC_URL}/hooks/filament/scanned/[A-Za-z0-9_-]{43}$`))
+  expect(url).toMatch(new RegExp(`^http://filament\\.${TEST_APPS_DOMAIN.replaceAll('.', '\\.')}/_hobwork/hooks/scanned/[A-Za-z0-9_-]{43}$`))
   expect(verifyWebhookToken(host, 'filament', 'scanned', url.split('/').pop()!)).toBe(true)
   const detail = (await (await get('/api/projects/filament')).json()) as any
   expect(detail.entryPoints.webhooks[0].tokenCreatedAt).toEqual(expect.any(String))

@@ -123,7 +123,15 @@ function loadAppsUrl(env: NodeJS.ProcessEnv, publicUrl: string): string {
     throw new Error(`HOBWORK_APPS_URL needs a domain name that hob names can go in front of, got "${value}"`)
   }
   requireHttpsUnlessLoopback('HOBWORK_APPS_URL', url)
-  if (url.origin === publicUrl) throw new Error('HOBWORK_APPS_URL must differ from HOBWORK_PUBLIC_URL')
+  // Hob origins are subdomains of the apps host. Cookies ignore ports, and a
+  // Hobwork host at or below the apps host would take every hob's requests and
+  // let a hob name shadow it.
+  const publicHost = new URL(publicUrl).hostname
+  if (publicHost === url.hostname || publicHost.endsWith(`.${url.hostname}`)) {
+    throw new Error(
+      `HOBWORK_PUBLIC_URL (${publicUrl}) must not be at or below the apps host ${url.hostname}: hob apps are served from its subdomains. Put the apps host beside or below Hobwork, like https://apps.${publicHost}`,
+    )
+  }
   return url.origin
 }
 

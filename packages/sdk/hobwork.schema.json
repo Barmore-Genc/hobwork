@@ -128,6 +128,12 @@
         "form-action": { "$ref": "#/definitions/cspSources" }
       }
     },
+    "crossAppRequests": {
+      "description": "Names of the hobs whose apps may send requests to this hob's app (its UI and routes). Every other hob's app is refused, on every method including GET. Webhooks are called with their own token and are not affected. Empty by default.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "maxLength": 63 }
+    },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
     "resources": {
       "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 512 MB and 2 vCPUs, workspaces and pipeline runs (which also run builds) to 2048 MB and 4 vCPUs. Values above the defaults are capped to them.",

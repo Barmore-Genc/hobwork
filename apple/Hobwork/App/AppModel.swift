@@ -1,4 +1,6 @@
+import FamilyControls
 import Foundation
+import HealthKit
 import Observation
 import UIKit
 
@@ -12,16 +14,22 @@ final class AppModel {
 
     private(set) var pairing: Pairing?
     private(set) var connection: DeviceConnection?
+    private(set) var capabilities = CapabilityStatus()
     /// Shown on the pairing screen, for example after the host removed this device.
     var notice: String?
+    /// Shown over the web view after scanning a tag or opening a tag link.
+    var nfcNotice: String?
 
     @ObservationIgnored let web = WebController()
     @ObservationIgnored let notifier = Notifier()
+    @ObservationIgnored let alarms = AlarmKitScheduler()
+    @ObservationIgnored let nfc = NDEFTagSession()
+    @ObservationIgnored let healthStore = HKHealthStore()
+    @ObservationIgnored private(set) lazy var health = HealthDelivery(store: healthStore) { [weak self] event in
+        await self?.send(event)
+    }
     @ObservationIgnored private let events = StoredEventQueue()
-    @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private var pushToken: String?
-
-    private static let hostKey = "host"
 
     static var appVersion: String {
         let info = Bundle.main.infoDictionary
@@ -40,9 +48,11 @@ final class AppModel {
 
     init() {
         notifier.onResponse = { [weak self] response in await self?.handle(response) }
-        if let host = defaults.url(forKey: Self.hostKey), let credentials = Keychain.load(for: host) {
-            activate(Pairing(host: host, credentials: credentials))
+        EventSender.model = self
+        if let stored = StoredPairing.load() {
+            activate(Pairing(host: stored.host, credentials: stored.credentials))
         }
+        health.start()
     }
 
     var api: HostAPI? {
@@ -50,8 +60,7 @@ final class AppModel {
     }
 
     func completePairing(host: URL, credentials: DeviceCredentials) throws {
-        try Keychain.save(credentials, for: host)
-        defaults.set(host, forKey: Self.hostKey)
+        try StoredPairing.save(host: host, credentials: credentials)
         notice = nil
         activate(Pairing(host: host, credentials: credentials))
     }
@@ -62,8 +71,7 @@ final class AppModel {
         if notice == nil { try? await api?.removeDevice() }
         connection?.stop()
         connection = nil
-        if let host = pairing?.host { Keychain.delete(for: host) }
-        defaults.removeObject(forKey: Self.hostKey)
+        StoredPairing.remove()
         events.removeAll()
         pairing = nil
         self.notice = notice
@@ -74,10 +82,20 @@ final class AppModel {
         guard pairing != nil else { return }
         if connection?.state != .connected { connection?.reconnect() }
         web.checkSession()
+        Task { await refreshCapabilities() }
     }
 
     func sceneEnteredBackground() {
         connection?.stop()
+    }
+
+    /// Checks what is set up and allowed again, and reconnects so the host sees the change
+    /// in `hello`.
+    func refreshCapabilities() async {
+        let status = await CapabilityStatus.current()
+        guard status != capabilities else { return }
+        capabilities = status
+        if connection?.state == .connected { connection?.reconnect() }
     }
 
     func didRegisterForPush(token: Data) {
@@ -97,31 +115,103 @@ final class AppModel {
         }
     }
 
+    /// Over the socket when connected, otherwise straight to the host, queued when that fails.
+    func send(_ event: DeviceEvent) async {
+        if let connection, connection.state == .connected {
+            connection.send(event)
+            return
+        }
+        // iOS gives work in the background only a few seconds, too short to open a socket.
+        guard let api else { return }
+        do {
+            try await api.send(event)
+        } catch HostError.unauthorized {
+            await revoked()
+        } catch {
+            events.append(event)
+        }
+    }
+
+    // MARK: Capabilities
+
+    func requestAlarms() async {
+        _ = await alarms.requestAuthorization()
+        await refreshCapabilities()
+    }
+
+    func requestScreenTime() async throws {
+        try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+        await refreshCapabilities()
+    }
+
+    func shareHealth(_ types: Set<HealthType>) async throws {
+        try await health.share(types)
+        await refreshCapabilities()
+    }
+
+    /// The "Scan Tag" button: reads a tag and reports Hobwork tags to the host.
+    func scanTag() async {
+        do {
+            let records = try await nfc.read()
+            let result = NFCCapability.readResult(records, host: pairing?.host)
+            guard let tag = result.tag else {
+                nfcNotice = "This tag wasn't written by this Hobwork host."
+                return
+            }
+            await send(NFCTagLink.event(tag: tag))
+            nfcNotice = "Tag scanned."
+        } catch .cancelled {
+            return
+        } catch {
+            nfcNotice = NFCCapability.callError(error).message
+        }
+    }
+
+    /// `hobwork://nfc/<tag>` and universal links to `<host>/nfc/<tag>`.
+    func open(_ url: URL) {
+        guard pairing != nil, let tag = NFCTagLink.tag(from: url, host: pairing?.host) else { return }
+        Task {
+            await send(NFCTagLink.event(tag: tag))
+            nfcNotice = "Tag scanned."
+        }
+    }
+
     private func activate(_ pairing: Pairing) {
         self.pairing = pairing
         let api = HostAPI(host: pairing.host, token: pairing.credentials.token)
+        let runner = CommandRunner(log: FileCommandLog())
+        runner.register(notifier, for: Notifier.capability)
+        runner.register(NFCCapability(session: nfc, host: { [weak self] in self?.pairing?.host }), for: NFCCapability.capability)
+        BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
+        self.runner = runner
         let connection = DeviceConnection(
             request: api.webSocketRequest,
             hello: { [weak self] in self?.hello ?? Hello(appVersion: Self.appVersion, platform: "ios", capabilities: []) },
-            queue: events
+            queue: events,
+            runner: runner
         )
-        connection.register(notifier, for: Notifier.capability)
         connection.onUnauthorized = { [weak self] in Task { await self?.revoked() } }
         self.connection = connection
-        connection.start()
         web.configure(
             host: pairing.host,
             requestWebSession: { returnTo in try await api.webSession(returnTo: returnTo) },
             onUnauthorized: { [weak self] in Task { await self?.revoked() } }
         )
-        Task { await notifier.requestAuthorization() }
+        Task {
+            capabilities = await CapabilityStatus.current()
+            connection.start()
+            await notifier.requestAuthorization()
+            await refreshCapabilities()
+        }
     }
+
+    @ObservationIgnored private var runner: CommandRunner?
 
     private var hello: Hello {
         Hello(
             appVersion: Self.appVersion,
             platform: "ios",
-            capabilities: [Notifier.capability],
+            capabilities: capabilities.reported,
             push: pushToken.map { PushRegistration(token: $0, environment: Self.pushEnvironment) }
         )
     }
@@ -133,20 +223,14 @@ final class AppModel {
 
     private func handle(_ response: Notifier.Response) async {
         if let path = response.path { web.open(link: path) }
-        guard let event = response.event else { return }
-        if let connection, connection.state == .connected {
-            connection.send(event)
-            return
-        }
-        // iOS gives an action that does not open the app only a few seconds in the
-        // background, too short to open a socket.
-        guard let api else { return }
-        do {
-            try await api.send(event)
-        } catch HostError.unauthorized {
-            await revoked()
-        } catch {
-            events.append(event)
-        }
+        if let command = response.command { await run(command) }
+        if let event = response.event { await send(event) }
+    }
+
+    /// A tapped command push. The extension already ran background commands; the command
+    /// log answers those again, which is harmless since the host keeps the first result.
+    private func run(_ command: DeviceCommand) async {
+        guard let runner, let api, let outcome = await runner.run(command) else { return }
+        try? await api.send(DeviceCallResult(id: command.id, outcome: outcome.result))
     }
 }

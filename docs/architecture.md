@@ -248,9 +248,9 @@ Three ways in. All of them act on the same repos and workspaces.
 
 ### MCP tools
 
-Projects: `list_projects`, `create_project` (from template), `get_project` (entry points, current version, status).
+Projects: `list_projects`, `create_project` (from template), `get_project` (entry points, current version, status, the app URL and each branch's preview URL).
 
-Workspaces and files: `create_branch`, `list_branches`, `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files`, `search`, `bash` (runs in the branch workspace VM), `commit`, `diff`, `log`.
+Workspaces and files: `create_branch`, `list_branches` (with each branch's app URL), `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files`, `search`, `bash` (runs in the branch workspace VM), `commit`, `diff`, `log`.
 
 Delivery: `merge` (runs the pipeline, squash-merges and deploys on success, returns failures otherwise), `pipeline_status`, `list_versions`, `restore_version`.
 
@@ -275,7 +275,7 @@ The endpoint is streamable HTTP at `/mcp`, stateless (a fresh server per request
 - **Sessions**: a shell (`exec bash --login`) or `ssh host '<command>'` runs in the branch's workspace VM with `/workspace` as the working directory, starting the VM like `bash` does. Gondolin supports stdin, a PTY and PTY resize on an exec, so interactive shells get a real terminal with the client's `TERM` and window size, and window changes follow. Without a PTY request (`ssh host cmd`, `ssh -T`) stdin, stdout and stderr stay separate and binary-safe. The exit status is passed back. A dropped connection kills the command (same `/proc` environ kill as `bash`). `main` is refused like `bash` on `main`. Port forwarding, agent forwarding, X11, SFTP and git over SSH are not supported.
 - **Idle stop**: a session counts as a running command, so the VM is not stopped while it lasts, and `last_used_at` is updated when it starts and ends.
 
-**`hobwork` CLI** (`packages/sdk/src/cli/main.ts`): `status` (branch head, uncommitted changes, `main`'s version and what is deployed, last pipeline run of the branch), `diff`, `commit "<message>"`, `merge "<summary>"`, `logs [-f] [-n N]`, `invocations [-n N]`. A merge failure exits with status 1, usage errors with 2. The workspace has no git directory, so `hobwork commit` is how SSH users commit.
+**`hobwork` CLI** (`packages/sdk/src/cli/main.ts`): `status` (branch head, uncommitted changes, `main`'s version and what is deployed, last pipeline run of the branch, the app URLs of the branch and `main`), `diff`, `commit "<message>"`, `merge "<summary>"`, `logs [-f] [-n N]`, `invocations [-n N]`. A merge failure exits with status 1, usage errors with 2. The workspace has no git directory, so `hobwork commit` is how SSH users commit.
 
 - **Delivery**: mounted read-only from the host at `/opt/hobwork/cli`, with a `/usr/local/bin/hobwork` wrapper written when the VM starts. Like the runtime runner, it speaks the host's internal API and so has to match the host version; baking it into the image would need a rebuild for every API change. It uses only Node built-ins.
 - **Endpoint**: the workspace VM's internal handler (`server/src/workspace-api.ts`), bound to the VM's project and branch, answers `/v1/workspace/*` at `hobwork.internal`. The CLI uses `node:http`, since `fetch` gives up waiting for response headers after 5 minutes and a merge can take longer. `logs -f` long-polls with a cursor (up to 30 seconds per request).

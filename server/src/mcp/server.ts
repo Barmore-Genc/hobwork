@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
 import type { Agent } from '../agents.ts'
+import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
 import type { Devices } from '../devices/devices.ts'
@@ -39,6 +40,7 @@ export type McpContext = {
   data?: ProjectData
   secrets?: SecretStore
   devices?: Devices
+  appOrigin?: (target: AppTarget) => string | undefined
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. Each project is a git repository. The main branch is the deployed version and changes only by merging another branch.
@@ -111,11 +113,19 @@ export function createMcpServer({
   data,
   secrets,
   devices,
+  appOrigin,
 }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
 
   // main is never written through a workspace, so its checkout is refreshed to
   // the deployed commit on every read.
+  function withAppUrls<T extends { name: string }>(projectName: string, branches: T[]) {
+    return branches.map((b) => ({
+      ...b,
+      appUrl: appOrigin?.({ project: projectName, branch: b.name }) ?? null,
+    }))
+  }
+
   async function readableDir(projectName: string, branchName: string): Promise<string> {
     const workspace =
       branchName === DEFAULT_BRANCH
@@ -158,7 +168,7 @@ export function createMcpServer({
   server.registerTool(
     'get_project',
     {
-      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, its branches and the state of each branch workspace.`,
+      description: `Show a project: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), project DB size and slow query warnings, its branches with their preview URLs and the state of each branch workspace.`,
       inputSchema: { project },
       annotations: { readOnlyHint: true },
     },
@@ -181,13 +191,14 @@ export function createMcpServer({
         name: record.name,
         defaultBranch: record.defaultBranch,
         createdAt: record.createdAt,
+        appUrl: appOrigin?.({ project: name }) ?? null,
         entryPoints: { routes, crons, webhooks, triggers },
         settings,
         ...(configError ? { configError } : {}),
         egress: [...new Set([...configEgress, ...(secrets?.hosts(name) ?? [])])],
         secrets: secrets?.assigned(name).map((secret) => secret.envName) ?? [],
         ...(data ? { database: data.status(name) } : {}),
-        branches: await listBranches(host, name),
+        branches: withAppUrls(name, await listBranches(host, name)),
         workspaces: workspaces
           .list(name)
           .map(({ branch: b, status, lastUsedAt }) => ({ branch: b, status, lastUsedAt })),
@@ -211,14 +222,14 @@ export function createMcpServer({
   server.registerTool(
     'list_branches',
     {
-      description: 'List the branches of a project with their latest commit and workspace state.',
+      description: 'List the branches of a project with their latest commit, workspace state and app URL (the dashboard and routes of that branch).',
       inputSchema: { project },
       annotations: { readOnlyHint: true },
     },
     async ({ project: p }) => {
       const statuses = new Map(workspaces.list(p).map((w) => [w.branch, w.status]))
       return json(
-        (await listBranches(host, p)).map((b) => ({ ...b, workspace: statuses.get(b.name) ?? 'none' })),
+        withAppUrls(p, await listBranches(host, p)).map((b) => ({ ...b, workspace: statuses.get(b.name) ?? 'none' })),
       )
     },
   )

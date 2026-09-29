@@ -96,7 +96,16 @@ function EntryRow({ children, aside }: { children: ReactNode; aside: ReactNode }
 }
 
 function triggerSummary(trigger: EntryPoints['triggers'][number]): string {
-  if (trigger.device?.capability === 'notifications') return 'When someone taps a button on a notification from this project'
+  if (trigger.device) {
+    const on = trigger.device.device ? ` on ${trigger.device.device}` : ''
+    const summaries: Record<string, string> = {
+      notifications: `When someone taps a button on a notification from this project${on}`,
+      focus: `When a Focus mode turns on or off${on}`,
+      nfc: `When someone scans an NFC tag of this project${on}`,
+      health: `When new Health data arrives${on}`,
+    }
+    return summaries[trigger.device.capability] ?? 'On a device event'
+  }
   const definition = trigger.homeassistant
   if (!definition) return 'From another integration'
   const words = (value: unknown) => String(value).replaceAll('_', ' ')

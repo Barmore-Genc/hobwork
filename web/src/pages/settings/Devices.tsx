@@ -4,7 +4,14 @@ import { exactTime, shortDate, timeAgo } from '../../format.ts'
 import { Button, ConfirmDialog, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 
-const CAPABILITY_NAMES: Record<string, string> = { notifications: 'Notifications' }
+const CAPABILITY_NAMES: Record<string, string> = {
+  notifications: 'Notifications',
+  alarms: 'Alarms',
+  screenTime: 'Screen Time',
+  focus: 'Focus',
+  nfc: 'NFC',
+  health: 'Health',
+}
 const PLATFORM_NAMES: Record<Device['platform'], string> = { ios: 'iPhone or iPad', macos: 'Mac' }
 
 function message(err: unknown): string {

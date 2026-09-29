@@ -93,6 +93,41 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant dev instanc
     await expect(ha.getConfig('automation.nope')).rejects.toMatchObject({ code: 'not_found' })
   })
 
+  test('reads traces, history, logbook, system log and statistics', async () => {
+    await ha.callService('input_button', 'press', undefined, { entity_id: 'input_button.test_button' })
+    const since = new Date(Date.now() - 3_600_000).toISOString()
+    await vi.waitFor(async () => {
+      expect((await ha.listTraces('automation', 'hobwork_test_button_event')).length).toBeGreaterThan(0)
+    })
+    const [latest] = (await ha.listTraces('automation', 'hobwork_test_button_event')).sort((a, b) =>
+      b.timestamp.start.localeCompare(a.timestamp.start),
+    )
+    expect(latest).toMatchObject({ run_id: expect.any(String), trigger: 'state of input_button.test_button' })
+    expect(await ha.getTrace('automation', 'hobwork_test_button_event', latest!.run_id)).toHaveProperty('trace')
+
+    const next = await toggle()
+    await vi.waitFor(async () => {
+      const history = await ha.history({ start_time: since, entity_ids: [SWITCH], no_attributes: true })
+      expect(history[SWITCH]?.at(-1)).toMatchObject({ s: next, lu: expect.any(Number) })
+    })
+    await vi.waitFor(async () => {
+      const logbook = await ha.logbook({ start_time: since, entity_ids: ['automation.test_button_emits_event'] })
+      expect(logbook.at(-1)).toMatchObject({ when: expect.any(Number), message: expect.stringContaining('triggered by') })
+    })
+    expect(Array.isArray(await ha.systemLog())).toBe(true)
+
+    const ids = await ha.listStatisticIds()
+    const outdoor = ids.find((s) => s.statistic_id === 'kitchen_sink:temperature_outdoor')
+    expect(outdoor).toMatchObject({ has_mean: true })
+    const statistics = await ha.statistics({
+      start_time: new Date(Date.now() - 7 * 24 * 3_600_000).toISOString(),
+      statistic_ids: [outdoor!.statistic_id],
+      period: 'hour',
+      types: ['mean'],
+    })
+    expect(statistics[outdoor!.statistic_id]?.[0]).toMatchObject({ start: expect.any(Number), mean: expect.any(Number) })
+  })
+
   test('the trigger registry invokes the handler for a bus event trigger', async () => {
     const invocations: { project: string; name: string; variables: TriggerVariables }[] = []
     const registry = createTriggerRegistry({
@@ -132,6 +167,17 @@ describe.runIf(process.env.HOBWORK_HA_TESTS === '1')('Home Assistant dev instanc
       expect(JSON.parse(textOf(result))).toMatchObject({
         fired: true,
         variables: { trigger: { entity_id: SWITCH, to_state: { state: next } } },
+      })
+
+      const automation = 'automation.test_button_emits_event'
+      const [run] = JSON.parse(textOf(await mcp.call('ha_list_traces', { entity_id: automation })))
+      expect(run).toMatchObject({ execution: 'finished', trigger: 'state of input_button.test_button' })
+      const trace = JSON.parse(textOf(await mcp.call('ha_get_trace', { entity_id: automation, run_id: run.run_id })))
+      expect(trace.trace['trigger/0'][0].changed_variables).not.toHaveProperty('this')
+      // The recorder writes changes to its DB about a second later.
+      await vi.waitFor(async () => {
+        const history = JSON.parse(textOf(await mcp.call('ha_history', { entity_ids: [SWITCH], limit: 1 })))
+        expect(history[SWITCH].changes).toEqual([{ state: next, last_changed: expect.any(String) }])
       })
 
       const devices = JSON.parse(textOf(await mcp.call('ha_list_devices', { limit: 5 })))

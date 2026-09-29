@@ -189,6 +189,163 @@ test('finds related items', async () => {
   })
 })
 
+test('lists and shows automation traces by the automation id', async () => {
+  fake.responses.set('get_states', () => [
+    { entity_id: 'automation.coffee_back', state: 'on', attributes: { id: 'coffee1' }, last_changed: '', last_updated: '' },
+    { entity_id: 'automation.no_id', state: 'on', attributes: {}, last_changed: '', last_updated: '' },
+  ])
+  const summary = (run_id: string, startedAt: string) => ({
+    run_id,
+    state: 'stopped',
+    script_execution: 'error',
+    timestamp: { start: startedAt, finish: startedAt },
+    trigger: 'event of zha_event',
+    last_step: 'action/1',
+    error: 'Service tts.speak not found',
+    domain: 'automation',
+    item_id: 'coffee1',
+  })
+  fake.responses.set('trace/list', (m) => {
+    expect(m).toMatchObject({ domain: 'automation', item_id: 'coffee1' })
+    return [summary('old', '2026-09-28T08:00:00+00:00'), summary('new', '2026-09-29T08:00:00+00:00')]
+  })
+  const traces = await ok('ha_list_traces', { entity_id: 'automation.coffee_back' })
+  expect(traces.map((t: any) => t.run_id)).toEqual(['new', 'old'])
+  expect(traces[0]).toMatchObject({ execution: 'error', last_step: 'action/1', error: 'Service tts.speak not found' })
+
+  fake.responses.set('trace/get', (m) => {
+    expect(m).toMatchObject({ domain: 'automation', item_id: 'coffee1', run_id: 'new' })
+    return {
+      ...summary('new', '2026-09-29T08:00:00+00:00'),
+      config: { alias: 'Coffee came back' },
+      blueprint_inputs: null,
+      trace: {
+        'trigger/0': [{ path: 'trigger/0', changed_variables: { this: { state: 'on' }, trigger: { platform: 'event' } } }],
+        'action/1': [{ path: 'action/1', error: 'Service tts.speak not found' }],
+      },
+    }
+  })
+  const trace = await ok('ha_get_trace', { entity_id: 'automation.coffee_back', run_id: 'new' })
+  expect(trace).not.toHaveProperty('config')
+  expect(trace.trace['trigger/0'][0].changed_variables).toEqual({ trigger: { platform: 'event' } })
+  expect(trace.trace['action/1'][0].error).toBe('Service tts.speak not found')
+
+  expect(textOf(await mcp.call('ha_list_traces', { entity_id: 'automation.no_id' }))).toContain('no id in its config')
+  fake.responses.set('trace/list', (m) => {
+    expect(m).toMatchObject({ domain: 'script', item_id: 'announce' })
+    return []
+  })
+  expect(await ok('ha_list_traces', { entity_id: 'script.announce' })).toEqual([])
+})
+
+test('shows history with times and the latest changes per entity', async () => {
+  fake.responses.set('history/history_during_period', (m) => {
+    expect(m).toMatchObject({ entity_ids: ['binary_sensor.door', 'sensor.nope'], no_attributes: true, minimal_response: true })
+    expect(Date.now() - Date.parse(m.start_time as string)).toBeGreaterThan(23 * 3_600_000)
+    return {
+      'binary_sensor.door': [
+        { s: 'off', lu: 1790640000 },
+        { s: 'on', lu: 1790640060 },
+        { s: 'off', lu: 1790640120 },
+      ],
+    }
+  })
+  expect(await ok('ha_history', { entity_ids: ['binary_sensor.door', 'sensor.nope'], limit: 2 })).toEqual({
+    'binary_sensor.door': {
+      total: 3,
+      changes: [
+        { state: 'on', last_changed: new Date(1790640060_000).toISOString() },
+        { state: 'off', last_changed: new Date(1790640120_000).toISOString() },
+      ],
+    },
+    'sensor.nope': { total: 0, changes: [] },
+  })
+
+  fake.responses.set('history/history_during_period', (m) => {
+    expect(m).toMatchObject({ start_time: '2026-09-28T06:00:00+02:00', no_attributes: false, minimal_response: false })
+    return { 'light.kitchen': [{ s: 'on', a: { brightness: 10 }, lu: 1790640060, lc: 1790640000 }] }
+  })
+  expect(
+    await ok('ha_history', { entity_ids: ['light.kitchen'], start: '2026-09-28T06:00:00+02:00', attributes: true }),
+  ).toMatchObject({
+    'light.kitchen': {
+      changes: [
+        {
+          state: 'on',
+          last_changed: new Date(1790640000_000).toISOString(),
+          last_updated: new Date(1790640060_000).toISOString(),
+          attributes: { brightness: 10 },
+        },
+      ],
+    },
+  })
+  expect((await mcp.call('ha_history', { entity_ids: ['light.kitchen'], start: 'yesterday' })).isError).toBe(true)
+})
+
+test('shows the logbook newest first', async () => {
+  fake.responses.set('logbook/get_events', (m) => {
+    expect(m).toMatchObject({ device_ids: ['d1'] })
+    expect(m).not.toHaveProperty('entity_ids')
+    return [
+      { when: 1790640000, name: 'Coffee came back', message: 'triggered by event zha_event' },
+      { when: 1790640060, entity_id: 'light.kitchen', state: 'on' },
+    ]
+  })
+  const logbook = await ok('ha_logbook', { device_ids: ['d1'] })
+  expect(logbook.total).toBe(2)
+  expect(logbook.items[0]).toEqual({ when: new Date(1790640060_000).toISOString(), entity_id: 'light.kitchen', state: 'on' })
+})
+
+test('shows the system log with filters', async () => {
+  const entry = (name: string, level: string, message: string, timestamp: number) => ({
+    name,
+    message: [message],
+    level,
+    source: ['components/zha/core.py', 12],
+    timestamp,
+    exception: '',
+    count: 1,
+    first_occurred: timestamp,
+  })
+  fake.responses.set('system_log/list', () => [
+    entry('homeassistant.components.zha', 'WARNING', 'Device offline', 1790640000),
+    entry('homeassistant.components.tts', 'ERROR', 'Speaker unavailable', 1790640060),
+  ])
+  const all = await ok('ha_system_log')
+  expect(all.items.map((e: any) => e.logger)).toEqual(['homeassistant.components.tts', 'homeassistant.components.zha'])
+  expect(all.items[0]).toMatchObject({ level: 'ERROR', source: 'components/zha/core.py:12', message: 'Speaker unavailable' })
+  expect((await ok('ha_system_log', { level: 'warning' })).items.map((e: any) => e.message)).toEqual(['Device offline'])
+  expect((await ok('ha_system_log', { search: 'speaker' })).total).toBe(1)
+})
+
+test('lists and reads long-term statistics', async () => {
+  fake.responses.set('recorder/list_statistic_ids', () => [
+    {
+      statistic_id: 'sensor.outdoor',
+      name: 'Outdoor',
+      source: 'recorder',
+      statistics_unit_of_measurement: '°C',
+      has_mean: true,
+      has_sum: false,
+    },
+    { statistic_id: 'sensor.energy', name: null, source: 'recorder', statistics_unit_of_measurement: 'kWh', has_mean: false, has_sum: true },
+  ])
+  expect((await ok('ha_list_statistics', { search: 'outdoor' })).items).toEqual([
+    { statistic_id: 'sensor.outdoor', name: 'Outdoor', unit: '°C', source: 'recorder', has_mean: true, has_sum: false },
+  ])
+
+  fake.responses.set('recorder/statistics_during_period', (m) => {
+    expect(m).toMatchObject({ statistic_ids: ['sensor.outdoor'], period: 'day', types: ['mean'] })
+    expect(Date.now() - Date.parse(m.start_time as string)).toBeGreaterThan(6 * 24 * 3_600_000)
+    return { 'sensor.outdoor': [{ start: 1790640000_000, end: 1790726400_000, mean: 12.5 }] }
+  })
+  expect(await ok('ha_statistics', { statistic_ids: ['sensor.outdoor'], period: 'day', types: ['mean'] })).toEqual({
+    'sensor.outdoor': [
+      { start: new Date(1790640000_000).toISOString(), end: new Date(1790726400_000).toISOString(), mean: 12.5 },
+    ],
+  })
+})
+
 test('ha_listen returns the variables of the first fire and unsubscribes', async () => {
   const trigger = { trigger: 'state', entity_id: 'input_boolean.guest_mode' }
   const listening = mcp.call('ha_listen', { trigger, timeout_seconds: 5 })

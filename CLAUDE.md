@@ -59,7 +59,7 @@ Without pocket-id, sign in with a one-time link and add a passkey in Settings (t
 pnpm --filter @hobwork/server sign-in-link you@example.com --name "Your Name"
 ```
 
-Secrets are for users. Until the web UI has a page for them, set one from a shell on the host: `printf %s "$VALUE" | pnpm --filter @hobwork/server secret set <project> NAME --host api.example.com` (`--global` instead of a project, also `list` and `delete`).
+Secrets are for users, who manage them on the project's Secrets page and the Shared secrets page. From a shell on the host: `printf %s "$VALUE" | pnpm --filter @hobwork/server secret set <project> NAME --host api.example.com` (`--global` instead of a project, also `list` and `delete`).
 
 `bash` needs a workspace VM backend and `merge` needs a pipeline VM backend. Without them these tools return an error and the other tools still work.
 

@@ -49,12 +49,24 @@
       {
         "src": "../packages/sdk/src",
         "dest": "/opt/hobwork/sdk/src"
+      },
+      {
+        "src": "../packages/theme/package.json",
+        "dest": "/opt/hobwork/theme/package.json"
+      },
+      {
+        "src": "../packages/theme/tailwind.css",
+        "dest": "/opt/hobwork/theme/tailwind.css"
+      },
+      {
+        "src": "../packages/theme/theme.css",
+        "dest": "/opt/hobwork/theme/theme.css"
       }
     ],
     "commands": [
       "npm install --global pnpm@12.5.1",
       "cd /opt/hobwork/platform && pnpm install --frozen-lockfile --store-dir /opt/hobwork/pnpm-store",
-      "mkdir -p /opt/hobwork/platform/node_modules/@hobwork && mv /opt/hobwork/sdk /opt/hobwork/platform/node_modules/@hobwork/sdk",
+      "mkdir -p /opt/hobwork/platform/node_modules/@hobwork && mv /opt/hobwork/sdk /opt/hobwork/platform/node_modules/@hobwork/sdk && mv /opt/hobwork/theme /opt/hobwork/platform/node_modules/@hobwork/theme",
       "rm -rf /opt/hobwork/pnpm-store /root/.npm /root/.cache /root/.local /tmp/*",
       "ln -s /opt/hobwork/platform/node_modules /node_modules",
       "mkdir -p /workspace"

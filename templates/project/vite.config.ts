@@ -21,7 +21,7 @@ export default defineConfig({
   // `vite build` builds the dashboard (client) and the handlers.
   builder: {},
   environments: {
-    client: { build: { rollupOptions: { input: 'ui/index.html' } } },
+    client: { build: { rollupOptions: { input: 'index.html' } } },
     handlers: {
       consumer: 'server',
       resolve: { noExternal: true },

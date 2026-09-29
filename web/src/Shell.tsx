@@ -5,9 +5,9 @@ import { Logo } from './ui.tsx'
 
 type NavItem = { to: string; label: string; match: (pathname: string) => boolean }
 
-// Activity and secrets pages join this list when they exist.
 const NAV: NavItem[] = [
   { to: '/', label: 'Projects', match: (p) => p === '/' || p.startsWith('/projects/') },
+  { to: '/secrets', label: 'Shared secrets', match: (p) => p.startsWith('/secrets') },
   { to: '/agents', label: 'Agent access', match: (p) => p.startsWith('/agents') },
   { to: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
 ]
@@ -16,11 +16,14 @@ export function Shell({
   user,
   pathname,
   onSignedOut,
+  wide = false,
   children,
 }: {
   user: SessionUser
   pathname: string
   onSignedOut: () => void
+  // For pages that show a project's app, which needs the room.
+  wide?: boolean
   children: ReactNode
 }) {
   const [signingOut, setSigningOut] = useState(false)
@@ -95,7 +98,7 @@ export function Shell({
         </div>
       </header>
       <main className="px-4 pt-8 pb-20 sm:px-8 md:px-12 md:pt-14">
-        <div className="max-w-3xl">{children}</div>
+        <div className={wide ? 'max-w-6xl' : 'max-w-3xl'}>{children}</div>
       </main>
     </div>
   )

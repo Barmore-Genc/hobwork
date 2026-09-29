@@ -11,6 +11,7 @@ import { pipelineVmBackend, type GuestVmOptions } from '../guest-vm.ts'
 import { createGondolinSandbox } from '../sandbox/gondolin.ts'
 import { imageDir, imageExists } from '../sandbox/image.ts'
 import { createTestHost } from '../test-host.ts'
+import { signedIn, TEST_PUBLIC_URL } from '../test-web.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { createRuntime, type Runtime } from './runtime.ts'
 
@@ -37,7 +38,12 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
       revert: (request) => delivery!.restore(request),
     })
     delivery = createDelivery(host, { workspaces, pipeline: { startVm: pipelineVms.start }, deploy: runtime.deploy })
-    server = createApp(host, { workspaces, delivery, runtime })
+    server = createApp(host, {
+      workspaces,
+      delivery,
+      runtime,
+      web: { publicUrl: TEST_PUBLIC_URL, allowlist: { emails: ['kaan@example.com'], subjects: [] } },
+    })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
     token = createAgentToken(host.db, 'claude').token
@@ -137,6 +143,31 @@ export default (async (ctx) => {
     expect(await res.json()).toEqual({ message: expect.stringMatching(/^Good (morning|afternoon|evening)$/) })
     expect((await fetch(`${base}/p/filament/api/greeting`)).status).toBe(401)
     expect(await (await api('/lights')).json()).toEqual({ ai: 'function', code: 'not_configured' })
+  })
+
+  test('the template UI is served with the theme to signed-in users and calls its route', async () => {
+    const { cookie } = signedIn(host)
+    expect((await fetch(`${base}/p/filament/`, { redirect: 'manual' })).status).toBe(401)
+    const page = await fetch(`${base}/p/filament/`, { headers: { cookie } })
+    expect(page.status).toBe(200)
+    const html = await page.text()
+    expect(html).toContain('<base href="/p/filament/">')
+    expect(html).toContain('href="/theme/theme.css"')
+    expect(await (await fetch(`${base}/p/filament/spools/3`, { headers: { cookie } })).text()).toBe(html)
+
+    const assets = [...html.matchAll(/(?:src|href)="\.\/(assets\/[^"]+)"/g)].map((m) => m[1]!)
+    expect(assets.some((path) => path.endsWith('.js'))).toBe(true)
+    const css = assets.find((path) => path.endsWith('.css'))
+    expect(css).toBeDefined()
+    const styles = await (await fetch(`${base}/p/filament/${css}`, { headers: { cookie } })).text()
+    // The theme mapping from @hobwork/theme in the image.
+    expect(styles).toContain('var(--hw-surface)')
+    for (const path of assets) expect((await fetch(`${base}/p/filament/${path}`, { headers: { cookie } })).status).toBe(200)
+    expect((await fetch(`${base}/p/filament/handlers/src/greeting-route.js`, { headers: { cookie } })).status).toBe(404)
+
+    // What @hobwork/sdk/browser sends from the page.
+    const greeting = await fetch(`${base}/p/filament/api/greeting`, { headers: { cookie, 'x-hobwork-csrf': '1' } })
+    expect(await greeting.json()).toEqual({ message: expect.stringMatching(/^Good /) })
   })
 
   test('crons run by hand and on schedule', async () => {

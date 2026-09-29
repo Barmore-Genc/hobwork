@@ -1,1 +1,15 @@
 @import 'tailwindcss';
+/* Theme colors, radii and fonts as utilities: bg-surface, text-muted, rounded-md, font-display, ... */
+@import '@hobwork/theme/tailwind.css';
+
+@layer base {
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+}

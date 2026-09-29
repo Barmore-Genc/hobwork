@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type {
   InvokeRequest,
@@ -13,14 +14,14 @@ import type { Deployment } from '../delivery.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
 import { haResponse } from '../homeassistant/internal.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
-import type { Host } from '../host.ts'
+import { repoPath, type Host } from '../host.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
 import { listProjects, ProjectError } from '../projects.ts'
 import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
 import { listVersions } from '../versions.ts'
 import { createDeployHealth, DEFAULT_AUTO_REVERT_POLICY, type AutoRevertPolicy, type DeployHealth } from './auto-revert.ts'
-import { createBuilder } from './builds.ts'
+import { buildDir, createBuilder, treeOf } from './builds.ts'
 import { allHandlers, entriesOf, readProjectConfig, type ProjectConfig } from './config.ts'
 import {
   appendLog,
@@ -320,7 +321,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     if (!createSandbox || !options.image) {
       throw new RuntimeUnavailable('This Hobwork host cannot run handlers: no runtime VM backend is configured')
     }
-    const buildDir = await builder.ensure(project, deployed.commit)
+    const build = await builder.ensure(project, deployed.commit)
     const secrets = options.secrets?.forSandbox(project) ?? {}
     const egress = [...new Set([...deployed.config.egress, ...(options.secrets?.hosts(project) ?? [])])]
     let inst: Instance | undefined
@@ -329,7 +330,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       memory: options.memory ?? '512M',
       cpus: 2,
       mounts: {
-        [APP_DIR]: { hostPath: buildDir, readonly: true },
+        [APP_DIR]: { hostPath: build, readonly: true },
         [RUNNER_DIR]: { hostPath: HOST_RUNNER_DIR, readonly: true },
       },
       env: { NODE_ENV: 'production' },
@@ -626,6 +627,21 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async route(project: string): Promise<{ routes: Route[]; version: number | null }> {
       const deployed = await deployment(project)
       return { routes: deployed.routes, version: deployed.version }
+    },
+    // What the deployed version declares in hobwork.json.
+    async config(project: string): Promise<{ config: ProjectConfig; version: number | null }> {
+      const deployed = await deployment(project)
+      return { config: deployed.config, version: deployed.version }
+    },
+    // The deployed version's build, built first when it has none yet.
+    async build(project: string): Promise<string> {
+      return builder.ensure(project, (await deployment(project)).commit)
+    },
+    // The deployed version's build if it is stored, without building it.
+    async storedBuild(project: string): Promise<string | undefined> {
+      const { commit } = await deployment(project)
+      const dir = buildDir(host, project, await treeOf(repoPath(host, project), commit))
+      return existsSync(dir) ? dir : undefined
     },
     async webhookExists(project: string, name: string): Promise<boolean> {
       return name in (await deployment(project)).config.webhooks

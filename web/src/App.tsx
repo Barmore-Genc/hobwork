@@ -4,7 +4,12 @@ import { AgentsPage } from './pages/Agents.tsx'
 import { ConnectPage } from './pages/Connect.tsx'
 import { LoginPage } from './pages/Login.tsx'
 import { ProjectPage } from './pages/Project.tsx'
+import { ActivityPage } from './pages/project/Activity.tsx'
+import { LogPage } from './pages/project/Log.tsx'
+import { ProjectAppPage } from './pages/project/ProjectApp.tsx'
+import { RunPage } from './pages/project/Run.tsx'
 import { ProjectsPage } from './pages/Projects.tsx'
+import { ProjectSecretsPage, SharedSecretsPage } from './pages/Secrets.tsx'
 import { SettingsPage } from './pages/Settings.tsx'
 import { navigate, useLocation } from './navigation.ts'
 import { Shell } from './Shell.tsx'
@@ -14,8 +19,19 @@ function Page({ pathname }: { pathname: string }) {
   if (pathname === '/') return <ProjectsPage />
   if (pathname === '/agents') return <AgentsPage />
   if (pathname === '/settings') return <SettingsPage />
-  const project = /^\/projects\/([^/]+)\/?$/.exec(pathname)
-  if (project) return <ProjectPage name={decodeURIComponent(project[1]!)} />
+  if (pathname === '/secrets') return <SharedSecretsPage />
+  const project = /^\/projects\/([^/]+)(\/[^?]*)?$/.exec(pathname)
+  if (project) {
+    const name = decodeURIComponent(project[1]!)
+    const rest = (project[2] ?? '').replace(/\/$/, '')
+    if (rest === '') return <ProjectPage name={name} />
+    if (rest === '/activity') return <ActivityPage name={name} />
+    if (rest === '/log') return <LogPage name={name} />
+    if (rest === '/secrets') return <ProjectSecretsPage name={name} />
+    if (rest === '/app') return <ProjectAppPage name={name} />
+    const run = /^\/activity\/(\d+)$/.exec(rest)
+    if (run) return <RunPage name={name} id={Number(run[1])} />
+  }
   return (
     <div className="space-y-4">
       <h1 className="text-3xl font-semibold">Nothing here</h1>
@@ -43,7 +59,11 @@ export default function App() {
   useEffect(() => setSignedOutHandler(loadSession), [loadSession])
 
   useEffect(() => {
-    if (session?.user && pathname === '/login') navigate(search.get('returnTo') ?? '/', { replace: true })
+    if (!session?.user || pathname !== '/login') return
+    const returnTo = search.get('returnTo') ?? '/'
+    // Project apps are served by the host, outside this app.
+    if (returnTo.startsWith('/p/')) window.location.replace(returnTo)
+    else navigate(returnTo, { replace: true })
   }, [session, pathname, search])
 
   if (error) {
@@ -64,7 +84,7 @@ export default function App() {
   }
   if (connect) return <ConnectPage requestId={search.get('request')} error={null} />
   return (
-    <Shell user={session.user} pathname={pathname} onSignedOut={loadSession}>
+    <Shell user={session.user} pathname={pathname} onSignedOut={loadSession} wide={/^\/projects\/[^/]+\/app\/?$/.test(pathname)}>
       <Page pathname={pathname} />
     </Shell>
   )

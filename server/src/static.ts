@@ -9,7 +9,7 @@ export const THEME_PREFIX = '/theme/'
 const FONT_PACKAGES = ['@fontsource-variable/bricolage-grotesque', '@fontsource-variable/atkinson-hyperlegible-next']
 const FONT_FILE = /^[a-z0-9-]+\.woff2$/
 
-const CONTENT_TYPES: Record<string, string> = {
+export const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -23,7 +23,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 }
 
-function fileStats(path: string): Stats | undefined {
+export function fileStats(path: string): Stats | undefined {
   try {
     const stats = statSync(path)
     return stats.isFile() ? stats : undefined
@@ -32,13 +32,21 @@ function fileStats(path: string): Stats | undefined {
   }
 }
 
-function sendFile(req: IncomingMessage, res: ServerResponse, path: string, stats: Stats, cacheControl: string) {
+export function sendFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  stats: Stats,
+  cacheControl: string,
+  headers: Record<string, string> = {},
+) {
   const etag = `"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`
   if (req.headers['if-none-match'] === etag) {
-    res.writeHead(304, { etag, 'cache-control': cacheControl }).end()
+    res.writeHead(304, { ...headers, etag, 'cache-control': cacheControl }).end()
     return
   }
   res.writeHead(200, {
+    ...headers,
     'content-type': CONTENT_TYPES[extname(path)] ?? 'application/octet-stream',
     'content-length': stats.size,
     'cache-control': cacheControl,
@@ -49,7 +57,7 @@ function sendFile(req: IncomingMessage, res: ServerResponse, path: string, stats
 }
 
 // Resolves a URL path inside `root`, or undefined when it would leave it.
-function within(root: string, pathname: string): string | undefined {
+export function within(root: string, pathname: string): string | undefined {
   let decoded: string
   try {
     decoded = decodeURIComponent(pathname)

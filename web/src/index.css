@@ -43,6 +43,23 @@
   }
 }
 
+@keyframes arrive {
+  from {
+    background-color: color-mix(in srgb, var(--hw-accent) 22%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@utility animate-arrive {
+  animation: arrive 2.4s ease-out;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
 @utility animate-glow {
   animation: glow 1.6s ease-in-out infinite;
 

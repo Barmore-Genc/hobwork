@@ -24,6 +24,9 @@ type FakeSandbox = Sandbox & {
 }
 
 let dir: string
+const SESSION = { 'x-hobwork-session': 'good' }
+const hasSession = (_workspace: unknown, token: string) => token === 'good'
+
 let sandboxes: FakeSandbox[]
 
 async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
@@ -180,8 +183,10 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
     mkdirSync(join(dir, 'migrations'))
     writeFileSync(join(dir, 'migrations', '0001_spools.sql'), 'CREATE TABLE spools (color TEXT) STRICT;')
     const workspaceEnvironment = createWorkspaceEnvironment(host, { data, secrets })
-    const vm = await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () =>
-      new Response('cli'),
+    const vm = await workspaceVmBackend(
+      { image: '/image', createSandbox, workspaceEnvironment },
+      () => () => new Response('cli'),
+      hasSession,
     )(workspace())
     const options = sandboxes[0]!.options
     expect(options.egress).toEqual(['registry.npmjs.org', 'api.spools.example'])
@@ -191,6 +196,7 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
       options.internal!(
         new Request('http://hobwork.internal/v1/db', {
           method: 'POST',
+          headers: SESSION,
           body: JSON.stringify({ statements: [{ sql }], transaction: false }),
         }),
       )
@@ -222,6 +228,30 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
   }
 })
 
+test('workspace VMs refuse DB, Home Assistant and device calls without a valid session', async () => {
+  const host = createTestHost()
+  try {
+    const workspaceEnvironment = createWorkspaceEnvironment(host, { devices: { info: () => [] } as unknown as Devices })
+    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'), hasSession)(
+      workspace(),
+    )
+    const internal = sandboxes[0]!.options.internal!
+    const call = (path: string, headers: Record<string, string>) =>
+      internal(new Request(`http://hobwork.internal${path}`, { method: 'POST', headers, body: JSON.stringify({ action: 'list' }) }))
+    for (const path of ['/v1/db', '/v1/ha', '/v1/devices']) {
+      expect((await call(path, {})).status).toBe(401)
+      expect((await call(path, { 'x-hobwork-session': 'forged' })).status).toBe(401)
+    }
+    expect((await call('/v1/devices', SESSION)).status).toBe(200)
+
+    const noCheck = await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment })(workspace())
+    expect((await sandboxes[1]!.options.internal!(new Request('http://hobwork.internal/v1/devices', { method: 'POST', headers: SESSION, body: '{}' }))).status).toBe(401)
+    await noCheck.stop()
+  } finally {
+    host.dispose()
+  }
+})
+
 test('workspace VMs read Home Assistant states but cannot call services', async () => {
   const host = createTestHost()
   try {
@@ -232,10 +262,14 @@ test('workspace VMs read Home Assistant states but cannot call services', async 
       callService: async (domain: string, service: string) => calls.push(`${domain}.${service}`),
     } as unknown as HomeAssistant
     const workspaceEnvironment = createWorkspaceEnvironment(host, { homeAssistant })
-    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'))(workspace())
+    await workspaceVmBackend(
+      { image: '/image', createSandbox, workspaceEnvironment },
+      () => () => new Response('cli'),
+      hasSession,
+    )(workspace())
     const ha = async (request: object) => {
       const res = await sandboxes[0]!.options.internal!(
-        new Request('http://hobwork.internal/v1/ha', { method: 'POST', body: JSON.stringify(request) }),
+        new Request('http://hobwork.internal/v1/ha', { method: 'POST', headers: SESSION, body: JSON.stringify(request) }),
       )
       return { status: res.status, body: await res.json() }
     }
@@ -262,10 +296,14 @@ test('workspace VMs list devices but cannot notify them', async () => {
       sendNotification: async (...args: unknown[]) => sends.push(args),
     } as unknown as Devices
     const workspaceEnvironment = createWorkspaceEnvironment(host, { devices })
-    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'))(workspace())
+    await workspaceVmBackend(
+      { image: '/image', createSandbox, workspaceEnvironment },
+      () => () => new Response('cli'),
+      hasSession,
+    )(workspace())
     const call = async (request: object) => {
       const res = await sandboxes[0]!.options.internal!(
-        new Request('http://hobwork.internal/v1/devices', { method: 'POST', body: JSON.stringify(request) }),
+        new Request('http://hobwork.internal/v1/devices', { method: 'POST', headers: SESSION, body: JSON.stringify(request) }),
       )
       return { status: res.status, body: await res.json() }
     }

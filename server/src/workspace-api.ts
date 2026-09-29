@@ -12,10 +12,7 @@ import { lastLogId, listInvocations, queryLogs, waitForLogs } from './runtime/lo
 import type { Runtime } from './runtime/runtime.ts'
 import type { InternalHandler } from './sandbox/sandbox.ts'
 import { listVersions } from './versions.ts'
-import type { ExecWorkspaceVm, WorkspaceManager } from './workspaces.ts'
-
-// Header the `hobwork` CLI sends with the session token from its environment.
-export const SESSION_HEADER = 'x-hobwork-session'
+import { SESSION_HEADER, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
 
 const MAX_BODY_CHARS = 64 * 1024
 const MAX_WAIT_SECONDS = 30

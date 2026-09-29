@@ -1,5 +1,5 @@
 import type { HaServiceResult, HaState, HomeAssistant } from '../homeassistant.ts'
-import type { HaRequest, HaResponse } from './protocol.ts'
+import { internalHeaders, type HaRequest, type HaResponse } from './protocol.ts'
 
 // The runner and the handler bundle each have their own copy of this class, so
 // instanceof checks a brand instead of the prototype chain.
@@ -48,7 +48,7 @@ export function httpHaSender(baseUrl: string, invocation?: () => number | undefi
   return async (request) => {
     const res = await fetch(new URL('/v1/ha', baseUrl), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: internalHeaders(),
       body: JSON.stringify({ ...request, invocation: invocation?.() }),
     })
     const body = (await res.json().catch(() => undefined)) as HaResponse | { error?: string } | undefined

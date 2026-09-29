@@ -6,6 +6,12 @@ import { request } from 'node:http'
 const BASE_URL = process.env.HOBWORK_INTERNAL_URL ?? 'http://hobwork.internal'
 const FOLLOW_WAIT_SECONDS = 25
 
+function sessionHeaders(): Record<string, string> {
+  const session = process.env.HOBWORK_SESSION
+  if (!session) throw new Error('HOBWORK_SESSION is not set. Run hobwork in an SSH session or with the bash tool.')
+  return { 'content-type': 'application/json', 'x-hobwork-session': session }
+}
+
 const USAGE = `Usage: hobwork <command>
 
   status                 branch, uncommitted changes, deployed version, last pipeline run
@@ -87,7 +93,7 @@ function print(result: CliResult): void {
 async function sql(statement: string): Promise<void> {
   const res = await fetch(new URL('/v1/db', BASE_URL), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: sessionHeaders(),
     body: JSON.stringify({ statements: [{ sql: statement }], transaction: false }),
   })
   const body = (await res.json().catch(() => undefined)) as
@@ -112,7 +118,7 @@ async function ha(args: string[]): Promise<void> {
   else throw new UsageError(what === 'state' ? 'Give an entity ID' : `Unknown ha command "${what ?? ''}"`)
   const res = await fetch(new URL('/v1/ha', BASE_URL), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: sessionHeaders(),
     body: JSON.stringify(request),
   })
   const body = (await res.json().catch(() => undefined)) as

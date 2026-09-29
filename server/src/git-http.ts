@@ -4,7 +4,7 @@ import { allowsProject } from './access.ts'
 import { verifyAgentToken, type AuthenticatedAgent } from './agents.ts'
 import { gitEnv } from './git.ts'
 import { reposDir, type Host } from './host.ts'
-import { getProject } from './projects.ts'
+import { getProject, renamedProject } from './projects.ts'
 
 export const GIT_PREFIX = '/git/'
 
@@ -35,7 +35,16 @@ export function handleGit(host: Host, req: IncomingMessage, res: ServerResponse,
       'www-authenticate': 'Basic realm="Hobwork", charset="UTF-8"',
     })
   }
-  if (!getProject(host, project)) return plain(res, 404, `Project "${project}" does not exist`)
+  if (!getProject(host, project)) {
+    const renamed = renamedProject(host, project)
+    return plain(
+      res,
+      404,
+      renamed && allowsProject(agent.access, renamed.name)
+        ? `Project "${project}" was renamed to "${renamed.name}". Change the remote URL to ${GIT_PREFIX}${renamed.name}.git`
+        : `Project "${project}" does not exist`,
+    )
+  }
   if (!allowsProject(agent.access, project)) return plain(res, 403, `This key has no access to ${project}`)
   const push = rest === '/git-receive-pack' || new URLSearchParams(query).get('service') === 'git-receive-pack'
   if (push && agent.access.readOnly) return plain(res, 403, 'This key can only read, so it cannot push')

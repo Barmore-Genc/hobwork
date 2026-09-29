@@ -141,6 +141,17 @@ export type InvocationFilter = {
   branch?: string
 }
 
+export type DeletedProject = {
+  id: string
+  project: string
+  deletedAt: string
+  purgeAfter: string
+  deletedBy: string | null
+  versions: number
+  lastVersion: { number: number; summary: string; createdAt: string } | null
+  nameTaken: boolean
+}
+
 export type Branch = {
   name: string
   head: { sha: string; subject: string; updatedAt: string }
@@ -380,6 +391,11 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}`,
       { confirm },
     ),
+  renameProject: (project: string, name: string) =>
+    request<{ name: string }>('POST', `/api/projects/${encodeURIComponent(project)}/rename`, { name }),
+  deletedProjects: () => request<{ trashDays: number; projects: DeletedProject[] }>('GET', '/api/trash'),
+  restoreDeletedProject: (id: string, name: string) =>
+    request<{ name: string }>('POST', `/api/trash/${encodeURIComponent(id)}/restore`, { name }),
   restore: (project: string, version: number) =>
     request<{ version: Version; deployError?: string }>(
       'POST',

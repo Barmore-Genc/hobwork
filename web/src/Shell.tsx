@@ -7,7 +7,7 @@ import { Logo } from './ui.tsx'
 type NavItem = { to: string; label: string; match: (pathname: string) => boolean }
 
 const NAV: NavItem[] = [
-  { to: '/', label: 'Projects', match: (p) => p === '/' || p.startsWith('/projects/') },
+  { to: '/', label: 'Projects', match: (p) => p === '/' || p === '/deleted' || p.startsWith('/projects/') },
   { to: '/activity', label: 'Activity', match: (p) => p === '/activity' },
   { to: '/secrets', label: 'Secrets', match: (p) => p.startsWith('/secrets') },
   { to: '/agents', label: 'Agent access', match: (p) => p.startsWith('/agents') },

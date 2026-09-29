@@ -4,6 +4,7 @@ import { allowsProject } from './access.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
+import { projectLifecycleRoutes } from './api/project-lifecycle.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
 import { createAppHttp } from './apps/http.ts'
@@ -141,6 +142,7 @@ export function createApp(
       data: options.data,
       storage: options.storage,
     }),
+    ...projectLifecycleRoutes({ host, workspaces, delivery, runtime: options.runtime, data: options.data }),
     ...homeAssistantSettingsRoutes({
       host,
       settings: options.homeAssistantSettings,

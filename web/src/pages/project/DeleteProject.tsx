@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, ApiError } from '../../api.ts'
 import { navigate } from '../../navigation.ts'
+import { Link } from '../../router.tsx'
 import { Button, ConfirmDialog } from '../../ui.tsx'
 
 export function DeleteProjectSection({ name }: { name: string }) {
@@ -58,8 +59,11 @@ export function DeleteProjectSection({ name }: { name: string }) {
           <li>Secrets it uses stay on the Secrets page for your other projects.</li>
         </ul>
         <p>
-          Hobwork keeps a copy of the code and saved data for 7 days. Whoever runs your Hobwork server can bring it back
-          until then.
+          For 7 days you can restore it from{' '}
+          <Link to="/deleted" className="font-semibold text-accent-fg underline underline-offset-4">
+            Deleted projects
+          </Link>
+          , with its code, versions and saved data.
         </p>
         <label htmlFor="delete-confirm" className="block pt-2 text-fg">
           Type <span className="font-mono font-semibold">{name}</span> to confirm

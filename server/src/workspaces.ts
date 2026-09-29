@@ -410,6 +410,15 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     })
   }
 
+  // Points the checkout at the project repo again after the project moved
+  // (a rename), since the clone remembers the repo's path.
+  function relink(project: string, branch: string): Promise<void> {
+    return serialized(project, branch, async () => {
+      if (!existsSync(paths(host, project, branch).gitDir)) return
+      await workspaceGit(project, branch, ['remote', 'set-url', 'origin', repoPath(host, project)])
+    })
+  }
+
   // Uncommitted changes in the workspace, including new files.
   function diff(project: string, branch: string): Promise<string> {
     return serialized(project, branch, async () => {
@@ -463,6 +472,7 @@ export function createWorkspaceManager<Vm extends WorkspaceVm>(
     diff,
     changes,
     moveBranch,
+    relink,
     openSession,
     sessionAgent,
     resetStatuses,

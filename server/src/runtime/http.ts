@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
-import { getProject, ProjectError } from '../projects.ts'
+import { getProjectOrRenamed, ProjectError } from '../projects.ts'
 import { matchRoute } from './routes.ts'
 import type { Runtime } from './runtime.ts'
 import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from './webhooks.ts'
@@ -134,8 +134,9 @@ export function createRuntimeHttp(
   },
 ) {
   async function handleProject(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
-    const [project = '', api, ...rest] = segmentsOf(pathname, PROJECT_PREFIX)
-    if (!getProject(host, project)) return sendJson(res, 404, { error: 'not found' })
+    const [name = '', api, ...rest] = segmentsOf(pathname, PROJECT_PREFIX)
+    const project = getProjectOrRenamed(host, name)?.name
+    if (!project) return sendJson(res, 404, { error: 'not found' })
     if (api !== 'api') {
       const origin = options.appOrigin(project)
       if (!origin || (req.method !== 'GET' && req.method !== 'HEAD')) return sendJson(res, 404, { error: 'not found' })
@@ -160,13 +161,14 @@ export function createRuntimeHttp(
   async function handleWebhook(req: IncomingMessage, res: ServerResponse, pathname: string, search: string) {
     const [target = '', name = '', token = '', ...rest] = segmentsOf(pathname, HOOKS_PREFIX)
     const preview = target.includes('--') ? await options.resolvePreview(target) : undefined
-    const project = preview?.project ?? target
+    // Webhook URLs live in other systems, so an old name of a renamed project still works.
+    const project = preview?.project ?? getProjectOrRenamed(host, target)?.name
     const branch = preview?.branch
     // Unknown project, branch, webhook and token all look the same to the caller.
     if (
       rest.length ||
       (target.includes('--') && !preview) ||
-      !getProject(host, project) ||
+      project === undefined ||
       !(branch === undefined
         ? verifyWebhookToken(host, project, name, token)
         : verifyBranchWebhookToken(host, project, branch, name, token)) ||

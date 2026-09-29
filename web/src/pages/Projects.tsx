@@ -15,7 +15,15 @@ export function ProjectsPage() {
       <p className="mt-3 max-w-prose text-muted">Everything your agents have built for the house, and the version each one is running.</p>
 
       <div className="mt-10 space-y-6">
-        {deleted && <Notice tone="success">Deleted {deleted}.</Notice>}
+        {deleted && (
+          <Notice tone="success">
+            Deleted {deleted}. You can restore it from{' '}
+            <Link to="/deleted" className="font-semibold underline underline-offset-4">
+              Deleted projects
+            </Link>{' '}
+            for 7 days.
+          </Notice>
+        )}
         {error && <Notice tone="error">{error}</Notice>}
         {projects?.length === 0 && (
           <div className="rounded-lg border border-dashed border-border px-6 py-10">
@@ -62,6 +70,11 @@ export function ProjectsPage() {
             ))}
           </ul>
         )}
+        <p>
+          <Link to="/deleted" className="text-sm text-muted underline underline-offset-4 hover:text-fg">
+            Deleted projects
+          </Link>
+        </p>
       </div>
     </div>
   )

@@ -76,10 +76,37 @@ export function getProject(host: Host, name: string): Project | undefined {
   return row ? toProject(row) : undefined
 }
 
+// The project that was called `name` before it was renamed, while no project
+// has that name.
+export function renamedProject(host: Host, name: string): Project | undefined {
+  const row = host.db
+    .prepare(
+      `SELECT p.id, p.name, p.default_branch, p.created_at FROM project_renames r
+       JOIN projects p ON p.id = r.project_id WHERE r.name = ?`,
+    )
+    .get(name)
+  return row ? toProject(row) : undefined
+}
+
+// The project by its name, or by a name it had before a rename.
+export function getProjectOrRenamed(host: Host, name: string): Project | undefined {
+  return getProject(host, name) ?? renamedProject(host, name)
+}
+
 export function requireProject(host: Host, name: string): Project {
   const project = getProject(host, name)
-  if (!project) throw new ProjectError(`Project "${name}" does not exist`)
+  if (!project) {
+    const renamed = renamedProject(host, name)
+    throw new ProjectError(
+      renamed ? `Project "${name}" was renamed to "${renamed.name}"` : `Project "${name}" does not exist`,
+    )
+  }
   return project
+}
+
+// A project that takes a name ends its use as an old name of another project.
+export function claimName(host: Host, name: string): void {
+  host.db.prepare('DELETE FROM project_renames WHERE name = ?').run(name)
 }
 
 export async function createProject(host: Host, name: string): Promise<Project> {
@@ -100,6 +127,7 @@ export async function createProject(host: Host, name: string): Promise<Project> 
       .get(name, DEFAULT_BRANCH)
     if (!row) throw new Error('Project insert returned no row')
     const project = toProject(row)
+    claimName(host, name)
     // Version 1 is the template, so even the first merge can be restored away from.
     recordVersion(host, { projectId: project.id, commit, summary: TEMPLATE_COMMIT_MESSAGE })
     return project

@@ -9,3 +9,9 @@ Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in th
 ## Connect agents over OAuth from the Agent access page
 
 The Agent access page (`web/src/pages/Agents.tsx`) leads with "Give an agent access", which creates a static key and offers a `claude mcp add ... --header "Authorization: Bearer <key>"` command. The intro mentions signing in "when you connect them from the app", but the page never says how. OAuth is the easier path and should come first: show the MCP URL (`<public URL>/mcp`) with a copy button, and short steps for claude.ai/Claude Desktop (Settings > Connectors > Add custom connector, OAuth fields left empty) and Claude Code (`claude mcp add --transport http hobwork <url>`, then `claude mcp login hobwork`). Keep static keys as the option for clients without OAuth.
+
+## Project icons
+
+Let each project set its own icon, used for its app's favicon and home screen icon and wherever the web UI and the Apple apps list projects. `hobwork.json` gets an `icon` field that takes either an emoji or a path to an image in the repo (SVG, PNG, JPEG, WebP). The build step renders it to the sizes each place needs (favicon, `apple-touch-icon`, web manifest icons, the project list), so the project code never deals with sizes or formats. Projects without an icon get a generated default (first letter on a theme color).
+
+The template's `hobwork.json` should include the field with a placeholder, and the JSON schema should describe it, so agents see it and set one when they create a project. Mention it in the template's `AGENTS.md` too.

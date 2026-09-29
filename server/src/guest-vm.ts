@@ -18,6 +18,11 @@ export const NPM_REGISTRY = 'registry.npmjs.org'
 // it speaks the host's internal API and has to match the host version.
 const CLI_DIR = '/opt/hobwork/cli'
 const HOST_CLI_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/cli')
+// The icon renderer (packages/sdk/src/icons/main.ts) is host code too: it
+// writes the files the host serves. sharp, Twemoji and the font come with the image.
+const ICONS_DIR = '/opt/hobwork/icons'
+const HOST_ICONS_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/icons')
+
 const INSTALL_CLI = [
   `printf '#!/bin/sh\\nexec node --disable-warning=ExperimentalWarning ${CLI_DIR}/main.ts "$@"\\n' > /usr/local/bin/hobwork`,
   'chmod 755 /usr/local/bin/hobwork',
@@ -220,10 +225,15 @@ export function pipelineVmBackend(options: GuestVmOptions): { start: StartPipeli
   const running = new Set<Sandbox>()
   return {
     async start({ dir }) {
-      const sandbox = await options.createSandbox(sandboxOptions(options, dir, [NPM_REGISTRY], 'pipeline'))
+      const base = sandboxOptions(options, dir, [NPM_REGISTRY], 'pipeline')
+      const sandbox = await options.createSandbox({
+        ...base,
+        mounts: { ...base.mounts, [ICONS_DIR]: { hostPath: HOST_ICONS_DIR, readonly: true } },
+      })
       running.add(sandbox)
       return {
         ...execVm(sandbox),
+        iconsCommand: `node ${ICONS_DIR}/main.ts`,
         stop: async () => {
           running.delete(sandbox)
           await sandbox.stop()

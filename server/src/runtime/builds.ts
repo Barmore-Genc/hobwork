@@ -94,6 +94,12 @@ export function createBuilder(host: Host, startVm: StartPipelineVm | undefined) 
           )
         }
       }
+      if (vm.iconsCommand) {
+        // Merges refuse wrong icons, so this is a branch preview's icon or a
+        // host problem. The build works without icons.
+        const icons = await vm.exec(`${vm.iconsCommand} ${project}`, { cwd: '.', timeoutMs: BUILD_TIMEOUT_MS })
+        if (icons.exitCode !== 0) console.error(`Rendering the icon of ${project} failed: ${icons.stdout}${icons.stderr}`)
+      }
       await saveBuild(host, { project, gitDir, commit, dir })
       return buildDir(host, project, tree)
     } finally {

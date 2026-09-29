@@ -15,6 +15,10 @@ test('accepts a device trigger for notification actions', () => {
   expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test.each(['🧵', '👨‍👩‍👧', '❤️', 'ui/icon.svg', 'icon.png', 'ui/icons/house.jpeg', 'ui/icon.webp'])('accepts the icon %s', (icon) => {
+  expect(validate({ icon }), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -33,6 +37,11 @@ test.each([
   ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
   ['bad idleTimeout', { idleTimeout: 'soon' }],
+  ['empty icon', { icon: '' }],
+  ['icon with an unsupported image type', { icon: 'ui/icon.gif' }],
+  ['absolute icon path', { icon: '/etc/icon.png' }],
+  ['icon path outside the repo', { icon: '../icon.png' }],
+  ['icon that is a sentence', { icon: 'a house with a garden' }],
 ])('rejects %s', (_, config) => {
   expect(validate(config)).toBe(false)
 })

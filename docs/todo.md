@@ -6,12 +6,6 @@ Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start
 
 Other boot costs left, smaller and with more upkeep: a custom `rootfsInit` in the image (no debug output, parallel `modprobe`, no `update-ca-certificates` at boot), about 100-200ms; a custom kernel with the virtio and fuse drivers built in.
 
-## Project icons
-
-Let each project set its own icon, used for its app's favicon and home screen icon and wherever the web UI and the Apple apps list projects. `hobwork.json` gets an `icon` field that takes either an emoji or a path to an image in the repo (SVG, PNG, JPEG, WebP). The build step renders it to the sizes each place needs (favicon, `apple-touch-icon`, web manifest icons, the project list), so the project code never deals with sizes or formats. Projects without an icon get a generated default (first letter on a theme color).
-
-The template's `hobwork.json` should include the field with a placeholder, and the JSON schema should describe it, so agents see it and set one when they create a project. Mention it in the template's `AGENTS.md` too.
-
 ## Device capabilities in the Apple apps
 
 Expose more of the phone and Mac to handlers through `ctx.device`, as calls over the device WebSocket or as `device` triggers. Phase 10 in `plan.md` has the order for the first ones. Each capability goes into the macOS app too where macOS has the framework; the host should tell handlers which capabilities a device supports so they can pick a device.

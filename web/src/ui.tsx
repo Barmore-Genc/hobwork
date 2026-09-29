@@ -126,6 +126,11 @@ export function ConfirmDialog({
   )
 }
 
+// Decorative: the project's name is always next to it.
+export function ProjectIcon({ src, className = 'size-11' }: { src: string; className?: string }) {
+  return <img src={src} alt="" className={`${className} shrink-0 rounded-md border border-border object-cover`} />
+}
+
 export function PageHeading({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">

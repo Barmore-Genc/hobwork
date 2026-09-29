@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { api, type ProjectDetail } from '../../api.ts'
 import { Link } from '../../router.tsx'
-import { Notice, PageHeading, StatusBadge } from '../../ui.tsx'
+import { Notice, PageHeading, ProjectIcon, StatusBadge } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { projectPath } from './names.ts'
 
@@ -50,7 +50,10 @@ export function ProjectLayout({
             )
           }
         >
-          {name}
+          <span className="flex items-center gap-4">
+            {project && <ProjectIcon src={project.iconUrl} className="size-12" />}
+            {name}
+          </span>
         </PageHeading>
       </div>
       <nav aria-label={`${name} sections`} className="mt-6 overflow-x-auto border-b border-border">

@@ -7,7 +7,7 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 - `server/` (`@hobwork/server`): the host. Node runs the TypeScript directly, no build step.
 - `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api` (with WebSockets), `/auth`, `/theme`, `/oauth`, `/.well-known` and `/mcp` to the host on port 7420. The host serves the build (`pnpm -C web build`, `web/dist`) itself.
 - `packages/theme/` (`@hobwork/theme`): theme stylesheet (CSS variables, served at `/theme/theme.css`) and its Tailwind mapping, shared by the web UI and project UIs.
-- `packages/sdk/` (`@hobwork/sdk`): SDK types, the `hobwork.json` JSON schema (`hobwork.schema.json`), the runner (`src/runner/`) that the host mounts into project runtime VMs, and the `hobwork` CLI (`src/cli/`) that it mounts into workspace VMs.
+- `packages/sdk/` (`@hobwork/sdk`): SDK types, the `hobwork.json` JSON schema (`hobwork.schema.json`), the runner (`src/runner/`) that the host mounts into project runtime VMs, the `hobwork` CLI (`src/cli/`) that it mounts into workspace VMs, and the project icon renderer (`src/icons/`) that it mounts into pipeline VMs.
 - `templates/project/`: template for new projects (not a workspace package).
 - `apple/`: the iOS app (`dev.bgenc.hobwork`, SwiftUI, iOS 26, Swift 6), macOS later. XcodeGen generates `Hobwork.xcodeproj` from `project.yml` (the project is gitignored); `just build|test|run` inside `apple/`. Not part of the pnpm workspace. See `apple/README.md`.
 - `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.

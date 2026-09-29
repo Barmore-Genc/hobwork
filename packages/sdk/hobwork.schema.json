@@ -74,6 +74,14 @@
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
     },
-    "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" }
+    "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
+    "icon": {
+      "description": "The project's icon, shown as its app's favicon and home screen icon and in project lists: one emoji (\"🧵\") or the path of an SVG, PNG, JPEG or WebP image in the repo (\"ui/icon.svg\"). Hobwork renders it to every size it needs. Without it, the icon is the project's first letter.",
+      "type": "string",
+      "anyOf": [
+        { "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]+\\.(svg|png|jpe?g|webp)$" },
+        { "pattern": "^[^./\\\\\\s]{1,16}$" }
+      ]
+    }
   }
 }

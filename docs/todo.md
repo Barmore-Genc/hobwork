@@ -79,7 +79,6 @@ The Gondolin VFS provider runs in the host's Node process and QEMU is its child,
 
 ### Smaller items
 
-- Document that `HOBWORK_TRUSTED_PROXIES` must list only proxies.
 - Match the branch too when attaching runner log lines to an invocation.
 - Auth on the runner's ingress port.
 - Hide the `ha_*` tools from credentials limited to some hobs.

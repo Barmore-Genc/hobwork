@@ -1,3 +1,4 @@
+import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import { git, GitError } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { TriggerEntry } from '../homeassistant/triggers.ts'
@@ -27,7 +28,7 @@ export function parseDuration(text: string): number {
 
 // The pipeline validated hobwork.json against the schema before it reached main.
 export function parseProjectConfig(raw: string): ProjectConfig {
-  const json = JSON.parse(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs'>> & { idleTimeout?: string }
+  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs'>> & { idleTimeout?: string }
   return {
     routes: json.routes ?? {},
     crons: json.crons ?? {},

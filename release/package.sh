@@ -47,7 +47,7 @@ cp -R "$root/images/build/$arch" "$stage/images/build/$arch"
 
 # Installed in the staged tree rather than with `pnpm deploy`, because the
 # server imports packages/sdk and packages/theme by relative path.
-(cd "$stage" && pnpm install --frozen-lockfile --prod --filter @hobwork/server --filter @hobwork/theme)
+(cd "$stage" && pnpm install --frozen-lockfile --prod --filter @hobwork/server --filter @hobwork/sdk --filter @hobwork/theme)
 
 # pnpm links packages with relative symlinks. An absolute one would point into
 # this build machine after extraction.

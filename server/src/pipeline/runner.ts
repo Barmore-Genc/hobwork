@@ -9,7 +9,7 @@ import { saveBuild } from '../runtime/builds.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { ExecWorkspaceVm } from '../workspaces.ts'
 import { extraDependencies } from '../platform.ts'
-import { validateHobworkJson } from './validate.ts'
+import { checkViteConfig, validateHobworkJson } from './validate.ts'
 
 // `iconsCommand` renders the project icon into dist/ after the build, given
 // the project name as its last argument. VMs without it leave icons out.
@@ -168,8 +168,11 @@ export async function runPipeline(host: Host, options: PipelineOptions, candidat
 
   const steps: Record<PipelineStepName, () => Promise<StepOutcome>> = {
     async validate() {
-      const problems = validateHobworkJson(await readBlob(gitDir, commit, 'hobwork.json'))
+      const raw = await readBlob(gitDir, commit, 'hobwork.json')
+      const problems = validateHobworkJson(raw)
       if (problems.length) return { status: 'failed', output: `hobwork.json is invalid:\n${problems.join('\n')}` }
+      const viteProblem = checkViteConfig(raw, await readBlob(gitDir, commit, 'vite.config.ts'))
+      if (viteProblem) return { status: 'failed', output: viteProblem }
       return { status: 'passed', output: 'hobwork.json is valid' }
     },
     async install() {

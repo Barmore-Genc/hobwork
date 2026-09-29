@@ -4,7 +4,7 @@ This is a Hobwork project: handlers (routes, crons, webhooks, triggers) and a da
 
 ## Layout
 
-- `hobwork.json`: entry points, `egress` hosts and settings. Only what is declared here runs. `@hobwork/sdk/hobwork.schema.json` describes every field.
+- `hobwork.json`: entry points, `egress` hosts and settings, with comments allowed. Only what is declared here runs. `@hobwork/sdk/hobwork.schema.json` describes every field.
 - Project icon: set `icon` in hobwork.json (emoji or image path).
 - `src/`: handlers. Each default-exports a function typed `Handler` (`RequestHandler` for routes and webhooks) from `@hobwork/sdk`. It gets `ctx`: `request`, `params`, `payload`, `invocation`, `fetch`, `log`, `db`, `secrets`, `ha`, `device(name)`, `devices()`.
 - `ui/`, `index.html`: the dashboard (React + Tailwind) at the project's app origin, also shown in the Hobwork app. Call routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`). Style with theme utilities (`bg-bg`, `bg-surface`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-danger`, ...), not fixed colors or `dark:`. `/_hobwork/` is reserved.

@@ -16,7 +16,7 @@ const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'co
 
 // Decides who may call a project's routes on the Hobwork origin: agents with a
 // bearer token. People call them from the project UI on its app origin.
-export type RouteAuthorizer = (req: IncomingMessage, project: string) => boolean
+export type RouteAuthorizer = (req: IncomingMessage, project: string) => 'allowed' | 'unauthenticated' | 'forbidden'
 
 export class HttpError extends Error {
   status: number
@@ -142,7 +142,11 @@ export function createRuntimeHttp(
       res.writeHead(302, { location: `${origin}/${[api ?? '', ...rest].join('/')}${search}`, 'cache-control': 'no-store' })
       return void res.end()
     }
-    if (!options.authorizeRoute(req, project)) {
+    const authorized = options.authorizeRoute(req, project)
+    if (authorized === 'forbidden') {
+      return sendJson(res, 403, { error: 'This agent token has no access to this project, or can only send GET requests' })
+    }
+    if (authorized === 'unauthenticated') {
       return sendJson(res, 401, { error: 'Send an agent token as "Authorization: Bearer <token>"' }, {
         'www-authenticate': 'Bearer realm="Hobwork"',
       })

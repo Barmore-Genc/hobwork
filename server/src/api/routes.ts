@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import { defaultIcon, ICONS_DIR, iconFile, LIST_ICON_SIZE, letterIconSvg } from '../../../packages/sdk/src/icons/icon.ts'
+import { AccessError, parseAccess, type Access } from '../access.ts'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import { branchRoutes } from './branches.ts'
@@ -138,6 +139,15 @@ function nextCronRun(schedule: string): string | null {
     return nextRun(parseCron(schedule), new Date())?.toISOString() ?? null
   } catch {
     return null
+  }
+}
+
+function accessOf(host: Host, value: unknown): Access {
+  try {
+    return parseAccess(host.db, value)
+  } catch (err) {
+    if (err instanceof AccessError) throw new HttpError(400, err.message)
+    throw err
   }
 }
 
@@ -517,24 +527,26 @@ export function createApiRoutes(options: {
       method: 'POST',
       pattern: /^\/api\/agents$/,
       handle: async ({ req, res }) => {
-        const body = (await readJson(req)) as { name?: unknown }
+        const body = (await readJson(req)) as { name?: unknown; access?: unknown }
         const name = typeof body?.name === 'string' ? body.name.trim() : ''
         if (!name) throw new HttpError(400, 'Give the agent a name')
         if (name.length > MAX_AGENT_NAME) throw new HttpError(400, `Use at most ${MAX_AGENT_NAME} characters`)
         if (listAgents(host.db).some((agent) => agent.name === name)) {
           throw new HttpError(409, `An agent called "${name}" already exists`)
         }
-        const { agent, token } = createAgentToken(host.db, name)
+        const { agent, token } = createAgentToken(host.db, name, accessOf(host, body?.access))
         json(res, 201, { agent, token })
       },
     },
     {
       method: 'POST',
       pattern: /^\/api\/agents\/(\d+)\/tokens$/,
-      handle: ({ res, params }) => {
+      handle: async ({ req, res, params }) => {
         const agent = getAgent(host.db, positiveInt(params[0]))
         if (!agent) throw new HttpError(404, 'This agent no longer exists')
-        const { token } = createAgentToken(host.db, agent.name)
+        const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined
+        const body = hasBody ? ((await readJson(req)) as { access?: unknown } | null) : null
+        const { token } = createAgentToken(host.db, agent.name, accessOf(host, body?.access))
         json(res, 201, { agent, token })
       },
     },

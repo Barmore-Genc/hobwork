@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes } from 'node:crypto'
+import { FULL_ACCESS, loadAccess, loadAllAccess, saveAccess, type Access } from '../access.ts'
 import { createAgent, getAgent, type Agent, type AuthenticatedAgent } from '../agents.ts'
 import type { OAuthClient } from './clients.ts'
 import { hashSecret, newSecret, s256 } from './secrets.ts'
@@ -10,6 +11,8 @@ export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 const CODE_TTL_MS = 5 * 60 * 1000
 export const REQUEST_TTL_MS = 15 * 60 * 1000
+// Anyone can start an authorization request, so the table is capped.
+export const MAX_PENDING_REQUESTS = 200
 
 export const ACCESS_TOKEN_PREFIX = 'hwa_'
 const REFRESH_TOKEN_PREFIX = 'hwr_'
@@ -17,10 +20,13 @@ const REFRESH_TOKEN_PREFIX = 'hwr_'
 export class OAuthError extends Error {
   code: string
   status: number
-  constructor(code: string, description: string, status = 400) {
+  // Seconds, for 429 answers.
+  retryAfter: number | undefined
+  constructor(code: string, description: string, status = 400, retryAfter?: number) {
     super(description)
     this.code = code
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -39,13 +45,16 @@ export type TokenResponse = {
   token_type: 'Bearer'
   expires_in: number
   refresh_token: string
-  scope?: string
 }
 
 const iso = (ms: number) => new Date(ms).toISOString()
 
 export function saveRequest(db: DatabaseSync, request: Omit<AuthorizationRequest, 'id'>, now: number): string {
   db.prepare('DELETE FROM oauth_requests WHERE expires_at <= ?').run(iso(now))
+  const pending = db.prepare('SELECT count(*) AS n FROM oauth_requests').get()
+  if (Number(pending?.n) >= MAX_PENDING_REQUESTS) {
+    throw new OAuthError('temporarily_unavailable', 'Too many connection requests are waiting', 429)
+  }
   const id = randomBytes(24).toString('base64url')
   db.prepare(
     `INSERT INTO oauth_requests (id, client_id, redirect_uri, state, code_challenge, resource, scope, expires_at)
@@ -99,9 +108,16 @@ function transaction<T>(db: DatabaseSync, fn: () => T): T {
 // or undefined when the request was already answered.
 export function approveRequest(
   db: DatabaseSync,
-  options: { request: AuthorizationRequest; client: OAuthClient; agentName: string; userId: number; now: number },
+  options: {
+    request: AuthorizationRequest
+    client: OAuthClient
+    agentName: string
+    access: Access
+    userId: number
+    now: number
+  },
 ): { code: string; agent: Agent } | undefined {
-  const { request, client, agentName, userId, now } = options
+  const { request, client, agentName, access, userId, now } = options
   return transaction(db, () => {
     const pending = db.prepare('DELETE FROM oauth_requests WHERE id = ?').run(request.id)
     if (Number(pending.changes) === 0) return undefined
@@ -122,6 +138,7 @@ export function approveRequest(
         iso(now),
       )
     if (!grant) throw new Error('Grant insert returned no row')
+    saveAccess(db, 'grant', Number(grant.id), access)
     const code = randomBytes(32).toString('base64url')
     db.prepare(
       'INSERT INTO oauth_codes (code_hash, grant_id, redirect_uri, code_challenge, expires_at) VALUES (?, ?, ?, ?, ?)',
@@ -140,16 +157,15 @@ export function revokeGrant(db: DatabaseSync, grantId: number, now = Date.now())
   return Number(result.changes) > 0
 }
 
-type GrantRow = { id: number; clientId: string; resource: string; scope: string | null; revoked: boolean }
+type GrantRow = { id: number; clientId: string; resource: string; revoked: boolean }
 
 function grantById(db: DatabaseSync, id: number): GrantRow | undefined {
-  const row = db.prepare('SELECT id, client_id, resource, scope, revoked_at FROM oauth_grants WHERE id = ?').get(id)
+  const row = db.prepare('SELECT id, client_id, resource, revoked_at FROM oauth_grants WHERE id = ?').get(id)
   if (!row) return undefined
   return {
     id: Number(row.id),
     clientId: String(row.client_id),
     resource: String(row.resource),
-    scope: row.scope === null ? null : String(row.scope),
     revoked: row.revoked_at !== null,
   }
 }
@@ -169,7 +185,6 @@ function issueTokens(db: DatabaseSync, grant: GrantRow, now: number): TokenRespo
     token_type: 'Bearer',
     expires_in: ACCESS_TOKEN_TTL_SECONDS,
     refresh_token: refresh,
-    ...(grant.scope ? { scope: grant.scope } : {}),
   }
 }
 
@@ -267,7 +282,9 @@ export function verifyAccessToken(db: DatabaseSync, token: string, resource: str
   if (!row || String(row.resource) !== resource) return undefined
   db.prepare('UPDATE oauth_grants SET last_used_at = ? WHERE id = ?').run(iso(now), Number(row.grant_id))
   const agent = getAgent(db, Number(row.agent_id))
-  return agent && { ...agent, credential: { kind: 'grant', id: Number(row.grant_id) } }
+  if (!agent) return undefined
+  const grantId = Number(row.grant_id)
+  return { ...agent, credential: { kind: 'grant', id: grantId }, access: loadAccess(db, 'grant', grantId) }
 }
 
 export type Connection = {
@@ -278,10 +295,12 @@ export type Connection = {
   createdAt: string
   lastUsedAt: string | null
   revokedAt: string | null
+  access: Access
 }
 
 export function listConnections(db: DatabaseSync): Map<number, Connection[]> {
   const byAgent = new Map<number, Connection[]>()
+  const access = loadAllAccess(db, 'grant')
   for (const row of db
     .prepare(
       `SELECT g.id, g.agent_id, g.client_name, g.redirect_host, u.name AS user_name, g.created_at, g.last_used_at, g.revoked_at
@@ -297,6 +316,7 @@ export function listConnections(db: DatabaseSync): Map<number, Connection[]> {
       createdAt: String(row.created_at),
       lastUsedAt: row.last_used_at === null ? null : String(row.last_used_at),
       revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+      access: access.get(Number(row.id)) ?? FULL_ACCESS,
     })
     byAgent.set(Number(row.agent_id), list)
   }

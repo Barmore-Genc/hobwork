@@ -1,5 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { api, ApiError, type ConnectRequest } from '../api.ts'
+import { accessReady, FULL_ACCESS, projectsText } from '../access.ts'
+import { AccessPicker } from '../AccessPicker.tsx'
+import { api, ApiError, type Access, type ConnectRequest } from '../api.ts'
 import { Link } from '../router.tsx'
 import { Button, Logo, Notice } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
@@ -9,14 +11,20 @@ const ERRORS: Record<string, string> = {
   invalid_redirect_uri:
     'The app asked Hobwork to send you to an address it never registered, so Hobwork stopped the connection.',
   invalid_request: 'The connection request is incomplete. Start connecting again from the app.',
+  too_many_requests: 'Too many apps tried to connect in a short time. Wait a few minutes, then start connecting again from the app.',
 }
 
-const ABILITIES = [
-  'See, create and change your projects',
-  'Run code and commands in project workspaces',
-  'Merge changes, which puts them live',
-  'Read logs and go back to earlier versions',
-]
+function abilities(access: Access): string[] {
+  if (access.readOnly) {
+    return ['See project files, logs and versions', 'See the names of secrets and devices', 'Read states and history from Home Assistant']
+  }
+  return [
+    access.projects === null ? 'See, create and change your projects' : 'See and change these projects',
+    'Run code and commands in project workspaces',
+    'Merge changes, which puts them live',
+    'Read logs and go back to earlier versions',
+  ]
+}
 
 export function Frame({ children }: { children: ReactNode }) {
   return (
@@ -31,6 +39,7 @@ export function Frame({ children }: { children: ReactNode }) {
 
 function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
   const [agentName, setAgentName] = useState(request.agentName)
+  const [access, setAccess] = useState<Access>(FULL_ACCESS)
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { client } = request
@@ -41,7 +50,7 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
     setError(null)
     try {
       const { redirectTo } =
-        action === 'allow' ? await api.approveConnect(id, agentName.trim()) : await api.denyConnect(id)
+        action === 'allow' ? await api.approveConnect(id, agentName.trim(), access) : await api.denyConnect(id)
       window.location.assign(redirectTo)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
@@ -66,12 +75,16 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
         </div>
       )}
 
-      <section aria-labelledby="abilities" className="mt-8 rounded-lg border border-border bg-surface p-5 sm:p-6">
+      <div className="mt-8">
+        <AccessPicker access={access} onChange={setAccess} />
+      </div>
+
+      <section aria-labelledby="abilities" className="mt-6 rounded-lg border border-border bg-surface p-5 sm:p-6">
         <h2 id="abilities" className="text-lg font-semibold">
-          It will be able to, on all your projects:
+          It will be able to, on {access.projects === null ? 'all your projects' : projectsText(access)}:
         </h2>
         <ul className="mt-3 space-y-2">
-          {ABILITIES.map((ability) => (
+          {abilities(access).map((ability) => (
             <li key={ability} className="flex gap-3">
               <span aria-hidden="true" className="mt-2.5 size-1.5 shrink-0 rounded-full bg-accent" />
               {ability}
@@ -111,7 +124,7 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
         <Button variant="quiet" onClick={() => answer('deny')} disabled={busy !== null}>
           {busy === 'deny' ? 'Cancelling…' : 'Cancel'}
         </Button>
-        <Button type="submit" variant="primary" disabled={busy !== null || !agentName.trim()}>
+        <Button type="submit" variant="primary" disabled={busy !== null || !agentName.trim() || !accessReady(access)}>
           {busy === 'allow' ? 'Allowing…' : 'Allow access'}
         </Button>
       </div>

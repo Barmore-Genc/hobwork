@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { OAuthError } from './grants.ts'
 import { hashSecret } from './secrets.ts'
 import type { FetchedDocument } from './metadata-fetch.ts'
 
@@ -29,6 +30,8 @@ export class ClientError extends Error {
 const MAX_NAME = 100
 const MAX_REDIRECT_URIS = 10
 const UNUSED_CLIENT_TTL_MS = 24 * 60 * 60 * 1000
+// Registration is open, so the clients nobody approved yet are capped.
+export const MAX_UNUSED_CLIENTS = 200
 const DEFAULT_CACHE_SECONDS = 60 * 60
 const MIN_CACHE_SECONDS = 60
 const MAX_CACHE_SECONDS = 24 * 60 * 60
@@ -185,10 +188,15 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
     kind: 'registered',
     secretHash: secret ? hashSecret(secret) : null,
   }
-  // Registration is open, so clients that never got approved are cleaned up.
   db.prepare(
     `DELETE FROM oauth_clients WHERE created_at < ? AND id NOT IN (SELECT client_id FROM oauth_grants)`,
   ).run(new Date(now - UNUSED_CLIENT_TTL_MS).toISOString())
+  const unused = db
+    .prepare('SELECT count(*) AS n FROM oauth_clients WHERE id NOT IN (SELECT client_id FROM oauth_grants)')
+    .get()
+  if (Number(unused?.n) >= MAX_UNUSED_CLIENTS) {
+    throw new OAuthError('temporarily_unavailable', 'Too many apps registered without connecting. Try again tomorrow.', 429)
+  }
   db.prepare(
     'INSERT INTO oauth_clients (id, name, uri, redirect_uris, secret_hash, auth_method, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run(

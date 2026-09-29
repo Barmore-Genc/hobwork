@@ -1,7 +1,8 @@
 import type { AddressInfo } from 'node:net'
 import ssh2, { type ClientChannel } from 'ssh2'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { ensureAgent, type Agent } from '../agents.ts'
+import { FULL_ACCESS } from '../access.ts'
+import { createAgentToken, ensureAgent, verifyAgentToken, type Agent } from '../agents.ts'
 import { createProject } from '../projects.ts'
 import { createBranch } from '../repo.ts'
 import { createTestHost } from '../test-host.ts'
@@ -158,7 +159,7 @@ test('a registered key runs a command in the branch workspace with its exit stat
 test('commands run with a session for the key\'s agent, closed when they end', async () => {
   expect((await run('filament/spools', 'whoami')).stdout).toBe('laptop\n')
   const token = spawned[0]?.options.env?.[SESSION_ENV] ?? ''
-  expect(spawned[0]?.agent).toEqual(agent)
+  expect(spawned[0]?.agent).toEqual({ ...agent, access: FULL_ACCESS })
   expect(workspaces.sessionAgent('filament', 'spools', token)).toBeUndefined()
 })
 
@@ -185,6 +186,22 @@ test('main, bad user names and missing branches are refused with a message', asy
   expect(spawned).toEqual([])
 })
 
+test('a key added with a token limited to other projects cannot open this one', async () => {
+  host.db.prepare("INSERT INTO projects (name) VALUES ('garden')").run()
+  const { token } = createAgentToken(host.db, 'gardener', { readOnly: false, projects: ['garden'] })
+  const limited = generateEd25519KeyPair()
+  const gardener = verifyAgentToken(host.db, token)!
+  addSshKey(host.db, gardener.id, 'garden laptop', limited.public, { via: 'agent', credential: gardener.credential })
+  const client = await connect('filament/spools', { privateKey: limited.private })
+  try {
+    const outcome = await exec(client, 'echo hi')
+    expect(outcome).toMatchObject({ code: 1, stderr: 'This SSH key has no access to change filament\n' })
+  } finally {
+    client.end()
+  }
+  expect(spawned).toEqual([])
+})
+
 test('an interactive shell gets a PTY, follows window changes and ends with the shell', async () => {
   const client = await connect('filament/spools')
   try {
@@ -200,7 +217,7 @@ test('an interactive shell gets a PTY, follows window changes and ends with the 
     channel.setWindow(40, 120, 0, 0)
     await vi.waitFor(() => expect(spawned[0]?.resizes).toEqual([[40, 120]]))
     channel.write('ls\n')
-    await vi.waitFor(() => expect(spawned[0]?.agent).toEqual(agent))
+    await vi.waitFor(() => expect(spawned[0]?.agent).toEqual({ ...agent, access: FULL_ACCESS }))
     channel.write('exit\n')
     const { stdout, stderr, code } = await outcome
     expect(stdout).toBe('echo: ls\necho: exit\n')

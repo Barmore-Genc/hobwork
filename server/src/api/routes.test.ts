@@ -159,6 +159,26 @@ test('adding a key to an agent and revoking keys', async () => {
   expect((await post('/api/agents/999/tokens')).status).toBe(404)
 })
 
+test('keys can be limited to reading and to some projects', async () => {
+  host.db.prepare("INSERT INTO projects (name) VALUES ('filament'), ('garden')").run()
+  const created = await post('/api/agents', { name: 'reader', access: { readOnly: true, projects: ['garden'] } })
+  expect(created.status).toBe(201)
+  const { agent, token } = await jsonOf(created)
+  expect(verifyAgentToken(host.db, token)?.access).toEqual({ readOnly: true, projects: ['garden'] })
+  const second = await jsonOf(await post(`/api/agents/${agent.id}/tokens`, { access: { readOnly: false, projects: ['filament', 'garden'] } }))
+  expect(verifyAgentToken(host.db, second.token)?.access).toEqual({ readOnly: false, projects: ['filament', 'garden'] })
+
+  const [listed] = await jsonOf(await get('/api/agents'))
+  expect(listed.tokens.map((t: { access: unknown }) => t.access)).toEqual([
+    { readOnly: false, projects: ['filament', 'garden'] },
+    { readOnly: true, projects: ['garden'] },
+  ])
+  const bad = await post(`/api/agents/${agent.id}/tokens`, { access: { readOnly: 'yes' } })
+  expect(bad.status).toBe(400)
+  expect((await jsonOf(bad)).error).toBe('readOnly must be true or false')
+  expect((await post('/api/agents', { name: 'other', access: { projects: ['nope'] } })).status).toBe(400)
+})
+
 test('registering and revoking SSH keys of an agent', async () => {
   const { agent } = await jsonOf(await post('/api/agents', { name: 'laptop' }))
   const { public: publicKey, private: privateKey } = generateEd25519KeyPair()

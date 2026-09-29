@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
+import { allowsProject } from './access.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
@@ -159,7 +160,13 @@ export function createApp(
   const handleRuntime =
     options.runtime &&
     createRuntimeHttp(host, options.runtime, {
-      authorizeRoute: (req) => authenticate(req) !== undefined,
+      authorizeRoute: (req, project) => {
+        const agent = authenticate(req)
+        if (!agent) return 'unauthenticated'
+        // GET and HEAD routes only read, by the usual HTTP convention.
+        const reads = req.method === 'GET' || req.method === 'HEAD'
+        return allowsProject(agent.access, project) && (reads || !agent.access.readOnly) ? 'allowed' : 'forbidden'
+      },
       appOrigin: (project) => origins.origin({ project }),
       resolvePreview: async (label) => {
         const { project, branchLabel } = parseLabel(label)

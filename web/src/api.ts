@@ -204,11 +204,15 @@ export type NewSecret = {
   assign?: { project: string; envName: string }
 }
 
+// What a key or sign-in may do. `projects: null` means every project.
+export type Access = { readOnly: boolean; projects: string[] | null }
+
 export type AgentToken = {
   id: number
   createdAt: string
   lastUsedAt: string | null
   revokedAt: string | null
+  access: Access
 }
 
 // An app the user connected through OAuth, such as Claude.
@@ -220,6 +224,7 @@ export type Connection = {
   createdAt: string
   lastUsedAt: string | null
   revokedAt: string | null
+  access: Access
 }
 
 export type SshKeySource =
@@ -426,16 +431,20 @@ export const api = {
   unassignSecret: (project: string, envName: string) =>
     request<void>('DELETE', `${projectSecretsPath(project)}/${encodeURIComponent(envName)}`),
   agents: () => request<Agent[]>('GET', '/api/agents'),
-  createAgent: (name: string) => request<CreatedToken>('POST', '/api/agents', { name }),
-  createToken: (agentId: number) => request<CreatedToken>('POST', `/api/agents/${agentId}/tokens`),
+  createAgent: (name: string, access: Access) => request<CreatedToken>('POST', '/api/agents', { name, access }),
+  createToken: (agentId: number, access: Access) =>
+    request<CreatedToken>('POST', `/api/agents/${agentId}/tokens`, { access }),
   revokeToken: (tokenId: number) => request<void>('POST', `/api/tokens/${tokenId}/revoke`),
   revokeConnection: (id: number) => request<void>('POST', `/api/connections/${id}/revoke`),
   addSshKey: (agentId: number, name: string, publicKey: string) =>
     request<SshKey>('POST', `/api/agents/${agentId}/ssh-keys`, { name, publicKey }),
   revokeSshKey: (id: number) => request<void>('POST', `/api/ssh-keys/${id}/revoke`),
   connectRequest: (id: string) => request<ConnectRequest>('GET', `/api/oauth/requests/${encodeURIComponent(id)}`),
-  approveConnect: (id: string, agentName: string) =>
-    request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, { agentName }),
+  approveConnect: (id: string, agentName: string, access: Access) =>
+    request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, {
+      agentName,
+      access,
+    }),
   denyConnect: (id: string) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/deny`),
   devices: () => request<{ devices: Device[]; push: boolean }>('GET', '/api/devices'),

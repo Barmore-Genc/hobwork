@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import ssh2, { type ServerChannel, type Session } from 'ssh2'
-import type { Agent } from '../agents.ts'
+import { allowsProject } from '../access.ts'
+import type { AuthenticatedAgent } from '../agents.ts'
 import type { Host } from '../host.ts'
 import { DEFAULT_BRANCH, ProjectError, validateProjectName } from '../projects.ts'
 import { validateBranchName } from '../repo.ts'
@@ -44,7 +45,7 @@ export type SshGatewayOptions = {
 
 export function createSshGateway({ host, workspaces, hostKey }: SshGatewayOptions): ssh2.Server {
   return new ssh2.Server({ hostKeys: [hostKey] }, (client) => {
-    let agent: Agent | undefined
+    let agent: AuthenticatedAgent | undefined
     let username = ''
 
     client.on('authentication', (ctx) => {
@@ -73,7 +74,7 @@ export function createSshGateway({ host, workspaces, hostKey }: SshGatewayOption
     client.on('error', () => {})
   })
 
-  function handleSession(session: Session, agent: Agent, username: string): void {
+  function handleSession(session: Session, agent: AuthenticatedAgent, username: string): void {
     let pty: { rows: number; cols: number; term: string } | undefined
     let proc: WorkspaceProcess | undefined
 
@@ -119,6 +120,9 @@ export function createSshGateway({ host, workspaces, hostKey }: SshGatewayOption
         return fail((err as Error).message)
       }
       const { project, branch } = target
+      if (agent.access.readOnly || !allowsProject(agent.access, project)) {
+        return fail(`This SSH key has no access to change ${project}`)
+      }
       if (branch === DEFAULT_BRANCH) {
         return fail(
           `${DEFAULT_BRANCH} is the deployed version and changes only by merging a branch. Connect to a branch instead: ssh ${project}/<branch>@<host>`,

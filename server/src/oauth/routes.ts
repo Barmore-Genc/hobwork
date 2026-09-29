@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DatabaseSync } from 'node:sqlite'
+import { AccessError, parseAccess } from '../access.ts'
 import { agentNameTaken, freeAgentName, MAX_AGENT_NAME } from '../agents.ts'
 import type { Auth } from '../auth/auth.ts'
 import { HttpError, json, readForm, readJson, redirect } from '../http.ts'
@@ -17,6 +18,7 @@ import {
   type AuthorizationRequest,
 } from './grants.ts'
 import { fetchMetadataDocument, type FetchedDocument } from './metadata-fetch.ts'
+import { createRateLimiter } from './rate-limit.ts'
 
 export const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
 const AUTHORIZATION_SERVER_PATH = '/.well-known/oauth-authorization-server'
@@ -26,6 +28,11 @@ const REGISTER_PATH = '/oauth/register'
 const REVOKE_PATH = '/oauth/revoke'
 // The web UI page that shows consent and authorization errors.
 const CONNECT_PAGE = '/connect'
+
+// Per client address. Behind a reverse proxy every client shares the proxy's
+// address, so these are high enough for a household connecting its apps.
+const REGISTRATIONS_PER_HOUR = 30
+const AUTHORIZATIONS_PER_10_MINUTES = 60
 
 const REQUEST_API = /^\/api\/oauth\/requests\/([A-Za-z0-9_-]+)(\/approve|\/deny)?$/
 
@@ -51,6 +58,10 @@ function single(params: URLSearchParams, name: string): string | undefined {
   return values[0] === '' ? undefined : values[0]
 }
 
+function clientAddress(req: IncomingMessage): string {
+  return req.socket.remoteAddress ?? 'unknown'
+}
+
 function oauthError(res: ServerResponse, err: OAuthError, headers: Record<string, string> = {}) {
   res.writeHead(err.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
   res.end(JSON.stringify({ error: err.code, error_description: err.message }))
@@ -70,6 +81,8 @@ export function createOAuthServer(options: {
   const resource = `${publicUrl}${options.mcpPath}`
   const resourceMetadataUrl = `${publicUrl}${PROTECTED_RESOURCE_PATH}${options.mcpPath}`
   const clients = createClientStore({ db, fetchDocument: options.fetchDocument ?? fetchMetadataDocument, now })
+  const registrations = createRateLimiter({ limit: REGISTRATIONS_PER_HOUR, windowMs: 60 * 60 * 1000, now })
+  const authorizations = createRateLimiter({ limit: AUTHORIZATIONS_PER_10_MINUTES, windowMs: 10 * 60 * 1000, now })
 
   const protectedResourceMetadata = {
     resource,
@@ -103,10 +116,12 @@ export function createOAuthServer(options: {
     redirect(res, url.href)
   }
 
-  async function authorize(res: ServerResponse, search: URLSearchParams) {
+  async function authorize(req: IncomingMessage, res: ServerResponse, search: URLSearchParams) {
     // Until the client and redirect URI check out, errors go to Hobwork's own
     // page, never to the redirect URI (OAuth 2.1 4.1.2.1).
     const showError = (error: string) => redirect(res, `${CONNECT_PAGE}?error=${error}`)
+    // Checked before the client, since looking it up can fetch its metadata document.
+    if (authorizations.take(clientAddress(req)) !== undefined) return showError('too_many_requests')
     let clientId: string | undefined
     let redirectUri: string | undefined
     let state: string | undefined
@@ -149,7 +164,14 @@ export function createOAuthServer(options: {
       if (err instanceof OAuthError) return fail(err.code, err.message)
       throw err
     }
-    redirect(res, `${CONNECT_PAGE}?request=${saveRequest(db, request, now())}`)
+    let id: string
+    try {
+      id = saveRequest(db, request, now())
+    } catch (err) {
+      if (err instanceof OAuthError && err.status === 429) return showError('too_many_requests')
+      throw err
+    }
+    redirect(res, `${CONNECT_PAGE}?request=${id}`)
   }
 
   // Authenticates the client at the token and revocation endpoints (OAuth 2.1 2.4).
@@ -232,6 +254,10 @@ export function createOAuthServer(options: {
   }
 
   async function register(req: IncomingMessage, res: ServerResponse) {
+    const wait = registrations.take(clientAddress(req))
+    if (wait !== undefined) {
+      throw new OAuthError('temporarily_unavailable', 'Too many registrations from this address. Try again later.', 429, wait)
+    }
     let body: unknown
     try {
       body = await readJson(req, 16 * 1024)
@@ -301,12 +327,19 @@ export function createOAuthServer(options: {
       url.searchParams.set('iss', issuer)
       return json(res, 200, { redirectTo: url.href })
     }
-    const body = (await readJson(req)) as { agentName?: unknown }
+    const body = (await readJson(req)) as { agentName?: unknown; access?: unknown }
     const agentName = typeof body?.agentName === 'string' ? body.agentName.trim() : ''
     if (!agentName) throw new HttpError(400, 'Give the agent a name')
     if (agentName.length > MAX_AGENT_NAME) throw new HttpError(400, `Use at most ${MAX_AGENT_NAME} characters`)
     if (agentNameTaken(db, agentName)) throw new HttpError(409, `An agent called "${agentName}" already exists`)
-    const approved = approveRequest(db, { request, client, agentName, userId: user.id, now: now() })
+    let access
+    try {
+      access = parseAccess(db, body?.access)
+    } catch (err) {
+      if (err instanceof AccessError) throw new HttpError(400, err.message)
+      throw err
+    }
+    const approved = approveRequest(db, { request, client, agentName, access, userId: user.id, now: now() })
     if (!approved) throw new HttpError(404, 'This connection request was already answered.')
     const { code } = approved
     const url = new URL(request.redirectUri)
@@ -334,7 +367,7 @@ export function createOAuthServer(options: {
         return true
       }
       if (get && pathname === AUTHORIZE_PATH) {
-        await authorize(res, search)
+        await authorize(req, res, search)
         return true
       }
       const match = REQUEST_API.exec(pathname)
@@ -357,7 +390,10 @@ export function createOAuthServer(options: {
         await endpoint(req, res)
       } catch (err) {
         if (err instanceof OAuthError) {
-          oauthError(res, err, err.status === 401 && req.headers.authorization?.startsWith('Basic ') ? { 'www-authenticate': 'Basic realm="Hobwork"' } : {})
+          const headers: Record<string, string> = {}
+          if (err.status === 401 && req.headers.authorization?.startsWith('Basic ')) headers['www-authenticate'] = 'Basic realm="Hobwork"'
+          if (err.retryAfter !== undefined) headers['retry-after'] = String(err.retryAfter)
+          oauthError(res, err, headers)
         } else if (err instanceof HttpError) {
           oauthError(res, new OAuthError('invalid_request', err.message, err.status))
         } else throw err

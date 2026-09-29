@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import * as z from 'zod'
-import type { Agent } from '../agents.ts'
+import { allowsProject } from '../access.ts'
+import type { AuthenticatedAgent } from '../agents.ts'
 import type { Host } from '../host.ts'
 import { ProjectError, requireProject } from '../projects.ts'
 import { MAX_ENV_NAME_LENGTH, MAX_HOST_REQUEST_REASON, type SecretStore } from '../secrets.ts'
@@ -17,7 +18,7 @@ const envName = z
 // assigning a secret would be enough to send its value anywhere.
 export function registerSecretTools(
   server: McpServer,
-  { host, secrets, agent, publicUrl }: { host: Host; secrets?: SecretStore; agent: Agent; publicUrl: string },
+  { host, secrets, agent, publicUrl }: { host: Host; secrets?: SecretStore; agent: AuthenticatedAgent; publicUrl: string },
 ) {
   function store(): SecretStore {
     if (!secrets) throw new ProjectError('This Hobwork host has no secret store')
@@ -49,7 +50,9 @@ export function registerSecretTools(
           name: secret,
           hosts,
           ...(pendingHostRequest ? { pendingHosts: pendingHostRequest.hosts } : {}),
-          projects: assignments.map(({ project: p, envName: env }) => ({ project: p, envName: env })),
+          projects: assignments
+            .filter(({ project: p }) => allowsProject(agent.access, p))
+            .map(({ project: p, envName: env }) => ({ project: p, envName: env })),
         }))
       const text = library.length
         ? JSON.stringify(library, null, 2)

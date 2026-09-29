@@ -18,11 +18,6 @@ Deleted projects sit in `<dataDir>/trash/` for 7 days, but bringing one back is 
 
 A platform set or SDK update takes effect for every project at once, on its next workspace, pipeline run or build. Before switching to a new image, run every project's pipeline against it. Projects that fail stay on the old image until an agent fixes them, which needs images to be versioned and projects to record the image they were tested with.
 
-## OAuth hardening
-
-- Rate limits on dynamic client registration (`/oauth/register`) and on authorization requests, so a script cannot fill `oauth_clients` and `oauth_requests`.
-- Scopes: a connection or agent token can do everything an agent can. Add per-project and read-only scopes, chosen on the consent page and when creating a token.
-
 ## claude.ai connectors
 
 Connecting Hobwork as a custom connector in claude.ai, Claude Desktop and Cowork needs the host on public https. The OAuth flow is tested with the MCP SDK client and Claude Code only; check it end to end with claude.ai.

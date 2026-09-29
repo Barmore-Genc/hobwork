@@ -1,12 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createHash, randomBytes } from 'node:crypto'
+import { FULL_ACCESS, loadAccess, loadAllAccess, saveAccess, type Access } from './access.ts'
 
 export type Agent = { id: number; name: string }
 
 // What an agent authenticated with: a static agent token or an OAuth grant.
 export type Credential = { kind: 'token'; id: number } | { kind: 'grant'; id: number }
 
-export type AuthenticatedAgent = Agent & { credential?: Credential }
+// Without a credential (an SSH key a person added) the agent has full access.
+export type AuthenticatedAgent = Agent & { credential?: Credential; access: Access }
 
 const TOKEN_PREFIX = 'hw_'
 
@@ -30,13 +32,18 @@ export function ensureAgent(db: DatabaseSync, agentName: string): Agent {
   return { id: Number(row.id), name: String(row.name) }
 }
 
-export function createAgentToken(db: DatabaseSync, agentName: string): { agent: Agent; token: string } {
+export function createAgentToken(
+  db: DatabaseSync,
+  agentName: string,
+  access: Access = FULL_ACCESS,
+): { agent: Agent; token: string } {
   const agent = ensureAgent(db, agentName)
   const token = TOKEN_PREFIX + randomBytes(32).toString('base64url')
-  db.prepare('INSERT INTO agent_tokens (agent_id, token_hash) VALUES (?, ?)').run(
-    agent.id,
-    hashToken(token),
-  )
+  const row = db
+    .prepare('INSERT INTO agent_tokens (agent_id, token_hash) VALUES (?, ?) RETURNING id')
+    .get(agent.id, hashToken(token))
+  if (!row) throw new Error('Token insert returned no row')
+  saveAccess(db, 'token', Number(row.id), access)
   return { agent, token }
 }
 
@@ -68,6 +75,7 @@ export type AgentToken = {
   createdAt: string
   lastUsedAt: string | null
   revokedAt: string | null
+  access: Access
 }
 
 export type AgentWithTokens = Agent & { createdAt: string; tokens: AgentToken[] }
@@ -83,6 +91,7 @@ export function getAgent(db: DatabaseSync, id: number): Agent | undefined {
 
 export function listAgents(db: DatabaseSync): AgentWithTokens[] {
   const tokens = new Map<number, AgentToken[]>()
+  const access = loadAllAccess(db, 'token')
   for (const row of db
     .prepare('SELECT id, agent_id, created_at, last_used_at, revoked_at FROM agent_tokens ORDER BY id DESC')
     .all()) {
@@ -92,6 +101,7 @@ export function listAgents(db: DatabaseSync): AgentWithTokens[] {
       createdAt: String(row.created_at),
       lastUsedAt: nullableString(row.last_used_at),
       revokedAt: nullableString(row.revoked_at),
+      access: access.get(Number(row.id)) ?? FULL_ACCESS,
     })
     tokens.set(Number(row.agent_id), list)
   }
@@ -132,5 +142,6 @@ export function verifyAgentToken(db: DatabaseSync, token: string): Authenticated
     )
     .get(hashToken(token))
   const agent = row && getAgent(db, Number(row.agent_id))
-  return agent ? { ...agent, credential: { kind: 'token', id: Number(row.id) } } : undefined
+  if (!agent) return undefined
+  return { ...agent, credential: { kind: 'token', id: Number(row.id) }, access: loadAccess(db, 'token', Number(row.id)) }
 }

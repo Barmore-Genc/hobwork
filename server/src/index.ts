@@ -6,6 +6,8 @@ import { openHostDb } from './db.ts'
 import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
+import { createApns, loadApnsKey } from './devices/apns.ts'
+import { createDevices } from './devices/devices.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
 import { createHomeAssistantSettings } from './homeassistant/settings.ts'
@@ -33,6 +35,15 @@ const secretKey = loadSecretKey(config.dataDir, config.secretKey)
 const secrets = createSecretStore(host, secretKey)
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
+const apns = config.apns && createApns({ key: loadApnsKey(config.apns.keyFile), keyId: config.apns.keyId, teamId: config.apns.teamId })
+if (!apns) console.warn('HOBWORK_APNS_KEY_FILE is not set, so notifications only reach devices while the Hobwork app is connected.')
+const devices = createDevices({
+  host,
+  apns,
+  allowlist: config.allowlist,
+  triggers: async (project) => (await runtime.config(project)).config.triggers,
+  invokeTrigger: (project, name, payload) => runtime.invoke(project, { kind: 'trigger', name, manual: false, payload }),
+})
 const homeAssistant = createHomeAssistant({
   connection: () => homeAssistantSettings.connection(),
   logger: homeAssistantClientLogger(host, () =>
@@ -45,7 +56,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
       image,
       createSandbox: createGondolinSandbox,
       log: (message) => console.warn(message),
-      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant }),
+      workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices }),
     }
   : undefined
 if (vmOptions) console.log(`guest image: ${image}`)
@@ -73,6 +84,7 @@ const runtime = createRuntime(host, {
   revert: (request) => delivery.restore(request),
   triggers,
   homeAssistant,
+  devices,
   data,
   secrets,
 })
@@ -113,6 +125,7 @@ const server = createApp(host, {
   data,
   secrets,
   backups,
+  devices,
   web: {
     publicUrl: config.publicUrl,
     appsUrl: config.appsUrl,
@@ -134,6 +147,7 @@ ssh?.listen(sshPort, config.host, () => {
 
 async function shutdown() {
   homeAssistant.stop()
+  devices.close()
   backups?.stop()
   housekeeping.stop()
   ssh?.close()

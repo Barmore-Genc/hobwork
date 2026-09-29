@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { pipelineVmBackend, workspaceVmBackend } from './guest-vm.ts'
+import type { Devices } from './devices/devices.ts'
 import type { HomeAssistant } from './homeassistant/client.ts'
 import { createProject } from './projects.ts'
 import { queryLogs } from './runtime/logs.ts'
@@ -247,6 +248,31 @@ test('workspace VMs read Home Assistant states but cannot call services', async 
       body: { ok: false, error: { code: 'read_only' } },
     })
     expect(calls).toEqual([])
+  } finally {
+    host.dispose()
+  }
+})
+
+test('workspace VMs list devices but cannot notify them', async () => {
+  const host = createTestHost()
+  try {
+    const sends: unknown[] = []
+    const devices = {
+      info: () => [{ name: 'kaan-iphone' }],
+      sendNotification: async (...args: unknown[]) => sends.push(args),
+    } as unknown as Devices
+    const workspaceEnvironment = createWorkspaceEnvironment(host, { devices })
+    await workspaceVmBackend({ image: '/image', createSandbox, workspaceEnvironment }, () => () => new Response('cli'))(workspace())
+    const call = async (request: object) => {
+      const res = await sandboxes[0]!.options.internal!(
+        new Request('http://hobwork.internal/v1/devices', { method: 'POST', body: JSON.stringify(request) }),
+      )
+      return { status: res.status, body: await res.json() }
+    }
+    expect(await call({ action: 'list' })).toEqual({ status: 200, body: { ok: true, result: [{ name: 'kaan-iphone' }] } })
+    const send = { action: 'call', device: 'kaan-iphone', capability: 'notifications', method: 'send', args: { title: 'Hi' } }
+    expect(await call(send)).toMatchObject({ status: 403, body: { ok: false, error: { code: 'read_only' } } })
+    expect(sends).toEqual([])
   } finally {
     host.dispose()
   }

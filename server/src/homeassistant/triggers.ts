@@ -1,8 +1,9 @@
+import type { DeviceTrigger } from '../devices/devices.ts'
 import type { HaTrigger, HomeAssistant, Logger, TriggerVariables, Unsubscribe } from './client.ts'
 
 // A `triggers` entry from hobwork.json. Entries without a `homeassistant`
 // block belong to other integrations and are ignored here.
-export type TriggerEntry = { homeassistant?: HaTrigger; [key: string]: unknown }
+export type TriggerEntry = { homeassistant?: HaTrigger; device?: DeviceTrigger; [key: string]: unknown }
 
 export type InvokeTrigger = (project: string, triggerName: string, variables: TriggerVariables) => void | Promise<void>
 

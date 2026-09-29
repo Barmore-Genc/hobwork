@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { format } from 'node:util'
 import type { Context, Handler, Invocation, LogLevel, Logger } from '../index.ts'
 import { createDbClient, httpDbSender } from './db-client.ts'
+import { createDeviceClient, httpDeviceSender } from './device-client.ts'
 import { createHaClient, httpHaSender } from './ha-client.ts'
 import { createHostClient, type HostClient } from './host-client.ts'
 import {
@@ -93,6 +94,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
   const current = new AsyncLocalStorage<Invocation>()
   const db = createDbClient(httpDbSender(options.internalUrl, () => current.getStore()?.id))
   const ha = createHaClient(httpHaSender(options.internalUrl, () => current.getStore()?.id))
+  const devices = createDeviceClient(httpDeviceSender(options.internalUrl, () => current.getStore()?.id))
   const secrets = Object.freeze({ ...options.secrets })
 
   // Console output inside an invocation belongs to it. Output outside any
@@ -145,6 +147,8 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         log,
         db,
         ha,
+        device: devices.device,
+        devices: devices.devices,
         secrets,
       }
       const value = await current.run(invocation, () => handler(ctx))

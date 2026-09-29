@@ -52,9 +52,19 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["homeassistant", "handler"],
+        "required": ["handler"],
+        "oneOf": [{ "required": ["homeassistant"] }, { "required": ["device"] }],
         "properties": {
           "homeassistant": { "type": "object" },
+          "device": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "event"],
+            "properties": {
+              "capability": { "enum": ["notifications"] },
+              "event": { "enum": ["action"] }
+            }
+          },
           "handler": { "$ref": "#/definitions/handlerPath" }
         }
       }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { InvocationKind } from '../src/index.ts'
-import type { DbRequest, HaRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
+import type { DbRequest, DeviceRequest, HaRequest, InvokeRequest, InvokeResult, LogLine } from '../src/runner/protocol.ts'
 import { startRunner, type Runner } from '../src/runner/runner.ts'
 
 let app: string
@@ -14,6 +14,7 @@ let internalUrl: string
 let received: LogLine[]
 let dbRequests: DbRequest[]
 let haRequests: HaRequest[]
+let deviceRequests: DeviceRequest[]
 let runner: Runner | undefined
 let url: string
 
@@ -46,6 +47,12 @@ const HANDLERS: Record<string, string> = {
     let error
     try { await ctx.ha.callService('light', 'explode') } catch (err) { error = [err.name, err.code, err.message] }
     return { state: state.state, error }
+  }`,
+  'handlers/src/device.js': `export default async (ctx) => {
+    const sent = await ctx.device('kaan-iphone').notifications.send({ title: 'Print done' })
+    let error
+    try { await ctx.device('nope').notifications.send({ title: 'Hi' }) } catch (err) { error = [err.name, err.code, err.message] }
+    return { sent, devices: await ctx.devices(), error }
   }`,
 }
 
@@ -80,6 +87,7 @@ beforeEach(async () => {
   received = []
   dbRequests = []
   haRequests = []
+  deviceRequests = []
   internal = createServer((req, res) => {
     let data = ''
     req.on('data', (chunk: Buffer) => (data += chunk))
@@ -102,6 +110,18 @@ beforeEach(async () => {
             ? { ok: true, result: { entity_id: request.entityId, state: 'on', attributes: {} } }
             : { ok: false, error: { code: 'service_not_found', message: 'Action light.explode not found' } }
         res.writeHead(response.ok ? 200 : 502, { 'content-type': 'application/json' }).end(JSON.stringify(response))
+        return
+      }
+      if (req.url === '/v1/devices') {
+        const request = JSON.parse(data) as DeviceRequest
+        deviceRequests.push(request)
+        const response =
+          request.action === 'list'
+            ? { ok: true, result: [{ name: 'kaan-iphone' }] }
+            : request.device === 'kaan-iphone'
+              ? { ok: true, result: { id: 'n1', delivery: 'app' } }
+              : { ok: false, error: { code: 'unknown_device', message: 'No device called "nope"' } }
+        res.writeHead(response.ok ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(response))
         return
       }
       if (req.url === '/v1/logs') received.push(...(JSON.parse(data) as { lines: LogLine[] }).lines)
@@ -205,5 +225,20 @@ test('handlers call Home Assistant with ctx.ha, and its errors throw as HomeAssi
   expect(haRequests).toEqual([
     { action: 'getState', entityId: 'light.kitchen', invocation: result.id },
     { action: 'callService', domain: 'light', service: 'explode', invocation: result.id },
+  ])
+})
+
+test('handlers reach devices with ctx.device and ctx.devices, and failures throw as DeviceError', async () => {
+  await start()
+  const result = await invoke('src/device.ts')
+  expect(JSON.parse(body(result))).toEqual({
+    sent: { id: 'n1', delivery: 'app' },
+    devices: [{ name: 'kaan-iphone' }],
+    error: ['DeviceError', 'unknown_device', 'No device called "nope"'],
+  })
+  expect(deviceRequests).toEqual([
+    { action: 'call', device: 'kaan-iphone', capability: 'notifications', method: 'send', args: { title: 'Print done' }, invocation: result.id },
+    { action: 'call', device: 'nope', capability: 'notifications', method: 'send', args: { title: 'Hi' }, invocation: result.id },
+    { action: 'list', invocation: result.id },
   ])
 })

@@ -51,8 +51,8 @@ const MAX_LOG_PAGE = 1000
 const LOG_WAIT_MS = 25_000
 const LIST_ERROR_CHARS = 300
 
-const INVOCATION_KINDS: InvocationKind[] = ['route', 'webhook', 'cron', 'trigger']
-const INVOCATION_STATUSES: InvocationStatus[] = ['running', 'ok', 'error']
+export const INVOCATION_KINDS: InvocationKind[] = ['route', 'webhook', 'cron', 'trigger']
+export const INVOCATION_STATUSES: InvocationStatus[] = ['running', 'ok', 'error']
 const LOG_VIEWS = ['all', 'events', 'problems'] as const
 
 type Route = {
@@ -93,7 +93,7 @@ function positiveInt(value: string | undefined): number {
   return n
 }
 
-function queryInt(query: URLSearchParams, name: string): number | undefined {
+export function queryInt(query: URLSearchParams, name: string): number | undefined {
   const raw = query.get(name)
   if (raw === null || raw === '') return undefined
   const n = Number(raw)
@@ -101,18 +101,18 @@ function queryInt(query: URLSearchParams, name: string): number | undefined {
   return n
 }
 
-function pageSize(query: URLSearchParams, fallback: number, max: number): number {
+export function pageSize(query: URLSearchParams, fallback: number, max: number): number {
   return Math.min(Math.max(queryInt(query, 'limit') ?? fallback, 1), max)
 }
 
-function queryEnum<T extends string>(query: URLSearchParams, name: string, values: readonly T[]): T | undefined {
+export function queryEnum<T extends string>(query: URLSearchParams, name: string, values: readonly T[]): T | undefined {
   const raw = query.get(name)
   if (raw === null || raw === '') return undefined
   if (!values.includes(raw as T)) throw new HttpError(400, `${name} must be one of ${values.join(', ')}`)
   return raw as T
 }
 
-function queryTime(query: URLSearchParams, name: string): string | undefined {
+export function queryTime(query: URLSearchParams, name: string): string | undefined {
   const raw = query.get(name)
   if (raw === null || raw === '') return undefined
   const time = Date.parse(raw)
@@ -120,7 +120,7 @@ function queryTime(query: URLSearchParams, name: string): string | undefined {
   return new Date(time).toISOString()
 }
 
-function invocationView(invocation: InvocationRecord, full: boolean) {
+export function invocationView(invocation: InvocationRecord, full: boolean) {
   const { stack, error, ...rest } = invocation
   if (full) return { ...rest, error, stack }
   return { ...rest, error: error && error.length > LIST_ERROR_CHARS ? `${error.slice(0, LIST_ERROR_CHARS)}…` : error }

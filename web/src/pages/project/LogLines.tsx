@@ -1,21 +1,7 @@
 import type { LogLine } from '../../api.ts'
 import { clockTime, exactTime } from '../../format.ts'
 import { Link } from '../../router.tsx'
-import { projectPath } from './names.ts'
-
-const EVENT_LABELS: Record<string, string> = {
-  start: 'Started',
-  stop: 'Stopped',
-  crash: 'Crashed',
-  deploy: 'Update',
-  'auto-revert': 'Rolled back',
-  'egress-blocked': 'Blocked',
-  trigger: 'Home Assistant',
-  pipeline: 'Check',
-  migration: 'Data change',
-  db: 'Data',
-  secret: 'Secret',
-}
+import { EVENT_LABELS, projectPath } from './names.ts'
 
 const LEVEL_STYLES: Record<LogLine['level'], string> = {
   debug: 'text-muted',

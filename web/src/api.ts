@@ -77,6 +77,22 @@ export type Invocation = {
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+export type ActivityRun = Invocation & { project: string }
+
+export type ProblemEvent = {
+  id: number
+  project: string
+  invocationId: number | null
+  level: LogLevel
+  event: string
+  message: string
+  time: string
+}
+
+export type Problem = { type: 'run'; time: string; run: ActivityRun } | { type: 'event'; time: string; event: ProblemEvent }
+
+export type ActivityFilter = InvocationFilter & { project?: string }
+
 export type LogLine = {
   id: number
   invocationId: number | null
@@ -206,6 +222,20 @@ export type ConnectRequest = {
 
 export type CreatedToken = { agent: { id: number; name: string }; token: string }
 
+export type HomeAssistantSettings = {
+  // env: set in the server configuration, which wins over this page.
+  source: 'env' | 'settings' | null
+  url: string | null
+  tokenSet: boolean
+  updatedAt: string | null
+  updatedBy: string | null
+  status: 'unconfigured' | 'connecting' | 'connected' | 'disconnected'
+  version: string | null
+  lastError: string | null
+}
+
+export type HomeAssistantTest = { ok: true; version: string | null } | { ok: false; error: string }
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -257,6 +287,12 @@ export const api = {
   signOut: () => request<void>('POST', '/auth/logout'),
   projects: () => request<ProjectSummary[]>('GET', '/api/projects'),
   project: (name: string) => request<ProjectDetail>('GET', `/api/projects/${encodeURIComponent(name)}`),
+  deleteProject: (project: string, confirm: string) =>
+    request<{ deleted: string; recoverableUntil: string; trashDays: number }>(
+      'DELETE',
+      `/api/projects/${encodeURIComponent(project)}`,
+      { confirm },
+    ),
   restore: (project: string, version: number) =>
     request<{ version: Version; deployError?: string }>(
       'POST',
@@ -267,6 +303,11 @@ export const api = {
       'GET',
       `/api/projects/${encodeURIComponent(project)}/invocations${query(filter)}`,
     ),
+  activity: (filter: ActivityFilter) =>
+    request<{ invocations: ActivityRun[]; more: boolean }>('GET', `/api/activity${query(filter)}`),
+  problems: (filter: { project?: string; before?: string }) =>
+    request<{ items: Problem[]; more: boolean }>('GET', `/api/activity/problems${query(filter)}`),
+  attention: (since: string) => request<{ count: number; more: boolean }>('GET', `/api/activity/attention${query({ since })}`),
   invocation: (project: string, id: number) =>
     request<InvocationDetail>('GET', `/api/projects/${encodeURIComponent(project)}/invocations/${id}`),
   logs: (project: string, options: { view: LogView; after?: number; wait?: boolean }, signal?: AbortSignal) =>
@@ -303,6 +344,12 @@ export const api = {
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, { agentName }),
   denyConnect: (id: string) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/deny`),
+  homeAssistant: () => request<HomeAssistantSettings>('GET', '/api/settings/homeassistant'),
+  saveHomeAssistant: (settings: { url: string; token?: string }) =>
+    request<HomeAssistantSettings>('PUT', '/api/settings/homeassistant', settings),
+  testHomeAssistant: (settings: { url?: string; token?: string }) =>
+    request<HomeAssistantTest>('POST', '/api/settings/homeassistant/test', settings),
+  disconnectHomeAssistant: () => request<HomeAssistantSettings>('DELETE', '/api/settings/homeassistant'),
   passkeys: () => request<Passkey[]>('GET', '/api/passkeys'),
   backups: () => request<BackupStatus>('GET', '/api/backups'),
   startBackup: () => request<BackupRun>('POST', '/api/backups'),

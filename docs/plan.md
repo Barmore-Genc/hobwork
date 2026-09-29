@@ -66,7 +66,7 @@ Done when: an agent can merge a branch, gets test failures back when tests fail,
 
 Done when: a merged route answers HTTP requests, a cron fires on schedule, and an agent can find a thrown error and its stack trace through MCP. **MVP complete.**
 
-Status: done, covered end to end by `pnpm -C server test:vm` (template project merged over MCP, route over HTTP, cron by hand and on schedule, a thrown error found with `list_invocations` and `get_logs`, restore of a version without a stored build). Deferred: `invoke` in a branch workspace, deleting old builds, user sessions for routes (Phase 7).
+Status: done, covered end to end by `pnpm -C server test:vm` (template project merged over MCP, route over HTTP, cron by hand and on schedule, a thrown error found with `list_invocations` and `get_logs`, restore of a version without a stored build). Deferred: `invoke` in a branch workspace, user sessions for routes (Phase 7). Deleting old builds was added later (see Housekeeping).
 
 ## Phase 6: Data, secrets, egress
 
@@ -83,7 +83,7 @@ Status: done, covered end to end by `pnpm -C server test:vm` (a deployed handler
 - Projects overview, versions list with restore, invocations and logs, secrets management, agent access management.
 - Serve project UIs at `/p/<project>/` with the theme stylesheet. Theme wired into the project template's Tailwind config.
 
-Status: done. The first part added OIDC login with an allowlist, sessions and CSRF protection, the theme package served at `/theme/theme.css`, the host serving the built UI, the projects overview, versions with restore, and agent access management. Tested against Pocket ID in Docker (`dev/pocket-id/`). Project routes (`/p/<project>/api/*`) accept a signed-in user's session. The second part added the project pages (entry points with next cron runs, webhook URLs shown once on rotation, HA triggers, last runs, DB size and warnings, reachable hosts), activity with filters and each run's error, stack trace and log, the project log with live new lines (long poll), project and shared secrets pages, project UIs served at `/p/<project>/` from the deployed build for signed-in users and shown in an iframe, `@hobwork/theme` in the image and wired into the template's Tailwind setup, and the `@hobwork/sdk/browser` client. Covered by API and serving tests and by `pnpm -C server test:vm` (the template's UI served with the theme and calling its route with a session). Deferred: a separate origin for project UIs, so their scripts cannot call Hobwork's own API with the user's session; an activity view across all projects.
+Status: done. The first part added OIDC login with an allowlist, sessions and CSRF protection, the theme package served at `/theme/theme.css`, the host serving the built UI, the projects overview, versions with restore, and agent access management. Tested against Pocket ID in Docker (`dev/pocket-id/`). Project routes (`/p/<project>/api/*`) accept a signed-in user's session. The second part added the project pages (entry points with next cron runs, webhook URLs shown once on rotation, HA triggers, last runs, DB size and warnings, reachable hosts), activity with filters and each run's error, stack trace and log, the project log with live new lines (long poll), project and shared secrets pages, project UIs served at `/p/<project>/` from the deployed build for signed-in users and shown in an iframe, `@hobwork/theme` in the image and wired into the template's Tailwind setup, and the `@hobwork/sdk/browser` client. Covered by API and serving tests and by `pnpm -C server test:vm` (the template's UI served with the theme and calling its route with a session). Deferred: a separate origin for project UIs, so their scripts cannot call Hobwork's own API with the user's session. The activity view across all projects was added later (see Housekeeping).
 
 ## Phase 8: Auth and access
 
@@ -98,7 +98,16 @@ Status: done. The SSH gateway and the `hobwork` CLI are covered by `pnpm -C serv
 - Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.
 - OpenRouter SDK helper.
 
-Status: done. Handlers call HA with `ctx.ha` through the host; workspaces only read. Covered by unit tests of the internal endpoint and the SDK, and with `HOBWORK_HA_TESTS=1` against the dev HA: a deployed handler toggles an `input_boolean`, and a trigger on `input_button.test_button` runs a handler that sets an `input_number` and fires an event. `pnpm -C server test:vm` checks that a handler built against the SDK in the image gets a `HomeAssistantError`. The OpenRouter helper is tested with a fake `fetch`, not against OpenRouter. Deferred: HA settings in the web UI (the connection still comes from env vars), `render_template` and other HA WebSocket commands in `ctx.ha`, and streaming from OpenRouter.
+Status: done. Handlers call HA with `ctx.ha` through the host; workspaces only read. Covered by unit tests of the internal endpoint and the SDK, and with `HOBWORK_HA_TESTS=1` against the dev HA: a deployed handler toggles an `input_boolean`, and a trigger on `input_button.test_button` runs a handler that sets an `input_number` and fires an event. `pnpm -C server test:vm` checks that a handler built against the SDK in the image gets a `HomeAssistantError`. The OpenRouter helper is tested with a fake `fetch`, not against OpenRouter. HA settings in the web UI were added later (see Housekeeping). Deferred: `render_template` and other HA WebSocket commands in `ctx.ha`, and streaming from OpenRouter.
+
+## Housekeeping
+
+- Project deletion by people only, into a 7 day trash for the repo and DB.
+- Old build cleanup on deploy and daily.
+- Home Assistant connection in the web UI Settings, env vars still winning.
+- Activity and problems across all projects.
+
+Status: done. Covered by unit tests (deletion stops VMs, unsubscribes triggers, removes rows and files and frees the name; agents cannot delete; the trash purge; build retention and rebuilding a restored version whose build was deleted; HA settings encryption, precedence, reconnect and permissions; the cross-project activity API and its permissions) and with `HOBWORK_HA_TESTS=1` by saving the dev HA through the settings API. Deferred: restoring a deleted project from the trash in the UI.
 
 ## Phase 10: Apple apps
 

@@ -17,7 +17,8 @@ node dev/homeassistant/setup.ts reset    # stop and wipe state and token
   HOBWORK_HA_TESTS=1 pnpm --filter @hobwork/server test src/homeassistant
   ```
 
-- To connect a local host to it, start the host with the values from `.env.local` in its environment (`HOBWORK_HA_URL`, `HOBWORK_HA_TOKEN`).
+- To connect a local host to it, enter the URL and token from `.env.local` on the web UI's Settings page, or start the host with them in its environment (`HOBWORK_HA_URL`, `HOBWORK_HA_TOKEN`), which wins over the Settings page.
+- `HOBWORK_HA_TESTS=1 pnpm --filter @hobwork/server test src/api/homeassistant-settings` saves it through the settings API.
 - Config is `configuration.yaml` (committed, mounted read-only). HA state lives in `data/` (gitignored).
 
 ## Available entities

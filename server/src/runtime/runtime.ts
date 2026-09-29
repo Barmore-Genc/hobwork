@@ -21,6 +21,7 @@ import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
 import { listVersions } from '../versions.ts'
 import { createDeployHealth, DEFAULT_AUTO_REVERT_POLICY, type AutoRevertPolicy, type DeployHealth } from './auto-revert.ts'
+import { cleanupBuilds, type BuildCleanupOptions } from './build-cleanup.ts'
 import { buildDir, createBuilder, treeOf } from './builds.ts'
 import { allHandlers, entriesOf, readProjectConfig, type ProjectConfig } from './config.ts'
 import {
@@ -70,6 +71,8 @@ export type RuntimeOptions = {
   // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
   secrets?: SecretStore
   autoRevert?: AutoRevertPolicy
+  // Which builds to keep when old ones are removed after a deploy.
+  buildRetention?: Pick<BuildCleanupOptions, 'keepVersions' | 'minAgeMs'>
   invocationTimeoutMs?: number
   readyTimeoutMs?: number
   memory?: string
@@ -132,6 +135,8 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   const policy = options.autoRevert ?? DEFAULT_AUTO_REVERT_POLICY
   const builder = createBuilder(host, options.startBuildVm)
   const projects = new Map<string, ProjectState>()
+  // Projects being deleted. Nothing may start for them.
+  const removing = new Set<string>()
   const scheduler = createScheduler((project, name) => {
     void invoke(project, { kind: 'cron', name, manual: false }).catch((err: unknown) =>
       event(project, 'error', 'crash', `Cron "${name}" could not run: ${errorMessage(err)}`),
@@ -156,6 +161,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   // What runs is the newest version on main. Only a deploy changes it, but after
   // a host restart it is read back from the versions table.
   async function deployment(project: string): Promise<Deployed> {
+    if (removing.has(project)) throw new ProjectError(`${project} is being deleted`)
     const s = state(project)
     if (s.deployed) return s.deployed
     s.loading ??= (async () => {
@@ -613,6 +619,45 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       throw new Error(target ? `${message}\nRestoring version ${target} automatically.` : message)
     }
     event(project, 'info', 'deploy', `Version ${version} is live`)
+    await removeOldBuilds(project)
+  }
+
+  // Commits whose builds a VM runs or is starting with.
+  function inUseCommits(project: string): string[] {
+    const s = projects.get(project)
+    if (!s) return []
+    return [s.deployed?.commit, s.instance?.deployed.commit, s.starting?.deployed.commit].filter(
+      (commit): commit is string => commit !== undefined,
+    )
+  }
+
+  async function removeOldBuilds(project: string): Promise<void> {
+    try {
+      await cleanupBuilds(host, project, { ...options.buildRetention, inUse: inUseCommits(project) })
+    } catch (err) {
+      console.error(`Removing old builds of ${project} failed`, err)
+    }
+  }
+
+  // Stops everything the project runs right away, without waiting for running
+  // invocations, and keeps anything new from starting until forget().
+  async function remove(project: string): Promise<void> {
+    removing.add(project)
+    scheduler.remove(project)
+    await options.triggers?.removeProject(project)
+    const s = projects.get(project)
+    projects.delete(project)
+    if (!s) return
+    const starting = s.starting?.promise.catch(() => undefined)
+    const instances = [s.instance, await starting].filter((inst): inst is Instance => inst !== undefined)
+    await Promise.all(
+      [...new Set(instances)].map(async (inst) => {
+        if (inst.stopping) return
+        inst.stopping = true
+        clearTimeout(inst.idleTimer)
+        await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
+      }),
+    )
   }
 
   // Registers the crons and triggers of the project's current version.
@@ -624,6 +669,13 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     deploy,
     invoke,
     load,
+    remove,
+    // Called once the project is gone, so its name can be used again.
+    forget(project: string): void {
+      projects.delete(project)
+      removing.delete(project)
+    },
+    removeOldBuilds,
     async route(project: string): Promise<{ routes: Route[]; version: number | null }> {
       const deployed = await deployment(project)
       return { routes: deployed.routes, version: deployed.version }

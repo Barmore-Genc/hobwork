@@ -115,13 +115,14 @@ const SELECT_INVOCATION = `SELECT i.id, p.name AS project, i.version, i.kind, i.
     i.error, i.stack, i.started_at, i.duration_ms
   FROM invocations i JOIN projects p ON p.id = i.project_id`
 
-function conditions(sql: string, value: string) {
-  const where = [sql]
-  const params: (string | number)[] = [value]
+function conditions(sql?: string, value?: string) {
+  const where: string[] = []
+  const params: (string | number)[] = []
   const add = (condition: string, ...values: (string | number)[]) => {
     where.push(condition)
     params.push(...values)
   }
+  if (sql !== undefined && value !== undefined) add(sql, value)
   return { where, params, add }
 }
 
@@ -156,27 +157,31 @@ export function getInvocation(host: Host, id: number): InvocationRecord | undefi
 }
 
 export type InvocationFilter = {
-  project: string
+  // All projects when left out.
+  project?: string
   kind?: InvocationKind
   name?: string
   status?: InvocationStatus
   version?: number
   since?: string
   beforeId?: number
+  // Started before this time.
+  before?: string
   limit: number
 }
 
 // Newest first.
 export function listInvocations(host: Host, filter: InvocationFilter): InvocationRecord[] {
-  const { where, params, add } = conditions('p.name = ?', filter.project)
+  const { where, params, add } = conditions(filter.project === undefined ? undefined : 'p.name = ?', filter.project)
   if (filter.kind) add('i.kind = ?', filter.kind)
   if (filter.name) add('i.name = ?', filter.name)
   if (filter.status) add('i.status = ?', filter.status)
   if (filter.version !== undefined) add('i.version = ?', filter.version)
   if (filter.since) add('i.started_at >= ?', filter.since)
   if (filter.beforeId !== undefined) add('i.id < ?', filter.beforeId)
+  if (filter.before) add('i.started_at < ?', filter.before)
   return host.db
-    .prepare(`${SELECT_INVOCATION} WHERE ${where.join(' AND ')} ORDER BY i.id DESC LIMIT ?`)
+    .prepare(`${SELECT_INVOCATION} WHERE ${where.join(' AND ') || '1'} ORDER BY i.id DESC LIMIT ?`)
     .all(...params, filter.limit)
     .map(toInvocation)
 }

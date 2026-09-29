@@ -45,7 +45,7 @@ export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant)
     if (!ha.configured) {
       throw new HomeAssistantError(
         'not_configured',
-        'Home Assistant is not configured on this Hobwork host (HOBWORK_HA_URL and HOBWORK_HA_TOKEN are not set)',
+        'Home Assistant is not connected to this Hobwork host. A person can connect it in Settings in the Hobwork web UI',
       )
     }
     return ha

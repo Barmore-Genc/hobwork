@@ -90,8 +90,7 @@ export class HomeAssistantError extends Error {
 }
 
 export type HomeAssistantOptions = {
-  // A function rather than a value so the connection settings can move from env
-  // vars to a DB-backed setting; call reload() after they change.
+  // Read on every connection attempt. Call reload() after it changes.
   connection: () => HomeAssistantConnection | undefined
   logger?: Logger
   requestTimeoutMs?: number
@@ -104,6 +103,9 @@ export type HomeAssistantOptions = {
 export type HomeAssistant = {
   readonly status: HomeAssistantStatus
   readonly configured: boolean
+  // What the connected HA reported, and why the last attempt failed.
+  readonly version: string | undefined
+  readonly lastError: string | undefined
   start(): void
   stop(): void
   reload(): void
@@ -183,6 +185,7 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
   let nextId = 1
   let attempt = 0
   let lastError: string | undefined
+  let haVersion: string | undefined
   let downSince: Date | undefined
   let reconnectTimer: NodeJS.Timeout | undefined
   let pingTimer: NodeJS.Timeout | undefined
@@ -195,7 +198,7 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     if (status === 'unconfigured' || (status === 'idle' && !options.connection())) {
       return new HomeAssistantError(
         'not_configured',
-        'Home Assistant is not configured on this Hobwork host (HOBWORK_HA_URL and HOBWORK_HA_TOKEN are not set)',
+        'Home Assistant is not connected to this Hobwork host. A person can connect it in Settings in the Hobwork web UI',
       )
     }
     if (status === 'stopped') return new HomeAssistantError('stopped', 'The Home Assistant client was stopped')
@@ -299,6 +302,7 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
 
   function connected(version: string | undefined) {
     status = 'connected'
+    haVersion = version
     attempt = 0
     lastError = undefined
     if (downSince) {
@@ -473,6 +477,12 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     },
     get configured() {
       return options.connection() !== undefined
+    },
+    get version() {
+      return status === 'connected' ? haVersion : undefined
+    },
+    get lastError() {
+      return lastError
     },
     start() {
       if (status !== 'idle') return

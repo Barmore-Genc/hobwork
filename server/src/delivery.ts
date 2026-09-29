@@ -232,5 +232,10 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
     })
   }
 
-  return { merge, restore }
+  return {
+    merge,
+    restore,
+    // Runs fn while no merge or restore of the project runs, e.g. to delete it.
+    exclusive: <T>(project: string, fn: () => Promise<T>): Promise<T> => serialized(project, fn),
+  }
 }

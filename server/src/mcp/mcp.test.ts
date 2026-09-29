@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { createApp } from '../app.ts'
 import { createTestHost } from '../test-host.ts'
@@ -15,6 +15,9 @@ import {
   type Workspace,
   type WorkspaceManager,
 } from '../workspaces.ts'
+
+// Several tests run git and the MCP client end to end, which is slow when the whole suite runs in parallel.
+vi.setConfig({ testTimeout: 30_000 })
 
 let host: ReturnType<typeof createTestHost>
 let server: Server

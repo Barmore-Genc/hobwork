@@ -30,6 +30,8 @@ export type Config = {
   webDist: string
   homeAssistant?: HomeAssistantConnection
   workspaceIdleTimeoutMs: number
+  // Undefined when the SSH gateway is off.
+  sshPort?: number
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -91,11 +93,16 @@ function loadAllowlist(env: NodeJS.ProcessEnv): Allowlist {
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const port = Number(env.HOBWORK_PORT ?? 7420)
+function loadPort(name: string, value: string | undefined, fallback: number): number {
+  const port = Number(value ?? fallback)
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(`HOBWORK_PORT must be an integer from 0 to 65535, got "${env.HOBWORK_PORT}"`)
+    throw new Error(`${name} must be an integer from 0 to 65535, got "${value}"`)
   }
+  return port
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const port = loadPort('HOBWORK_PORT', env.HOBWORK_PORT, 7420)
   const idleMinutes = Number(env.HOBWORK_WORKSPACE_IDLE_MINUTES ?? 30)
   if (!(idleMinutes > 0)) {
     throw new Error(
@@ -112,5 +119,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: resolve(repoRoot, 'web/dist'),
     homeAssistant: loadHomeAssistant(env),
     workspaceIdleTimeoutMs: idleMinutes * 60_000,
+    sshPort: env.HOBWORK_SSH_PORT === 'off' ? undefined : loadPort('HOBWORK_SSH_PORT', env.HOBWORK_SSH_PORT, 2222),
   }
 }

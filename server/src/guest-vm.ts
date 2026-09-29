@@ -1,12 +1,27 @@
 import { readFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
-import type { Sandbox, SandboxFactory, SandboxOptions } from './sandbox/sandbox.ts'
-import type { ExecOptions, ExecResult, ExecWorkspaceVm, StartWorkspaceVm } from './workspaces.ts'
+import type { InternalHandler, Sandbox, SandboxFactory, SandboxOptions } from './sandbox/sandbox.ts'
+import type {
+  ExecOptions,
+  ExecResult,
+  InteractiveWorkspaceVm,
+  StartWorkspaceVm,
+  Workspace,
+} from './workspaces.ts'
 
 export const GUEST_DIR = '/workspace'
 export const NPM_REGISTRY = 'registry.npmjs.org'
+
+// The `hobwork` CLI is mounted from the host, like the runtime runner, because
+// it speaks the host's internal API and has to match the host version.
+const CLI_DIR = '/opt/hobwork/cli'
+const HOST_CLI_DIR = resolve(import.meta.dirname, '../../packages/sdk/src/cli')
+const INSTALL_CLI = [
+  `printf '#!/bin/sh\\nexec node --disable-warning=ExperimentalWarning ${CLI_DIR}/main.ts "$@"\\n' > /usr/local/bin/hobwork`,
+  'chmod 755 /usr/local/bin/hobwork',
+].join(' && ')
 
 const VM_RESOURCES = { memory: '2G', cpus: 4, diskSize: '4G' }
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
@@ -17,7 +32,7 @@ export type GuestVmOptions = {
   log?: (message: string) => void
 }
 
-export type GuestWorkspaceVm = ExecWorkspaceVm & {
+export type GuestWorkspaceVm = InteractiveWorkspaceVm & {
   egress: string[]
 }
 
@@ -63,11 +78,15 @@ function sandboxOptions(options: GuestVmOptions, dir: string, egress: string[], 
   }
 }
 
-function execVm(sandbox: Sandbox): Omit<ExecWorkspaceVm, 'stop'> & { busy(): boolean } {
+function exitCode(result: { exitCode: number; signal?: number }): number {
+  return result.signal === undefined ? result.exitCode : 128 + result.signal
+}
+
+function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy(): boolean } {
   let running = 0
   return {
     busy: () => running > 0,
-    async exec(command: string, { cwd, timeoutMs, signal, onOutput }: ExecOptions): Promise<ExecResult> {
+    async exec(command: string, { cwd, timeoutMs, signal, env, onOutput }: ExecOptions): Promise<ExecResult> {
       const output = { stdout: '', stderr: '' }
       running++
       try {
@@ -75,26 +94,50 @@ function execVm(sandbox: Sandbox): Omit<ExecWorkspaceVm, 'stop'> & { busy(): boo
           cwd: guestCwd(cwd),
           timeoutMs,
           signal,
+          env,
           onOutput: ({ stream, text }) => {
             output[stream] += text
             onOutput?.(stream, text)
           },
         }).result
-        const exitCode = result.signal === undefined ? result.exitCode : 128 + result.signal
-        return { exitCode, ...output }
+        return { exitCode: exitCode(result), ...output }
       } finally {
         running--
       }
     },
+    spawn(command, { cwd, env, pty, onData }) {
+      const proc = sandbox.spawn(command, { cwd: guestCwd(cwd), env, pty, onData })
+      running++
+      const result = proc.result
+        .then((r) => ({ exitCode: exitCode(r) }))
+        .finally(() => {
+          running--
+        })
+      return { ...proc, result }
+    },
   }
 }
 
-export function workspaceVmBackend(options: GuestVmOptions): StartWorkspaceVm<GuestWorkspaceVm> {
+// `internal` answers the VM's calls to hobwork.internal (the `hobwork` CLI).
+export function workspaceVmBackend(
+  options: GuestVmOptions,
+  internal?: (workspace: Workspace) => InternalHandler,
+): StartWorkspaceVm<GuestWorkspaceVm> {
   return async (workspace) => {
     const label = `workspace ${workspace.project}/${workspace.branch}`
     // The registry is always reachable so agents can add and install extras.
     const egress = [...new Set([NPM_REGISTRY, ...hobworkEgress(workspace.dir)])]
-    const sandbox = await options.createSandbox(sandboxOptions(options, workspace.dir, egress, label))
+    const base = sandboxOptions(options, workspace.dir, egress, label)
+    const sandbox = await options.createSandbox({
+      ...base,
+      mounts: { ...base.mounts, [CLI_DIR]: { hostPath: HOST_CLI_DIR, readonly: true } },
+      internal: internal?.(workspace),
+    })
+    const cli = await sandbox.exec(INSTALL_CLI).result.catch((err: unknown) => err as Error)
+    if (cli instanceof Error || cli.exitCode !== 0) {
+      await sandbox.stop()
+      throw new Error(`Could not install the hobwork CLI in ${label}: ${cli instanceof Error ? cli.message : cli.stderr}`)
+    }
     const vm = execVm(sandbox)
 
     if (hasExtraDependencies(workspace.dir)) {

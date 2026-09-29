@@ -333,7 +333,7 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
     'bash',
     {
       description:
-        'Run a shell command in the branch workspace VM, with the branch files as the working tree. Use it for pnpm install, pnpm typecheck, pnpm lint, pnpm test and similar. The VM starts on first use. Returns the exit code, stdout and stderr (long output is cut in the middle).',
+        'Run a shell command in the branch workspace VM, with the branch files as the working tree. Use it for pnpm install, pnpm typecheck, pnpm lint, pnpm test and similar. The VM starts on first use. Returns the exit code, stdout and stderr (long output is cut in the middle). The VM also has a hobwork command (hobwork status, commit, merge, logs), mainly for SSH sessions.',
       inputSchema: {
         project,
         branch: writableBranch,
@@ -355,11 +355,13 @@ export function createMcpServer({ host, workspaces, delivery, agent, homeAssista
       }
       const dir = await checkoutDirectory(await writableDir(p, b), cwd)
       const vm = await workspaces.start(p, b)
+      const session = workspaces.openSession(p, b, agent)
       const outcome = await runBash(vm, command, {
         cwd: dir,
         timeoutMs: timeout_seconds * 1000,
         signal: extra.signal,
-      })
+        env: session.env,
+      }).finally(() => session.close())
       workspaces.touch(p, b)
       return { ...text(outcome.text), isError: outcome.failed }
     },

@@ -217,7 +217,7 @@ Three ways in. All of them act on the same repos and workspaces.
 
 1. **MCP** (primary; the only option for Claude Cowork and chat clients). See the tool list below.
 2. **git smart HTTP**: `git clone https://hobwork/git/<project>.git`, work locally with Claude Code, push a branch. A pre-receive hook rejects pushes to `main`. After pushing, the agent calls `merge` over MCP (or over SSH).
-3. **SSH gateway**: `ssh <project>/<branch>@hobwork` opens a shell in that branch's workspace VM. Also provides a `hobwork` CLI inside workspaces (`hobwork merge`, `hobwork logs -f`, `hobwork status`).
+3. **SSH gateway**: `ssh <project>/<branch>@hobwork` opens a shell in that branch's workspace VM. Also provides a `hobwork` CLI inside workspaces (`hobwork merge`, `hobwork logs -f`, `hobwork status`). See [SSH gateway](#ssh-gateway).
 
 ### MCP tools
 
@@ -236,6 +236,21 @@ Home Assistant: `ha_list_devices`, `ha_list_entities`, `ha_get_state`, `ha_list_
 The MCP server's instructions point agents to the project's `AGENTS.md` and explain the core rules.
 
 The endpoint is streamable HTTP at `/mcp`, stateless (a fresh server per request), authenticated with a bearer agent token until MCP OAuth replaces it. File tools act on the branch workspace checkout on the host and reject paths and symlinks that lead outside it. `main` is readable through a host-only checkout reset to the branch tip on each read. Writes, `bash` and `commit` on `main` are refused. `search` matches in a worker thread with a deadline, so an agent-supplied regular expression cannot block the host. `bash` runs through the workspace VM's `exec` (see `ExecWorkspaceVm` in `server/src/workspaces.ts`) with a timeout, and long output is cut in the middle.
+
+### SSH gateway
+
+`server/src/ssh/`, on `HOBWORK_SSH_PORT` (default 2222, `off` disables it), built on the `ssh2` package (pure JavaScript; its optional native `cpu-features` build is not allowed in `pnpm-workspace.yaml`). The host key is an Ed25519 key generated on first start at `data/ssh_host_ed25519_key` (mode 0600).
+
+- **Auth**: public keys only, each registered to an agent (`agent_ssh_keys`: key type, base64 key data, SHA-256 fingerprint, comment). Users add and remove keys with `POST /api/agents/<id>/ssh-keys` (`{ publicKey }`) and `DELETE /api/ssh-keys/<id>`; `GET /api/agents` lists them per agent. Without the web UI: `pnpm --filter @hobwork/server add-ssh-key <agent-name> [key.pub]` (creates the agent if needed, reads stdin without a file).
+- **User name** is the target: `<project>/<branch>`. OpenSSH accepts a slash in the user name (checked with OpenSSH 10.3). `<project>+<branch>` works too, for clients or URLs where a slash is awkward. Project names contain neither character and branch names cannot contain `+`, so the first `/` or `+` splits. The target is checked after authentication, so a bad target gets a message rather than a bare "Permission denied".
+- **Sessions**: a shell (`exec bash --login`) or `ssh host '<command>'` runs in the branch's workspace VM with `/workspace` as the working directory, starting the VM like `bash` does. Gondolin supports stdin, a PTY and PTY resize on an exec, so interactive shells get a real terminal with the client's `TERM` and window size, and window changes follow. Without a PTY request (`ssh host cmd`, `ssh -T`) stdin, stdout and stderr stay separate and binary-safe. The exit status is passed back. A dropped connection kills the command (same `/proc` environ kill as `bash`). `main` is refused like `bash` on `main`. Port forwarding, agent forwarding, X11, SFTP and git over SSH are not supported.
+- **Idle stop**: a session counts as a running command, so the VM is not stopped while it lasts, and `last_used_at` is updated when it starts and ends.
+
+**`hobwork` CLI** (`packages/sdk/src/cli/main.ts`): `status` (branch head, uncommitted changes, `main`'s version and what is deployed, last pipeline run of the branch), `diff`, `commit "<message>"`, `merge "<summary>"`, `logs [-f] [-n N]`, `invocations [-n N]`. A merge failure exits with status 1, usage errors with 2. The workspace has no git directory, so `hobwork commit` is how SSH users commit.
+
+- **Delivery**: mounted read-only from the host at `/opt/hobwork/cli`, with a `/usr/local/bin/hobwork` wrapper written when the VM starts. Like the runtime runner, it speaks the host's internal API and so has to match the host version; baking it into the image would need a rebuild for every API change. It uses only Node built-ins.
+- **Endpoint**: the workspace VM's internal handler (`server/src/workspace-api.ts`), bound to the VM's project and branch, answers `/v1/workspace/*` at `hobwork.internal`. The CLI uses `node:http`, since `fetch` gives up waiting for response headers after 5 minutes and a merge can take longer. `logs -f` long-polls with a cursor (up to 30 seconds per request).
+- **Identity**: the agent that runs the command. A workspace VM is shared by every agent working on the branch, so binding an agent to the VM would credit one agent with another's commit or merge. Every SSH session and every MCP `bash` call opens a workspace session: a random token, valid while the command runs, passed as `HOBWORK_SESSION`. Child processes inherit it, the CLI sends it back in `x-hobwork-session`, and the handler accepts it only for its own workspace. Calls without a valid token (e.g. from a background process that outlived its session) are refused. Other processes in the same VM could read a token from `/proc`; that is within the household trust model (see [Non-goals](#non-goals)).
 
 ### Rules for agents
 
@@ -367,11 +382,11 @@ Storage (`server/migrations/0004_runtime.sql`, `server/src/runtime/logs.ts`):
 - **Sessions**: random 256-bit tokens, stored as SHA-256 hashes in the host DB, valid 30 days. The cookie is HttpOnly, SameSite=Lax, and `__Host-` prefixed and Secure when `HOBWORK_PUBLIC_URL` is https.
 - **CSRF**: state-changing requests with a session cookie must send `x-hobwork-csrf: 1` (a cross-site page cannot set it without a CORS preflight, which the host never allows), and their `Origin` and `Sec-Fetch-Site`, when present, must be the public origin and same-origin. Code that serves other routes uses `requireUser` (writes the 401/403) or `sessionUser` from `server/src/auth/auth.ts`, which do both checks. Project routes (`/p/<project>/api/*`) accept either an agent bearer token or a session through `sessionUser`, so the SDK browser client must send the CSRF header on writes. The cookie never reaches the handler.
 - **Project status** in the UI: `updating` while a pipeline run is in progress, `running` while the runtime VM is up, otherwise `ready` (starts on demand). The current version is the deployed one from the runtime, which can lag behind the newest version while a deploy runs or after it failed.
-- **Web UI API** (all need a session): `GET /api/session` (also works signed out, lists sign-in methods), `GET /api/projects`, `GET /api/projects/<name>` (versions), `POST /api/projects/<name>/versions/<n>/restore`, `GET|POST /api/agents`, `POST /api/agents/<id>/tokens`, `POST /api/tokens/<id>/revoke`. Restores by a user are recorded with the user (`versions.user_id`) and use their name and email as the git author.
+- **Web UI API** (all need a session): `GET /api/session` (also works signed out, lists sign-in methods), `GET /api/projects`, `GET /api/projects/<name>` (versions), `POST /api/projects/<name>/versions/<n>/restore`, `GET|POST /api/agents`, `POST /api/agents/<id>/tokens`, `POST /api/tokens/<id>/revoke`, `POST /api/agents/<id>/ssh-keys`, `DELETE /api/ssh-keys/<id>`. Restores by a user are recorded with the user (`versions.user_id`) and use their name and email as the git author.
 - **Agents**: separate identities, not tied to a user. Users create and revoke agent access in the UI.
 - **MCP auth**: Hobwork acts as an OAuth 2.1 authorization server for MCP, as required by claude.ai and Cowork custom connectors. A user logs in and approves the connection, which creates an agent identity. Claude Code can use the same flow or a static token.
 - **git HTTP**: agent token as the password.
-- **SSH**: public keys registered to an agent.
+- **SSH**: public keys registered to an agent (see [SSH gateway](#ssh-gateway)).
 - Agents can do everything on projects except manage users, agents and secret values.
 
 ## Devices (Apple apps)

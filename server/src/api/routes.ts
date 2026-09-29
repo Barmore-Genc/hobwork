@@ -8,6 +8,7 @@ import { HttpError, json, readJson } from '../http.ts'
 import { latestRun } from '../pipeline/runner.ts'
 import { getProject, listProjects, ProjectError, type Project } from '../projects.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import { addSshKey, deleteSshKey, listSshKeys, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
 
 // ready: deployed, and the runtime starts when something calls it.
@@ -114,7 +115,14 @@ export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Del
     {
       method: 'GET',
       pattern: /^\/api\/agents$/,
-      handle: ({ res }) => json(res, 200, listAgents(host.db)),
+      handle: ({ res }) => {
+        const keys = listSshKeys(host.db)
+        json(
+          res,
+          200,
+          listAgents(host.db).map((agent) => ({ ...agent, sshKeys: keys.filter((key) => key.agentId === agent.id) })),
+        )
+      },
     },
     {
       method: 'POST',
@@ -139,6 +147,29 @@ export function createApiRoutes(options: { host: Host; auth: Auth; delivery: Del
         if (!agent) throw new HttpError(404, 'This agent no longer exists')
         const { token } = createAgentToken(host.db, agent.name)
         json(res, 201, { agent, token })
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/agents\/(\d+)\/ssh-keys$/,
+      handle: async ({ req, res, params }) => {
+        const agent = getAgent(host.db, positiveInt(params[0]))
+        if (!agent) throw new HttpError(404, 'This agent no longer exists')
+        const body = (await readJson(req)) as { publicKey?: unknown }
+        try {
+          json(res, 201, addSshKey(host.db, agent.id, typeof body?.publicKey === 'string' ? body.publicKey : ''))
+        } catch (err) {
+          if (err instanceof SshKeyError) throw new HttpError(400, err.message)
+          throw err
+        }
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/ssh-keys\/(\d+)$/,
+      handle: ({ res, params }) => {
+        if (!deleteSshKey(host.db, positiveInt(params[0]))) throw new HttpError(404, 'This SSH key was already removed')
+        res.writeHead(204).end()
       },
     },
     {

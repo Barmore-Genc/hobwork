@@ -89,6 +89,8 @@ Status: done are OIDC login with an allowlist, sessions and CSRF protection, the
 - Passkey login.
 - SSH gateway into workspaces, `hobwork` CLI inside workspace VMs.
 
+Status: the SSH gateway and the `hobwork` CLI are done, covered by `pnpm -C server test:vm` (the OpenSSH client runs `pnpm test`, an interactive shell, and `hobwork status`, `commit` and `merge` in a workspace VM). SSH keys are managed through the API and the `add-ssh-key` script; the Agent access page does not show them yet. Git over SSH is not supported.
+
 ## Phase 9: Integrations
 
 - Home Assistant: WebSocket connection, `subscribe_trigger` for triggers in `hobwork.json`, SDK service calls through the host, HA MCP tools including `ha_listen`.

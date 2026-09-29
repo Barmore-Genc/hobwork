@@ -12,7 +12,7 @@ function section(name: string, text: string): string {
 export async function runBash(
   vm: ExecWorkspaceVm,
   command: string,
-  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
+  options: { cwd: string; timeoutMs: number; signal?: AbortSignal; env?: Record<string, string> },
 ): Promise<BashOutcome> {
   const timeout = AbortSignal.timeout(options.timeoutMs)
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
@@ -27,6 +27,7 @@ export async function runBash(
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
       signal,
+      env: options.env,
       onOutput: (stream, chunk) => {
         streamed[stream] += chunk
       },

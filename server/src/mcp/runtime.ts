@@ -29,7 +29,7 @@ function text(value: string, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: value }], ...(isError ? { isError } : {}) }
 }
 
-function formatInvocation(i: InvocationRecord): string {
+export function formatInvocation(i: InvocationRecord): string {
   const duration = i.durationMs === null ? '' : ` ${i.durationMs}ms`
   const http = i.httpStatus === null ? '' : ` HTTP ${i.httpStatus}`
   const error = i.error ? `: ${i.error.split('\n')[0]}` : ''
@@ -46,7 +46,7 @@ function formatLine(line: LogEntry): string {
 
 // Keeps whole lines from the start so the cursor stays meaningful: the caller
 // continues after the last line shown.
-function formatLines(lines: LogEntry[], budget = MAX_OUTPUT_CHARS): { text: string; shown: number; cursor?: number } {
+export function formatLines(lines: LogEntry[], budget = MAX_OUTPUT_CHARS): { text: string; shown: number; cursor?: number } {
   const out: string[] = []
   let size = 0
   let cursor: number | undefined

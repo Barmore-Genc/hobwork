@@ -1,3 +1,4 @@
+import ssh2 from 'ssh2'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { verifyAgentToken } from '../agents.ts'
 import { createDelivery, type Deployment } from '../delivery.ts'
@@ -146,6 +147,33 @@ test('adding a key to an agent and revoking keys', async () => {
   expect(verifyAgentToken(host.db, second)).toEqual(agent)
   expect((await post(`/api/tokens/${firstId}/revoke`)).status).toBe(404)
   expect((await post('/api/agents/999/tokens')).status).toBe(404)
+})
+
+test('registering and removing SSH keys of an agent', async () => {
+  const { agent } = await jsonOf(await post('/api/agents', { name: 'laptop' }))
+  const { public: publicKey, private: privateKey } = ssh2.utils.generateKeyPairSync('ed25519')
+  const unauthenticated = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { 'x-hobwork-csrf': '1' })
+  expect(unauthenticated.status).toBe(401)
+  const noCsrf = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }, { cookie, 'content-type': 'application/json' })
+  expect(noCsrf.status).toBe(403)
+
+  const res = await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: `${publicKey} kaan@laptop\n` })
+  expect(res.status).toBe(201)
+  const key = await jsonOf(res)
+  expect(key).toMatchObject({ agentId: agent.id, algorithm: 'ssh-ed25519', comment: 'kaan@laptop', lastUsedAt: null })
+  expect(key.fingerprint).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/)
+  const [listed] = await jsonOf(await get('/api/agents'))
+  expect(listed.sshKeys).toEqual([key])
+
+  expect((await jsonOf(await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey }))).error).toContain('already registered to laptop')
+  expect((await jsonOf(await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: privateKey }))).error).toContain('private key')
+  expect((await post(`/api/agents/${agent.id}/ssh-keys`, { publicKey: 'ssh-ed25519 nope' })).status).toBe(400)
+  expect((await post('/api/agents/999/ssh-keys', { publicKey })).status).toBe(404)
+
+  const remove = (id: number) => fetch(`${app.base}/api/ssh-keys/${id}`, { method: 'DELETE', headers: writeHeaders(cookie) })
+  expect((await remove(key.id)).status).toBe(204)
+  expect((await remove(key.id)).status).toBe(404)
+  expect((await jsonOf(await get('/api/agents')))[0].sshKeys).toEqual([])
 })
 
 test('request bodies must be JSON', async () => {

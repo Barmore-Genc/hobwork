@@ -20,6 +20,8 @@ This is a Hobwork project. Hobwork runs its handlers (HTTP routes, crons, webhoo
 3. Commit, then call `merge`. It runs typecheck, lint, tests and build on the branch rebased onto `main`. On success it squash-merges and deploys. On failure it returns the failing step and its output. Fix it and call `merge` again.
 4. After deploying, run a handler with `invoke` and check `list_invocations` and `get_logs` to confirm the change works. `pnpm build` must produce `dist/handlers/` (see `vite.config.ts`), since that is what runs.
 
+In a shell in the workspace (over SSH, `ssh <project>/<branch>@<hobwork host>`), the `hobwork` command does the same: `hobwork status`, `hobwork diff`, `hobwork commit "<message>"`, `hobwork merge "<summary>"`, `hobwork logs [-f]` and `hobwork invocations`. The workspace has no git directory, so commit with `hobwork commit`.
+
 ## Rules
 
 - Handlers work like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the project DB through the SDK.

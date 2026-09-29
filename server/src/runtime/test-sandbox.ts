@@ -68,6 +68,9 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
     const sandbox: FakeSandbox = {
       id: randomUUID(),
       options,
+      spawn() {
+        throw new Error('fake sandbox does not run interactive processes')
+      },
       exec(command, execOptions = {}) {
         const match = /^node (\/\S+)\/main\.ts$/.exec(command)
         if (!match) throw new Error(`fake sandbox only runs the runner, got: ${command}`)

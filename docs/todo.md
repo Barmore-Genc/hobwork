@@ -72,3 +72,7 @@ The apps send only what a person explicitly chose to share. No location, no devi
 - `NSHealthUpdateUsageDescription` is set although the app never writes to Health (`requestAuthorization(toShare: [])`). Remove it.
 
 Write the rule down in `docs/architecture.md` and `apple/README.md` so new capabilities follow it.
+
+## Renaming projects to hobs
+
+Call projects "hobs" everywhere people and agents see them: web UI and iOS app copy, MCP tool names and descriptions (`create_hob`, `list_hobs`), the `hobwork` CLI, the template's AGENTS.md, `hobwork.json` docs and `docs/`. Code identifiers and DB tables can keep `project`. The MCP server instructions define a hob in one line, since agents know "project" without explanation. Do it before more agents and saved prompts depend on the current tool names.

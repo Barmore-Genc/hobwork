@@ -39,7 +39,7 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 - Read data HA already has from HA instead of copying it into the DB, unless the user asks for a copy.
 - Triggers go under `triggers` in HA automation syntax (`{ "homeassistant": { "trigger": "state", "entity_id": "input_button.desk" }, "handler": "src/desk.ts" }`). The payload is `ctx.payload`.
 - A handler may call only the HA services on the hob's list, which starts empty. Add a domain (`light`) or service (`light.turn_on`) with `update_ha_services` before the code needs it, and tell the user; `get_hob` shows the list. A refused call throws `HomeAssistantError` with code `not_allowed` and is logged. `hassio.*`, `homeassistant.*`, `shell_command.*` and `recorder.purge*` are never allowed.
-- Act with `ctx.ha.callService`, `getState`, `getStates`, `fireEvent`. Errors throw `HomeAssistantError`. Speak with `tts.speak` or `media_player.play_media`.
+- Act with `ctx.ha.callService`, `getState`, `getStates`, `fireEvent`. Errors throw `HomeAssistantError`. A handler may only call services and fire events on the hob's Home Assistant list (an agent adds `light`, `light.turn_on` or `event:my_hob_changed` with `update_ha_services`); anything else fails with code `not_allowed`. Speak with `tts.speak` or `media_player.play_media`.
 - The workspace only reads states (`hobwork ha state|states`). Try service calls with `invoke` after `merge`.
 
 ## Devices

@@ -13,7 +13,7 @@ const STATES = [
   { entity_id: 'sensor.temperature', state: '21.5', attributes: {}, last_changed: '', last_updated: '' },
 ]
 
-let services = ['light']
+let services = ['light', 'event:spool_empty']
 
 async function call(request: object, access: HaAccess = 'full', client: HomeAssistant | undefined = ha) {
   const res = await haResponse(JSON.stringify(request), {
@@ -27,7 +27,7 @@ async function call(request: object, access: HaAccess = 'full', client: HomeAssi
 
 beforeEach(async () => {
   logged = []
-  services = ['light']
+  services = ['light', 'event:spool_empty']
   fake = await startFakeHomeAssistant()
   fake.responses.set('get_states', () => STATES)
   fake.responses.set('call_service', () => ({ context: { id: 'c1', parent_id: null, user_id: null } }))
@@ -131,6 +131,19 @@ test('fires events', async () => {
   const { body } = await call({ action: 'fireEvent', eventType: 'spool_empty', data: { spool: 7 } })
   expect(body.ok).toBe(true)
   expect(fake.received.find((m) => m.type === 'fire_event')).toMatchObject({ event_type: 'spool_empty', event_data: { spool: 7 } })
+})
+
+test('fires only the events on the list', async () => {
+  const unlisted = await call({ action: 'fireEvent', eventType: 'other_event' })
+  expect(unlisted.status).toBe(403)
+  expect(unlisted.body.error?.code).toBe('not_allowed')
+  expect(logged.at(-1)?.message).toContain('denied fire event other_event')
+  services = ['event:homeassistant_stop', 'event:state_changed']
+  for (const eventType of ['homeassistant_stop', 'state_changed', 'call_service', 'hassio_x', 'area_registry_updated']) {
+    const res = await call({ action: 'fireEvent', eventType })
+    expect(res.body.error?.code, eventType).toBe('not_allowed')
+  }
+  expect(fake.received.some((m) => m.type === 'fire_event')).toBe(false)
 })
 
 test('workspaces only read states', async () => {

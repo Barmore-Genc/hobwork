@@ -26,6 +26,7 @@ export const AI_ERROR_CODES = {
   spend: 'hobwork_spend_limit',
   path: 'hobwork_path_not_allowed',
   https: 'hobwork_https_required',
+  port: 'hobwork_port_not_allowed',
 } as const
 
 const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
@@ -47,7 +48,7 @@ function pathAllowed(method: string, pathname: string): boolean {
   return false
 }
 
-type Refusal = { kind: RefusalKind | 'path' | 'https'; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
+type Refusal = { kind: RefusalKind | 'path' | 'https' | 'port'; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
 
 // Refusals that are recorded with the request, since the request was one a hob was allowed to make.
 type CountedRefusal = Refusal & { kind: RefusalKind }
@@ -228,7 +229,9 @@ export function createAiGateway(host: Host, options: { now?: () => number; price
           const wrong =
             url.protocol !== 'https:'
               ? { kind: 'https' as const, message: 'Hobwork only lets hobs reach OpenRouter over https. Use https://openrouter.ai/api/v1.' }
-              : !pathAllowed(request.method, url.pathname)
+              : url.port !== ''
+                ? { kind: 'port' as const, message: `Hobwork only lets hobs reach OpenRouter on port 443, not ${url.port}. Use https://openrouter.ai/api/v1.` }
+                : !pathAllowed(request.method, url.pathname)
                 ? { kind: 'path' as const, message: `Hobwork does not let hobs call ${request.method} ${url.pathname} on OpenRouter. Hobs can use the chat, completions, messages, responses and embeddings endpoints and read model lists.` }
                 : undefined
           if (wrong) {

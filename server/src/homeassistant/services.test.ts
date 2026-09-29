@@ -9,7 +9,10 @@ import { appendLog, queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
 import { seedMain } from '../test-project.ts'
 import {
+  backfillHaEvents,
   backfillHaServices,
+  findEventFires,
+  haServicesNote,
   findServiceCalls,
   getHaServices,
   HaServicesError,
@@ -34,7 +37,7 @@ test('entries are domains or services, lowercased, sorted and deduplicated', () 
   for (const bad of ['light.turn_on.now', 'light turn_on', '', '*', 'a/b', 5]) {
     expect(() => parseServiceEntries([bad])).toThrow(HaServicesError)
   }
-  expect(() => parseServiceEntries('light')).toThrow('services must be a list')
+  expect(() => parseServiceEntries('light')).toThrow('The list must have')
 })
 
 test('entries that change Home Assistant itself are refused', () => {
@@ -52,8 +55,8 @@ test('saving replaces the list and writes who changed what to the hob log', asyn
   setHaServices(host, 'lights', ['light', 'switch'], { kind: 'agent', name: 'claude' })
   expect(getHaServices(host.db, id('lights'))).toEqual(['light', 'switch'])
   expect(logLines('lights')).toEqual([
-    'Kaan changed the Home Assistant services this hob may call: allowed light, tts.speak',
-    'Agent claude changed the Home Assistant services this hob may call: allowed switch; no longer allowed tts.speak',
+    'Kaan changed the Home Assistant services and events this hob may use: allowed light, tts.speak',
+    'Agent claude changed the Home Assistant services and events this hob may use: allowed switch; no longer allowed tts.speak',
   ])
 })
 
@@ -135,4 +138,38 @@ test('the migration queues the hobs that already exist for the backfill', () => 
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('event entries keep their case and refuse Home Assistant own events', () => {
+  expect(parseServiceEntries(['event:Spool_Empty', 'light'])).toEqual(['event:Spool_Empty', 'light'])
+  for (const entry of ['event:', 'event:has space', 'event:state_changed', 'event:homeassistant_start', 'event:HASSIO_x', 'event:zone_registry_updated']) {
+    expect(() => parseServiceEntries([entry]), entry).toThrow(HaServicesError)
+  }
+})
+
+test('the services note lists services and events separately', () => {
+  expect(haServicesNote(['event:a', 'light'])).toBe(
+    'Handlers may call these Home Assistant services: light. Anything else is refused. They may fire these events: a. Any other fireEvent is refused.',
+  )
+  expect(haServicesNote([])).toBe('Handlers may not call any Home Assistant service yet. They may not fire any event yet.')
+})
+
+test('finds the events named in source', () => {
+  expect(findEventFires(`ctx.ha.fireEvent('spool_empty', {})\nha.fireEvent("a.b-c")`)).toEqual({ events: ['spool_empty', 'a.b-c'], dynamic: false })
+  expect(findEventFires('ctx.ha.fireEvent(name)')).toEqual({ events: [], dynamic: true })
+})
+
+test('existing hobs get the events their deployed code and log already fire', async () => {
+  await createProject(host, 'events')
+  host.db.prepare('INSERT INTO project_ha_events_backfill (project_id) SELECT id FROM projects').run()
+  await seedMain(host, 'events', {
+    'package.json': '{}',
+    'hobwork.json': '{}',
+    'src/a.ts': `await ctx.ha.fireEvent('spool_empty')\nawait ctx.ha.fireEvent('state_changed')`,
+    'src/a.test.ts': `ctx.ha.fireEvent('only_test')`,
+  })
+  appendLog(host, { project: 'events', source: 'runtime', level: 'info', message: 'Home Assistant: fire event from_log {"a":1}' })
+  await backfillHaEvents(host)
+  expect(getHaServices(host.db, id('events'))).toEqual(['event:from_log', 'event:spool_empty'])
+  expect(host.db.prepare('SELECT count(*) AS n FROM project_ha_events_backfill').get()).toEqual({ n: 0 })
 })

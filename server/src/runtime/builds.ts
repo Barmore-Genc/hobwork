@@ -20,8 +20,8 @@ import { git } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { extraDependencies } from '../platform.ts'
-import { checkPnpmWorkspace, explainFrozenInstallFailure } from '../pipeline/pnpm-settings.ts'
-import { checkout, FROZEN_INSTALL, MISSING_LOCKFILE, readBlob, type StartPipelineVm } from '../pipeline/runner.ts'
+import { checkInstallConfig, explainFrozenInstallFailure } from '../pipeline/pnpm-settings.ts'
+import { checkout, FROZEN_INSTALL, MISSING_LOCKFILE, readBlob, readInstallConfig, type StartPipelineVm } from '../pipeline/runner.ts'
 
 // A build is the project's dist/ after `pnpm run build`. Builds are keyed by
 // git tree rather than commit: a restore commits an old tree as a new commit,
@@ -128,7 +128,7 @@ export function createBuilder(host: Host, startVm: StartPipelineVm | undefined) 
     const tmp = mkdtempSync(join(tmpdir(), 'hobwork-build-'))
     let vm: Awaited<ReturnType<StartPipelineVm>> | undefined
     try {
-      const problems = checkPnpmWorkspace(await readBlob(gitDir, commit, 'pnpm-workspace.yaml'))
+      const problems = checkInstallConfig(await readInstallConfig(gitDir, commit))
       if (problems.length) throw new BuildError(problems.join('\n'))
       const pkg = JSON.parse((await readBlob(gitDir, commit, 'package.json')) ?? '{}')
       const hasExtras = extraDependencies(pkg).length > 0

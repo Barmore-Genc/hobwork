@@ -54,6 +54,19 @@ export function createWorkspaceEnvironment(
             console.error(`Could not record blocked egress for ${project}`, err)
           }
         },
+        onSecretRefused: ({ hostname, message }) => {
+          try {
+            appendLog(host, {
+              project,
+              source: 'runtime',
+              level: 'warn',
+              event: 'secret',
+              message: `Workspace ${branch}: refused an outgoing request to ${hostname}: ${message}`,
+            })
+          } catch (err) {
+            console.error(`Could not record a refused secret for ${project}`, err)
+          }
+        },
       }
     },
     fingerprint: (workspace) => secrets?.fingerprint(workspace.project) ?? '',

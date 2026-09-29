@@ -1,7 +1,7 @@
 import type { HaRequest, HaResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { HomeAssistantError, type HaState, type HomeAssistant } from './client.ts'
-import { isBlockedService, servicesAllow, WHERE_TO_CHANGE } from './services.ts'
+import { eventsAllow, isBlockedEvent, isBlockedService, servicesAllow, WHERE_TO_CHANGE } from './services.ts'
 
 // Runtime VMs run deployed code and may change the home. Workspace VMs run
 // tests and work in progress, so they only read states. Branch previews
@@ -18,7 +18,7 @@ export type HaCallLog = {
 export type HaEndpointOptions = {
   ha?: HomeAssistant
   access: HaAccess
-  // The services the hob may call, read on every call. Without it none is allowed.
+  // The services the hob may call and the events it may fire, read on every call. Without it none is allowed.
   services?: () => string[]
   log?: (entry: HaCallLog) => void
 }
@@ -112,6 +112,18 @@ async function run(request: HaRequest, options: HaEndpointOptions & { ha: HomeAs
       if (request.action === 'fireEvent') {
         if (typeof request.eventType !== 'string' || !request.eventType || request.eventType.length > 255) {
           throw new BadRequest('eventType must be a non-empty string')
+        }
+        if (isBlockedEvent(request.eventType)) {
+          throw new HomeAssistantError(
+            'not_allowed',
+            `Hobwork does not let any hob fire the Home Assistant event ${request.eventType}, because Home Assistant uses it for itself`,
+          )
+        }
+        if (!eventsAllow(options.services?.() ?? [], request.eventType)) {
+          throw new HomeAssistantError(
+            'not_allowed',
+            `This hob may not fire the Home Assistant event ${request.eventType}. ${WHERE_TO_CHANGE}`,
+          )
         }
         return ha.fireEvent(request.eventType, optionalObject(request.data, 'data'))
       }

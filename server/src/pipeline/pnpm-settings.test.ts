@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
 import {
   allowedBuilds,
+  checkInstallConfig,
   checkPnpmWorkspace,
   describeAllowedBuildsChange,
   explainFrozenInstallFailure,
@@ -69,4 +70,25 @@ test('explains lockfile failures of a frozen install', () => {
   expect(explainFrozenInstallFailure(' ERR_PNPM_NO_LOCKFILE  Cannot install')).toContain('commit pnpm-lock.yaml')
   expect(explainFrozenInstallFailure(' ERR_PNPM_OUTDATED_LOCKFILE  x')).toContain('commit pnpm-lock.yaml')
   expect(explainFrozenInstallFailure('ERR_PNPM_FETCH_404')).toBeUndefined()
+})
+
+test('refuses a pnpmfile and settings that point at one', () => {
+  expect(checkInstallConfig({ hasPnpmfile: true })).not.toEqual([])
+  for (const yaml of ['pnpmfile: ./x.cjs', 'globalPnpmfile: ./x.cjs', 'registry: https://evil.example']) {
+    expect(checkInstallConfig({ workspace: `${yaml}\n` }), yaml).not.toEqual([])
+  }
+})
+
+test('refuses .npmrc settings that undo install protections', () => {
+  const refused = [
+    'registry=https://evil.example',
+    '@scope:registry=https://evil.example',
+    'pnpmfile=./x.cjs',
+    'minimum-release-age=0',
+    'minimum-release-age-ignore-missing-time=true',
+    'dangerously-allow-all-builds=true',
+  ]
+  for (const line of refused) expect(checkInstallConfig({ npmrc: `${line}\n` }), line).not.toEqual([])
+  expect(checkInstallConfig({ npmrc: '# comment\nignore-scripts=false\nauto-install-peers=true\n' })).toEqual([])
+  expect(checkInstallConfig({ npmrc: `minimum-release-age=${MIN_RELEASE_AGE_MINUTES}\n` })).toEqual([])
 })

@@ -5,7 +5,7 @@ import { HeadTailOutput } from './mcp/output.ts'
 import { MIN_RELEASE_AGE_MINUTES } from './pipeline/pnpm-settings.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
-import type { EgressBlocked, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
+import type { EgressBlocked, SecretRefused, Interceptor, InternalHandler, Sandbox, SandboxFactory, SandboxOptions, Secret } from './sandbox/sandbox.ts'
 import type {
   ExecOptions,
   ExecResult,
@@ -47,6 +47,7 @@ export type VmEnvironment = {
   internal?: InternalHandler
   intercept?: Interceptor
   onEgressBlocked?: (event: EgressBlocked) => void
+  onSecretRefused?: (event: SecretRefused) => void
 }
 
 export type WorkspaceEnvironment = {
@@ -120,6 +121,10 @@ function sandboxOptions(
     onEgressBlocked: (event) => {
       options.log?.(`${label}: blocked egress to ${event.hostname || event.ip}`)
       environment?.onEgressBlocked?.(event)
+    },
+    onSecretRefused: (event) => {
+      options.log?.(`${label}: refused a request to ${event.hostname}: ${event.message}`)
+      environment?.onSecretRefused?.(event)
     },
   }
 }

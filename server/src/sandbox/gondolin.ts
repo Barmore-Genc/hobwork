@@ -52,6 +52,7 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   const internal = options.internal
   const egress = options.egress ?? []
   const onBlocked = options.onEgressBlocked
+  const reportRefusal = refusalReporter(options.onSecretRefused)
   const hooks = createHttpHooks({
     allowedHosts: egress,
     secrets: options.secrets,
@@ -71,19 +72,24 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     // Gondolin injects secrets after onRequest, so the internal handler and
     // the interceptor only see placeholders.
     onRequest: async (request) => {
-      const blocked = new URL(request.url).hostname === INTERNAL_HOST ? undefined : misplacedSecret(request)
+      const blocked = new URL(request.url).hostname === INTERNAL_HOST ? undefined : refuse(request)
       if (blocked) return Response.json({ error: { code: 'hobwork_secret_not_allowed', message: blocked } }, { status: 403 })
       return hook?.(request)
     },
   })
   const misplacedSecret = secretGuard(options.secrets ?? {}, hooks.env)
+  const refuse = (request: Request) => {
+    const message = misplacedSecret(request)
+    if (message) reportRefusal(new URL(request.url).hostname, message)
+    return message
+  }
   const fillSecrets = secretFiller(options.secrets ?? {}, hooks.env)
   const hook = requestHook({
     internal,
     intercept: options.intercept,
     egress,
     upstream: upstreamFetch((request) => {
-      const blocked = misplacedSecret(request)
+      const blocked = refuse(request)
       if (blocked) throw new Error(blocked)
       return fillSecrets(request)
     }),
@@ -116,6 +122,23 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     throw err
   }
   return new GondolinSandbox(vm)
+}
+
+// A guest that retries a refused request in a loop would otherwise fill the hob log.
+const REFUSAL_REPORT_INTERVAL_MS = 60_000
+
+export function refusalReporter(report: SandboxOptions['onSecretRefused']): (hostname: string, message: string) => void {
+  const last = new Map<string, number>()
+  return (hostname, message) => {
+    if (!report) return
+    const key = `${hostname}\0${message}`
+    const now = Date.now()
+    const before = last.get(key)
+    if (before !== undefined && now - before < REFUSAL_REPORT_INTERVAL_MS) return
+    if (last.size >= 100) last.clear()
+    last.set(key, now)
+    report({ hostname, message })
+  }
 }
 
 function basicCredentials(value: string): string {

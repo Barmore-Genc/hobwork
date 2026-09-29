@@ -142,7 +142,7 @@ private struct NFCSection: View {
                 LabeledContent("NFC", value: "Not available")
             }
         } footer: {
-            Text("Scanning a tag written by a project runs that project's handler for it.")
+            Text("Scanning a tag written by a project runs that project's handler for it. Tags with other links go to the projects that handle those links. To use a tag without opening Hobwork, create a personal automation for it in the Shortcuts app and add Send Tag to Hobwork with the tag's link.")
         }
     }
 }

@@ -80,6 +80,10 @@ final class AppModel {
 
     func sceneBecameActive() {
         guard pairing != nil else { return }
+        if scanWhenActive {
+            scanWhenActive = false
+            Task { await scanTag() }
+        }
         if connection?.state != .connected { connection?.reconnect() }
         web.checkSession()
         Task { await refreshCapabilities() }
@@ -149,16 +153,17 @@ final class AppModel {
         await refreshCapabilities()
     }
 
-    /// The "Scan Tag" button: reads a tag and reports Hobwork tags to the host.
+    /// The "Scan Tag" button and the Scan NFC Tag action: reads a tag and sends its link to the
+    /// host, which runs the project that wrote it or the triggers for that link.
     func scanTag() async {
+        guard pairing != nil else { return }
         do {
             let records = try await nfc.read()
-            let result = NFCCapability.readResult(records, host: pairing?.host)
-            guard let tag = result.tag else {
-                nfcNotice = "This tag wasn't written by this Hobwork host."
+            guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
+                nfcNotice = "This tag has no link, so there is nothing to send to your projects."
                 return
             }
-            await send(NFCTagLink.event(tag: tag))
+            await send(event)
             nfcNotice = "Tag scanned."
         } catch .cancelled {
             return
@@ -166,6 +171,18 @@ final class AppModel {
             nfcNotice = NFCCapability.callError(error).message
         }
     }
+
+    /// Scans once the app is on screen: Core NFC only starts a scan for the active app, and the
+    /// Scan NFC Tag action can run while the app is still opening.
+    func scanTagWhenActive() async {
+        if UIApplication.shared.applicationState == .active {
+            await scanTag()
+        } else {
+            scanWhenActive = true
+        }
+    }
+
+    @ObservationIgnored private var scanWhenActive = false
 
     /// `hobwork://nfc/<tag>` and universal links to `<host>/nfc/<tag>`.
     func open(_ url: URL) {

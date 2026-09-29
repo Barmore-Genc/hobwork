@@ -193,9 +193,34 @@ struct NFCTests {
             == json(#"{"records":[{"type":"url","value":"https://hobwork.example.com/nfc/abc"}],"tag":"abc"}"#))
 
         let written = try await capability.handle(method: "write", args: json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc","text":"Kitchen"}"#))
-        #expect(written == json(#"{"tag":"abc"}"#))
+        #expect(written == json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc"}"#))
         #expect(session.written.first?.0.absoluteString == "https://hobwork.example.com/nfc/abc")
         #expect(session.written.first?.1 == "Kitchen")
+
+        #expect(try await capability.handle(method: "write", args: json(#"{"url":"mailto:kaan@example.com"}"#))
+            == json(#"{"url":"mailto:kaan@example.com"}"#))
+        #expect(session.written.last?.0.absoluteString == "mailto:kaan@example.com")
+        await #expect { try await capability.handle(method: "write", args: json(#"{"url":"javascript:alert(1)"}"#)) } throws: {
+            ($0 as? CallError)?.code == "bad_request"
+        }
+    }
+
+    @Test func encodesScansOfAnyLink() throws {
+        let records = [NFCRecord(type: .url, value: "https://example.com/spools/3"), NFCRecord(type: .text, value: "Spool")]
+        let event = try #require(NFCTagLink.event(records: records, host: host))
+        #expect(try DeviceMessage.event(event).encoded()
+            == #"{"capability":"nfc","data":{"records":[{"type":"url","value":"https:\/\/example.com\/spools\/3"},{"type":"text","value":"Spool"}],"url":"https:\/\/example.com\/spools\/3"},"name":"scanned","type":"event"}"#)
+        #expect(NFCTagLink.event(records: [NFCRecord(type: .text, value: "Spool")], host: host) == nil)
+
+        let tagged = NFCTagLink.event(url: URL(string: "https://hobwork.example.com/nfc/abc")!, host: host)
+        #expect(tagged.data == json(#"{"tag":"abc"}"#))
+        let other = NFCTagLink.event(url: URL(string: "https://example.com/a")!, host: host)
+        #expect(other.data == json(#"{"url":"https://example.com/a"}"#))
+
+        let big = [NFCRecord(type: .url, value: "https://example.com/")] + Array(repeating: NFCRecord(type: .other, value: String(repeating: "A", count: 9000)), count: 2)
+            + Array(repeating: NFCRecord(type: .text, value: "x"), count: 20)
+        let trimmed = try #require(NFCTagLink.event(records: big, host: host)).data.objectValue?["records"]?.arrayValue
+        #expect(trimmed?.count == NFCTagLink.maxRecords)
     }
 
     @Test func mapsSessionErrors() async {

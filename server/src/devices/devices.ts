@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import type { DeviceEvent, DeviceInfo, HealthSample, HealthType, NotificationActionEvent, SentNotification } from '../../../packages/sdk/src/devices.ts'
+import type {
+  DeviceEvent,
+  DeviceInfo,
+  HealthSample,
+  HealthType,
+  NfcRecord,
+  NfcScannedEvent,
+  NotificationActionEvent,
+  SentNotification,
+} from '../../../packages/sdk/src/devices.ts'
 import { isAllowed } from '../auth/users.ts'
 import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
@@ -16,6 +25,7 @@ import {
   type DeviceRegistry,
 } from './registry.ts'
 import {
+  NFC_TAG_ID,
   answerCommand,
   answerNotification,
   COMMAND_TTL_MS,
@@ -39,8 +49,8 @@ import {
 } from './store.ts'
 
 // A `device` block of a trigger in hobwork.json. device limits it to one
-// device by name.
-export type DeviceTrigger = { capability: string; event: string; device?: string }
+// device by name, url (nfc/scanned only) to scanned URLs starting with it.
+export type DeviceTrigger = { capability: string; event: string; device?: string; url?: string }
 
 // Capability/event pairs the app sends and hobwork.json triggers may name.
 export const DEVICE_EVENTS = ['notifications/action', 'focus/changed', 'nfc/scanned', 'health/samples'] as const
@@ -68,6 +78,11 @@ export const SOCKET_FALLBACK_MS = 10_000
 const EXPIRY_INTERVAL_MS = 60_000
 const MAX_HEALTH_EVENT_SAMPLES = 500
 const MAX_FOCUS_LABEL = 64
+// Tags hold at most a few KB; this also bounds what goes into a handler's payload.
+const MAX_SCANNED_URL_BYTES = 8192
+const MAX_SCANNED_RECORDS = 16
+const MAX_SCANNED_RECORD_BYTES = 8192
+const NFC_RECORD_TYPES = ['url', 'text', 'other']
 const MAX_LOGGED_RESULT = 500
 const MAX_ACTIONS = 4
 const MAX_TITLE_BYTES = 200
@@ -209,6 +224,33 @@ function parseOutcome(message: { ok?: unknown; value?: unknown; error?: unknown 
       message: typeof error.message === 'string' && error.message ? error.message.slice(0, 2000) : 'The device reported an error',
     },
   }
+}
+
+// Trigger url prefixes that are URLs compare in their normalized form, so
+// "https://Example.com" matches "https://example.com/a" but not
+// "https://example.com.evil.example/".
+function urlPrefix(prefix: string): string {
+  return URL.canParse(prefix) ? new URL(prefix).href : prefix
+}
+
+function scannedUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !URL.canParse(value)) return undefined
+  const url = new URL(value).href
+  return Buffer.byteLength(url) <= MAX_SCANNED_URL_BYTES ? url : undefined
+}
+
+// undefined without records, null for invalid ones.
+function scannedRecords(value: unknown): NfcRecord[] | undefined | null {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > MAX_SCANNED_RECORDS) return null
+  const valid = value.every(
+    (r) =>
+      isObject(r) &&
+      NFC_RECORD_TYPES.includes(r.type as string) &&
+      typeof r.value === 'string' &&
+      Buffer.byteLength(r.value) <= MAX_SCANNED_RECORD_BYTES,
+  )
+  return valid ? (value as Record<string, unknown>[]).map((r) => ({ type: r.type, value: r.value }) as NfcRecord) : null
 }
 
 function short(value: unknown): string {
@@ -389,7 +431,7 @@ export function createDevices(options: {
     const parsed = spec.parse((args ?? {}) as Record<string, unknown>, now())
     const projectRow = getProject(host, project)
     if (!projectRow) bad(`Project "${project}" does not exist`)
-    const tag = capability === 'nfc' && method === 'write' ? newNfcTagId() : undefined
+    const tag = capability === 'nfc' && method === 'write' && parsed.url === undefined ? newNfcTagId() : undefined
     const sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
     const id = randomUUID()
     const createdAt = now()
@@ -552,10 +594,10 @@ export function createDevices(options: {
     if (!command || command.deviceId !== deviceId) return 'unknown'
     let outcome = parseOutcome(message)
     if (!answerCommand(host.db, command.id, outcome, now())) return 'ignored'
-    const tag = command.capability === 'nfc' && command.method === 'write' ? (command.args as { tag: string }).tag : undefined
-    if (tag) {
-      if (outcome.ok) outcome = { ok: true, value: { tag } }
-      else deleteNfcTag(host.db, tag)
+    if (command.capability === 'nfc' && command.method === 'write') {
+      const { tag, url } = command.args as { tag?: string; url: string }
+      if (outcome.ok) outcome = { ok: true, value: tag ? { tag, url } : { url } }
+      else if (tag) deleteNfcTag(host.db, tag)
     }
     const waiter = waiters.get(command.id)
     const what = `${command.capability}.${command.method}`
@@ -579,18 +621,31 @@ export function createDevices(options: {
 
   function expire() {
     for (const command of expireCommands(host.db, now())) {
-      if (command.capability === 'nfc' && command.method === 'write') deleteNfcTag(host.db, (command.args as { tag: string }).tag)
+      const tag = command.capability === 'nfc' && command.method === 'write' ? (command.args as { tag?: string }).tag : undefined
+      if (tag) deleteNfcTag(host.db, tag)
       const name = getDevice(host.db, command.deviceId)?.name ?? `device ${command.deviceId}`
       commandLog(command, 'warn', `Device ${name}: ${command.capability}.${command.method} expired without an answer from the device`)
     }
   }
 
-  function matching(entries: Record<string, { device?: DeviceTrigger }>, capability: string, event: string, device: string | null): string[] {
+  // scan is set for nfc/scanned. Triggers with a url only match links that
+  // start with it, and links that are not Hobwork tags (foreign) only match
+  // triggers with a url, so projects do not get scans they never asked for.
+  function matching(
+    entries: Record<string, { device?: DeviceTrigger }>,
+    capability: string,
+    event: string,
+    device: string | null,
+    scan?: { url: string; foreign: boolean },
+  ): string[] {
     return Object.entries(entries)
       .filter(([, entry]) => {
         const trigger = entry.device
         if (trigger?.capability !== capability || trigger.event !== event) return false
-        return trigger.device === undefined || trigger.device === device
+        if (trigger.device !== undefined && trigger.device !== device) return false
+        if (!scan) return true
+        if (typeof trigger.url !== 'string') return !scan.foreign
+        return scan.url.startsWith(urlPrefix(trigger.url))
       })
       .map(([name]) => name)
   }
@@ -616,10 +671,7 @@ export function createDevices(options: {
     const data = event.data
     const pair = `${String(event.capability)}/${String(event.name)}`
     if (pair === 'notifications/action') return notificationAction(device, data)
-    if (pair === 'nfc/scanned') {
-      if (typeof data.tag === 'string') await nfcScanned(data.tag, device.name)
-      return
-    }
+    if (pair === 'nfc/scanned') return nfcEvent(device.name, data)
     if (pair === 'focus/changed') {
       const { label, active } = data
       if (typeof label !== 'string' || !label || label.length > MAX_FOCUS_LABEL || typeof active !== 'boolean') return
@@ -639,9 +691,11 @@ export function createDevices(options: {
     }
   }
 
-  // Focus and Health events belong to no project, so they go to every
-  // project whose deployed version has a matching trigger.
+  // Focus and Health events and scans of tags Hobwork did not write belong to
+  // no project, so they go to every project whose deployed version has a
+  // matching trigger.
   async function broadcast(payload: DeviceEvent) {
+    const scan = payload.capability === 'nfc' ? { url: payload.url, foreign: true } : undefined
     for (const { name: project } of listProjects(host)) {
       let entries: Record<string, { device?: DeviceTrigger }>
       try {
@@ -650,15 +704,43 @@ export function createDevices(options: {
         // Projects that were never deployed have no triggers.
         continue
       }
-      run(project, matching(entries, payload.capability, payload.event, payload.device), payload)
+      run(project, matching(entries, payload.capability, payload.event, payload.device, scan), payload)
     }
+  }
+
+  // The tag ID of a Hobwork tag URL of this host.
+  function tagOfUrl(url: string): string | undefined {
+    const prefix = `${publicUrl}/nfc/`
+    if (!url.startsWith(prefix)) return undefined
+    const tag = url.slice(prefix.length)
+    return NFC_TAG_ID.test(tag) ? tag : undefined
+  }
+
+  // nfc/scanned from the app: { tag } for a Hobwork tag, { url, records? }
+  // for any tag with a URL (the app's scan, or a URL from a Shortcut).
+  async function nfcEvent(device: string, data: Record<string, unknown>) {
+    const records = scannedRecords(data.records)
+    if (records === null) return
+    if (typeof data.tag === 'string') {
+      await nfcScanned(data.tag, device, records)
+      return
+    }
+    const url = scannedUrl(data.url)
+    if (!url) return
+    const tag = tagOfUrl(url)
+    if (tag) {
+      await nfcScanned(tag, device, records)
+      return
+    }
+    await broadcast({ device, capability: 'nfc', event: 'scanned', url, ...(records ? { records } : {}) })
   }
 
   // A scan of a Hobwork tag, from the app or the tag's web page (device null).
   // Runs the triggers of the project that wrote the tag. False for an unknown tag.
-  async function nfcScanned(tag: string, device: string | null): Promise<boolean> {
+  async function nfcScanned(tag: string, device: string | null, records?: NfcRecord[]): Promise<boolean> {
     const project = nfcTagProject(host.db, tag)
     if (!project) return false
+    const url = `${publicUrl}/nfc/${tag}`
     const from = device ?? 'A browser'
     let entries: Record<string, { device?: DeviceTrigger }>
     try {
@@ -667,7 +749,7 @@ export function createDevices(options: {
       projectLog(project, 'warn', `${from}: NFC tag ${tag} was scanned, but the project's triggers could not be read: ${(err as Error).message}`)
       return true
     }
-    const names = matching(entries, 'nfc', 'scanned', device)
+    const names = matching(entries, 'nfc', 'scanned', device, { url, foreign: false })
     if (!names.length) {
       projectLog(
         project,
@@ -676,7 +758,8 @@ export function createDevices(options: {
       )
       return true
     }
-    run(project, names, { device, capability: 'nfc', event: 'scanned', tag })
+    const payload: NfcScannedEvent = { device, capability: 'nfc', event: 'scanned', tag, url, ...(records ? { records } : {}) }
+    run(project, names, payload)
     return true
   }
 

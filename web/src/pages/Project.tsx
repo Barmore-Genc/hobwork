@@ -102,7 +102,9 @@ function triggerSummary(trigger: EntryPoints['triggers'][number]): string {
     const summaries: Record<string, string> = {
       notifications: `When someone taps a button on a notification from this project${on}`,
       focus: `When a Focus mode turns on or off${on}`,
-      nfc: `When someone scans an NFC tag of this project${on}`,
+      nfc: trigger.device.url
+        ? `When someone scans an NFC tag with a link starting with ${trigger.device.url}${on}`
+        : `When someone scans an NFC tag of this project${on}`,
       health: `When new Health data arrives${on}`,
     }
     return summaries[trigger.device.capability] ?? 'On a device event'

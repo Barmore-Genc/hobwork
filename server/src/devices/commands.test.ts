@@ -265,7 +265,18 @@ test('NFC commands are a prompt push, and nfc.write creates a tag the project ow
   // Foreground commands wait longer than background ones.
   await new Promise((r) => setTimeout(r, 500))
   expect((await postResult(device.token, { id: command.id, ok: true, value: {} })).status).toBe(204)
-  expect(await call).toEqual({ tag })
+  expect(await call).toEqual({ tag, url: `${TEST_PUBLIC_URL}/nfc/${tag}` })
+})
+
+test('nfc.write with a url writes that URL and creates no tag', async () => {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', { url: 'HTTPS://Example.com/spools/3', text: 'Spool 3' })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const command = pushed().payload.hobwork.command
+  expect(command.args).toEqual({ url: 'https://example.com/spools/3', text: 'Spool 3' })
+  expect(host.db.prepare('SELECT count(*) AS n FROM nfc_tags').get()).toEqual({ n: 0 })
+  await postResult(device.token, { id: command.id, ok: true, value: {} })
+  expect(await call).toEqual({ url: 'https://example.com/spools/3' })
 })
 
 test('a failed nfc.write leaves no tag behind', async () => {
@@ -420,6 +431,13 @@ test('arguments are checked on the host', async () => {
     ['screenTime', 'schedule', { name: 'night', set: 'social', start: '22:00', end: '22:00' }, 'start and end must differ'],
     ['screenTime', 'limit', { name: 'daily', set: 'social', minutes: 1440 }, 'minutes must be a whole number from 1 to 1439'],
     ['nfc', 'write', { text: 'x'.repeat(1025) }, 'at most 1024 bytes'],
+    ['nfc', 'write', { url: 'example.com' }, 'url must be an absolute URL'],
+    ['nfc', 'write', { url: 'https://example.com/a b' }, 'url must be an absolute URL'],
+    ['nfc', 'write', { url: 'javascript:alert(1)' }, 'url must use one of the schemes'],
+    ['nfc', 'write', { url: 'file:///etc/passwd' }, 'url must use one of the schemes'],
+    ['nfc', 'write', { url: 'https://me:secret@example.com/' }, 'user name or password'],
+    ['nfc', 'write', { url: `https://example.com/${'x'.repeat(2048)}` }, 'at most 2048 bytes'],
+    ['nfc', 'write', { url: 42 }, 'url must be'],
     ['health', 'query', { type: 'weight', from: past, to: future }, 'type must be one of'],
     ['health', 'query', { type: 'steps', from: future, to: past }, 'from must be before to'],
     ['health', 'query', { type: 'steps', from: past, to: future, limit: 5000 }, 'limit must be a whole number from 1 to 1000'],
@@ -501,7 +519,9 @@ test('the tag page runs the scan for a signed-in person, and offers the app and 
   expect(opened.status).toBe(303)
   expect(opened.headers.get('location')).toBe(`/nfc/${tag}?scanned`)
   await until(() => invoked.length === 1)
-  expect(invoked).toEqual([{ project: 'bedtime', name: 'desk', payload: { device: null, capability: 'nfc', event: 'scanned', tag } }])
+  expect(invoked).toEqual([
+    { project: 'bedtime', name: 'desk', payload: { device: null, capability: 'nfc', event: 'scanned', tag, url: `${TEST_PUBLIC_URL}/nfc/${tag}` } },
+  ])
   const result = await fetch(`${app.base}/nfc/${tag}?scanned`, { headers: { cookie } })
   expect(await result.text()).toContain('bedtime got the scan')
   expect(invoked).toHaveLength(1)
@@ -531,7 +551,23 @@ test('tag scans from the app run the triggers of the project that wrote the tag'
   await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { tag: 'AAAAAAAAAAAAAAAAAAAAAA' } })
   await until(() => invoked.length === 1)
   await new Promise((r) => setTimeout(r, 50))
-  expect(invoked).toEqual([{ project: 'bedtime', name: 'desk', payload: { device: 'scanner', capability: 'nfc', event: 'scanned', tag } }])
+  expect(invoked).toEqual([
+    { project: 'bedtime', name: 'desk', payload: { device: 'scanner', capability: 'nfc', event: 'scanned', tag, url: `${TEST_PUBLIC_URL}/nfc/${tag}` } },
+  ])
+
+  // The app's scan sends the URL and records; a tag URL of this host is still the tag.
+  invoked = []
+  const records = [
+    { type: 'url', value: `${TEST_PUBLIC_URL}/nfc/${tag}` },
+    { type: 'text', value: 'Desk' },
+  ]
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { url: `${TEST_PUBLIC_URL}/nfc/${tag}`, records } })
+  await until(() => invoked.length === 1)
+  expect(invoked[0]).toEqual({
+    project: 'bedtime',
+    name: 'desk',
+    payload: { device: 'scanner', capability: 'nfc', event: 'scanned', tag, url: `${TEST_PUBLIC_URL}/nfc/${tag}`, records },
+  })
 
   triggers.bedtime = {}
   await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { tag } })
@@ -540,6 +576,50 @@ test('tag scans from the app run the triggers of the project that wrote the tag'
     event: 'trigger',
     message: expect.stringContaining('no trigger handles it'),
   })
+})
+
+test('scans of other URLs go to every project with a trigger whose url prefix matches', async () => {
+  await createProject(host, 'spools')
+  triggers.bedtime = {
+    ownTags: { device: { capability: 'nfc', event: 'scanned' } },
+    anyHttps: { device: { capability: 'nfc', event: 'scanned', url: 'https:' } },
+    macOnly: { device: { capability: 'nfc', event: 'scanned', url: 'https:', device: 'kaan-mac' } },
+  }
+  triggers.spools = {
+    spool: { device: { capability: 'nfc', event: 'scanned', url: 'https://Example.com' } },
+    other: { device: { capability: 'nfc', event: 'scanned', url: 'https://example.org/' } },
+  }
+  const device = await phone()
+  const records = [{ type: 'url', value: 'https://example.com/spools/3' }, { type: 'other', value: 'AQID' }]
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { url: 'https://example.com/spools/3', records } })
+  await until(() => invoked.length === 2)
+  const payload = { device: 'kaan-iphone', capability: 'nfc', event: 'scanned', url: 'https://example.com/spools/3', records }
+  expect(invoked.map((i) => [i.project, i.name, i.payload]).sort()).toEqual([
+    ['bedtime', 'anyHttps', payload],
+    ['spools', 'spool', payload],
+  ])
+
+  invoked = []
+  // A host that only starts with the prefix's text is another site.
+  await postEvent(device.token, { capability: 'nfc', name: 'scanned', data: { url: 'https://example.com.evil.example/' } })
+  await until(() => invoked.length === 1)
+  await new Promise((r) => setTimeout(r, 50))
+  expect(invoked.map((i) => i.name)).toEqual(['anyHttps'])
+
+  invoked = []
+  for (const data of [
+    { url: 'not a url' },
+    { records },
+    { url: 'https://example.com/', records: [{ type: 'image', value: 'x' }] },
+    { url: 'https://example.com/', records: Array(17).fill(records[0]) },
+    { url: `https://example.com/${'x'.repeat(8192)}` },
+    // An unknown tag of this host is not a URL for other projects.
+    { url: `${TEST_PUBLIC_URL}/nfc/AAAAAAAAAAAAAAAAAAAAAA` },
+  ]) {
+    await postEvent(device.token, { capability: 'nfc', name: 'scanned', data })
+  }
+  await new Promise((r) => setTimeout(r, 50))
+  expect(invoked).toEqual([])
 })
 
 test('Focus and Health events go to every project with a matching trigger, filtered by device', async () => {
@@ -606,4 +686,7 @@ test('hobwork.json accepts the device trigger pairs and a device name', () => {
   expect(check({ capability: 'focus', event: 'scanned' })).not.toEqual([])
   expect(check({ capability: 'alarms', event: 'rang' })).not.toEqual([])
   expect(check({ capability: 'nfc', event: 'scanned', device: "Kaan's iPhone" })).not.toEqual([])
+  expect(check({ capability: 'nfc', event: 'scanned', url: 'https://example.com/' })).toEqual([])
+  expect(check({ capability: 'nfc', event: 'scanned', url: '' })).not.toEqual([])
+  expect(check({ capability: 'focus', event: 'changed', url: 'https://example.com/' })).not.toEqual([])
 })

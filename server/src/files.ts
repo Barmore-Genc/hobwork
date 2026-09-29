@@ -72,6 +72,37 @@ async function readNoFollow(path: string): Promise<Buffer> {
   }
 }
 
+export const MAX_CONFIG_FILE_BYTES = 1024 * 1024
+
+// For files the host parses out of a checkout (hobwork.json, package.json).
+// O_NONBLOCK keeps a FIFO from blocking the open, and the size cap keeps the
+// guest from making the host read an unbounded file.
+export async function readRegularFile(path: string, label: string, maxBytes = MAX_CONFIG_FILE_BYTES): Promise<string> {
+  let handle
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (err) {
+    if (isErrno(err, 'ELOOP') || isErrno(err, 'EMLINK')) throw new ProjectError(`${label} is a symlink`)
+    throw err
+  }
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile()) throw new ProjectError(`${label} is not a regular file`)
+    if (stat.size > maxBytes) throw new ProjectError(`${label} is larger than ${maxBytes} bytes`)
+    const buffer = Buffer.alloc(maxBytes + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length)
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    if (length > maxBytes) throw new ProjectError(`${label} is larger than ${maxBytes} bytes`)
+    return buffer.toString('utf8', 0, length)
+  } finally {
+    await handle.close()
+  }
+}
+
 // Returns the directory relative to the checkout root, '.' for the root.
 export async function checkoutDirectory(root: string, path: string): Promise<string> {
   const { rel, real } = await resolveExisting(root, path)

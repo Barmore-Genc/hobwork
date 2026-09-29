@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { join, posix, resolve } from 'node:path'
+import { basename, join, posix, resolve } from 'node:path'
+import { readRegularFile } from './files.ts'
 import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { extraDependencies } from './platform.ts'
@@ -72,9 +72,9 @@ function guestCwd(cwd: string): string {
   return path
 }
 
-function readJson(path: string, parse: (text: string) => unknown = JSON.parse): unknown {
+async function readJson(path: string, parse: (text: string) => unknown = JSON.parse): Promise<unknown> {
   try {
-    return parse(readFileSync(path, 'utf8'))
+    return parse(await readRegularFile(path, basename(path)))
   } catch {
     return undefined
   }
@@ -82,14 +82,14 @@ function readJson(path: string, parse: (text: string) => unknown = JSON.parse): 
 
 // Invalid files count as empty. The pipeline reports them, and the agent can
 // still run commands to fix them.
-export function hobworkEgress(dir: string): string[] {
-  const config = readJson(join(dir, 'hobwork.json'), parseHobworkJson)
+export async function hobworkEgress(dir: string): Promise<string[]> {
+  const config = await readJson(join(dir, 'hobwork.json'), parseHobworkJson)
   const egress = (config as { egress?: unknown } | undefined)?.egress
   return Array.isArray(egress) ? egress.filter((host): host is string => typeof host === 'string') : []
 }
 
-export function hasExtraDependencies(dir: string): boolean {
-  const pkg = readJson(join(dir, 'package.json'))
+export async function hasExtraDependencies(dir: string): Promise<boolean> {
+  const pkg = await readJson(join(dir, 'package.json'))
   return typeof pkg === 'object' && pkg !== null && extraDependencies(pkg).length > 0
 }
 
@@ -174,8 +174,7 @@ export function workspaceVmBackend(
     const fingerprint = environments?.fingerprint(workspace) ?? ''
     const environment = await environments?.start(workspace)
     // The registry is always reachable so agents can add and install extras.
-    const egressOf = (extra: string[]) => new Set([NPM_REGISTRY, ...hobworkEgress(workspace.dir), ...extra])
-    const egress = [...egressOf(environment?.egress ?? [])]
+    const egress = [...new Set([NPM_REGISTRY, ...(await hobworkEgress(workspace.dir)), ...(environment?.egress ?? [])])]
     const base = sandboxOptions(options, workspace.dir, egress, label, environment)
     const cliApi = internal?.(workspace)
     const environmentApi = environment?.internal
@@ -209,7 +208,7 @@ export function workspaceVmBackend(
     }
     const vm = execVm(sandbox)
 
-    if (hasExtraDependencies(workspace.dir)) {
+    if (await hasExtraDependencies(workspace.dir)) {
       // A failed install does not fail the start: the agent sees missing
       // packages and can run pnpm install itself to get the error.
       const install = await vm.exec('pnpm install', { cwd: '.', timeoutMs: INSTALL_TIMEOUT_MS })
@@ -225,9 +224,9 @@ export function workspaceVmBackend(
         await sandbox.stop()
         await environments?.stop?.(workspace)
       },
-      isStale: () => {
+      isStale: async () => {
         if ((environments?.fingerprint(workspace) ?? '') !== fingerprint) return true
-        const current = egressOf(environment?.egress ?? [])
+        const current = new Set([NPM_REGISTRY, ...(await hobworkEgress(workspace.dir)), ...(environment?.egress ?? [])])
         return current.size !== egress.length || egress.some((host) => !current.has(host))
       },
     }

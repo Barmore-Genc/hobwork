@@ -13,7 +13,6 @@ Sections are in the order to work on them.
 
 ### Quick fixes
 
-- **Reading `hobwork.json` and `package.json` from workspaces**: open with `O_NOFOLLOW`, require a regular file, cap the size. Replaced later by reading them from git or the VM.
 
 ### Limiting a compromised hob
 

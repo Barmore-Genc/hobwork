@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +8,7 @@ import {
   editCheckoutFile,
   listCheckoutFiles,
   readCheckoutFile,
+  readRegularFile,
   searchCheckout,
   writeCheckoutFile,
 } from './files.ts'
@@ -85,4 +87,35 @@ test('search stops at a pathological pattern instead of blocking the host', asyn
   await expect(search).rejects.toThrow('timed out')
   clearInterval(interval)
   expect(ticks).toBeGreaterThan(3)
+})
+
+test('readRegularFile reads a normal file', async () => {
+  writeFileSync(join(root, 'hobwork.json'), '{"egress":[]}')
+  expect(await readRegularFile(join(root, 'hobwork.json'), 'hobwork.json')).toBe('{"egress":[]}')
+})
+
+test('readRegularFile refuses a symlink', async () => {
+  symlinkSync(join(outside, 'secret.txt'), join(root, 'hobwork.json'))
+  await expect(readRegularFile(join(root, 'hobwork.json'), 'hobwork.json')).rejects.toThrow('hobwork.json is a symlink')
+})
+
+test('readRegularFile refuses a directory', async () => {
+  mkdirSync(join(root, 'package.json'))
+  await expect(readRegularFile(join(root, 'package.json'), 'package.json')).rejects.toThrow(
+    'package.json is not a regular file',
+  )
+})
+
+test('readRegularFile refuses a FIFO without blocking', async () => {
+  execFileSync('mkfifo', [join(root, 'hobwork.json')])
+  await expect(readRegularFile(join(root, 'hobwork.json'), 'hobwork.json')).rejects.toThrow(
+    'hobwork.json is not a regular file',
+  )
+})
+
+test('readRegularFile refuses an oversized file', async () => {
+  writeFileSync(join(root, 'package.json'), 'x'.repeat(101))
+  await expect(readRegularFile(join(root, 'package.json'), 'package.json', 100)).rejects.toThrow(
+    'package.json is larger than 100 bytes',
+  )
 })

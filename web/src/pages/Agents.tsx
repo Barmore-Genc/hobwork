@@ -58,7 +58,7 @@ function KeyRow({ token, onRevoke }: { token: AgentToken; onRevoke: (token: Agen
   return (
     <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
       <div className={revoked ? 'text-muted' : ''}>
-        <p>
+        <p className={revoked ? 'line-through' : ''}>
           Key created <span title={exactTime(token.createdAt)}>{shortDate(token.createdAt)}</span>
         </p>
         <p className="text-sm text-muted">
@@ -85,7 +85,7 @@ function ConnectionRow({ connection, onRevoke }: { connection: Connection; onRev
   return (
     <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
       <div className={revoked ? 'text-muted' : ''}>
-        <p>
+        <p className={revoked ? 'line-through' : ''}>
           Signed in through {connection.clientName}
           {connection.connectedBy && <> by {connection.connectedBy}</>}
         </p>
@@ -215,6 +215,15 @@ export function AgentsPage() {
   const [removeBusy, setRemoveBusy] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
   const [addingSshKey, setAddingSshKey] = useState<number | null>(null)
+  const [revokedShown, setRevokedShown] = useState<Set<number>>(new Set())
+
+  function toggleRevoked(agentId: number) {
+    setRevokedShown((shown) => {
+      const next = new Set(shown)
+      if (!next.delete(agentId)) next.add(agentId)
+      return next
+    })
+  }
 
   async function create(event: FormEvent) {
     event.preventDefault()
@@ -332,6 +341,12 @@ export function AgentsPage() {
         {agents && agents.length > 0 && (
           <ul className="space-y-8">
             {agents.map((agent) => {
+              const activeConnections = agent.connections.filter((c) => c.revokedAt === null)
+              const revokedConnections = agent.connections.filter((c) => c.revokedAt !== null)
+              const activeTokens = agent.tokens.filter((t) => t.revokedAt === null)
+              const revokedTokens = agent.tokens.filter((t) => t.revokedAt !== null)
+              const revokedCount = revokedConnections.length + revokedTokens.length
+              const showRevoked = revokedShown.has(agent.id)
               return (
                 <li key={agent.id} className="border-t border-border pt-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
@@ -356,34 +371,48 @@ export function AgentsPage() {
                       }}
                     />
                   )}
-                  {agent.connections.length > 0 && (
+                  {(activeConnections.length > 0 || activeTokens.length > 0 || agent.sshKeys.length > 0) && (
                     <ul className="mt-3 divide-y divide-border">
-                      {agent.connections.map((connection) => (
+                      {activeConnections.map((connection) => (
                         <ConnectionRow
-                          key={connection.id}
+                          key={`c${connection.id}`}
                           connection={connection}
                           onRevoke={(c) => revokeConnection(agent, c)}
                         />
                       ))}
-                    </ul>
-                  )}
-                  {agent.tokens.length > 0 && (
-                    <ul className="mt-3 divide-y divide-border">
-                      {agent.tokens.map((token) => (
-                        <KeyRow
-                          key={token.id}
-                          token={token}
-                          onRevoke={(t) => revokeToken(agent, t)}
-                        />
+                      {activeTokens.map((token) => (
+                        <KeyRow key={`t${token.id}`} token={token} onRevoke={(t) => revokeToken(agent, t)} />
                       ))}
-                    </ul>
-                  )}
-                  {agent.sshKeys.length > 0 && (
-                    <ul className="mt-3 divide-y divide-border">
                       {agent.sshKeys.map((key) => (
-                        <SshKeyRow key={key.id} sshKey={key} onRemove={(k) => removeSshKey(agent, k)} />
+                        <SshKeyRow key={`s${key.id}`} sshKey={key} onRemove={(k) => removeSshKey(agent, k)} />
                       ))}
                     </ul>
+                  )}
+                  {revokedCount > 0 && (
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        aria-expanded={showRevoked}
+                        onClick={() => toggleRevoked(agent.id)}
+                        className="text-sm text-muted underline-offset-2 hover:text-fg hover:underline"
+                      >
+                        {showRevoked ? 'Hide revoked' : `Show ${revokedCount} revoked`}
+                      </button>
+                      {showRevoked && (
+                        <ul className="mt-1 divide-y divide-border">
+                          {revokedConnections.map((connection) => (
+                            <ConnectionRow
+                              key={`c${connection.id}`}
+                              connection={connection}
+                              onRevoke={(c) => revokeConnection(agent, c)}
+                            />
+                          ))}
+                          {revokedTokens.map((token) => (
+                            <KeyRow key={`t${token.id}`} token={token} onRevoke={(t) => revokeToken(agent, t)} />
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </li>
               )

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
+import type { HomeAssistant } from './homeassistant.ts'
 import type { Context, Db, Logger } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
 
@@ -32,9 +33,21 @@ export function createTestDb(options: TestDbOptions = {}): Db {
 
 const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
 
-// A handler context for tests. `db` defaults to a fresh test DB; `fetch`
-// rejects until a test stubs it, since tests should not reach the network.
-export function createTestContext(overrides: Partial<Context> = {}): Context {
+function unstubbedHa(): HomeAssistant {
+  const reject = (method: string) => () =>
+    Promise.reject(new Error(`ctx.ha.${method} is not stubbed in this test. Pass ha: { ${method} } to createTestContext`))
+  return { callService: reject('callService'), getState: reject('getState'), getStates: reject('getStates'), fireEvent: reject('fireEvent') }
+}
+
+export type TestContextOverrides = Omit<Partial<Context>, 'ha'> & {
+  // Methods not given reject, like fetch.
+  ha?: Partial<HomeAssistant>
+}
+
+// A handler context for tests. `db` defaults to a fresh test DB; `fetch` and
+// `ha` reject until a test stubs them, since tests should not reach the network
+// or change the home.
+export function createTestContext(overrides: TestContextOverrides = {}): Context {
   return {
     invocation: { id: 1, kind: 'route', name: 'test', manual: true },
     params: {},
@@ -42,6 +55,7 @@ export function createTestContext(overrides: Partial<Context> = {}): Context {
     log: silent,
     secrets: {},
     ...overrides,
+    ha: { ...unstubbedHa(), ...overrides.ha },
     db: overrides.db ?? createTestDb(),
   }
 }

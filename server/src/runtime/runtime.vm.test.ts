@@ -79,6 +79,7 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project runtime in VMs', {
     await ok('create_branch', p)
     const config = JSON.parse(await ok('read_file', { ...p, path: 'hobwork.json' }))
     config.routes['GET /boom/:id'] = { handler: 'src/boom.ts' }
+    config.routes['GET /lights'] = { handler: 'src/lights.ts' }
     config.crons.tick = { schedule: '* * * * *', handler: 'src/tick.ts' }
     await ok('write_file', { ...p, path: 'hobwork.json', content: JSON.stringify(config, null, 2) })
     await ok('write_file', {
@@ -107,6 +108,25 @@ export default ((ctx) => {
 }) satisfies Handler
 `,
     })
+    // The SDK in the image has ctx.ha and the OpenRouter helper, and its errors
+    // pass instanceof in the handler bundle although the runner threw them.
+    await ok('write_file', {
+      ...p,
+      path: 'src/lights.ts',
+      content: `import { HomeAssistantError, openrouter, type RequestHandler } from '@hobwork/sdk'
+
+export default (async (ctx) => {
+  const ai = typeof openrouter(ctx).json
+  try {
+    await ctx.ha.getState('light.kitchen')
+    return { ai }
+  } catch (err) {
+    if (err instanceof HomeAssistantError) return { ai, code: err.code }
+    throw err
+  }
+}) satisfies RequestHandler
+`,
+    })
     await ok('commit', { ...p, message: 'Add boom route and tick cron' })
     const merged = await ok('merge', { ...p, summary: 'Add boom route and tick cron' })
     expect(merged).toMatch(/^Merged runtime into main as version 2/)
@@ -116,6 +136,7 @@ export default ((ctx) => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ message: expect.stringMatching(/^Good (morning|afternoon|evening)$/) })
     expect((await fetch(`${base}/p/filament/api/greeting`)).status).toBe(401)
+    expect(await (await api('/lights')).json()).toEqual({ ai: 'function', code: 'not_configured' })
   })
 
   test('crons run by hand and on schedule', async () => {

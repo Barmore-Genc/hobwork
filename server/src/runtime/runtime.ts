@@ -10,6 +10,8 @@ import { RUNNER_PORT } from '../../../packages/sdk/src/runner/protocol.ts'
 import { dbResponse } from '../data/internal.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Deployment } from '../delivery.ts'
+import type { HomeAssistant } from '../homeassistant/client.ts'
+import { haResponse } from '../homeassistant/internal.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
 import type { Host } from '../host.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
@@ -48,6 +50,7 @@ const MAX_LINES_PER_INVOCATION = 1000
 const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 const OUTPUT_TAIL_LINES = 30
+const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha'])
 
 export type RuntimeOptions = {
   // Without it, invocations fail with an explanation; logs, crons and deploy
@@ -59,6 +62,8 @@ export type RuntimeOptions = {
   // Restores a version (delivery.restore), used by auto-revert.
   revert?: (request: { project: string; version: number; summary: string }) => Promise<unknown>
   triggers?: TriggerRegistry
+  // Answers ctx.ha calls from handlers.
+  homeAssistant?: HomeAssistant
   // Project DBs for handlers (ctx.db) and migrations on deploy.
   data?: ProjectData
   // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
@@ -206,10 +211,46 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     }
   }
 
+  // Lines for an invocation of another project go to the project log without
+  // one. Each invocation keeps at most MAX_LINES_PER_INVOCATION lines.
+  function invocationLines(project: string, inst: Instance | undefined) {
+    const owned = host.db.prepare(
+      'SELECT 1 FROM invocations i JOIN projects p ON p.id = i.project_id WHERE i.id = ? AND p.name = ?',
+    )
+    const known = new Map<number, boolean>()
+    const entries: NewLogEntry[] = []
+    return {
+      entries,
+      add(entry: NewLogEntry) {
+        let invocationId = entry.invocationId
+        if (invocationId !== undefined) {
+          if (!known.has(invocationId)) known.set(invocationId, owned.get(invocationId, project) !== undefined)
+          if (!known.get(invocationId)) invocationId = undefined
+        }
+        if (invocationId !== undefined && inst) {
+          const count = (inst.lines.get(invocationId) ?? 0) + 1
+          inst.lines.set(invocationId, count)
+          if (count > MAX_LINES_PER_INVOCATION + 1) return
+          if (count === MAX_LINES_PER_INVOCATION + 1) {
+            entries.push({
+              project,
+              invocationId,
+              source: 'runtime',
+              level: 'warn',
+              message: `More than ${MAX_LINES_PER_INVOCATION} log lines; the rest of this invocation's lines were dropped`,
+            })
+            return
+          }
+        }
+        entries.push({ ...entry, invocationId })
+      },
+    }
+  }
+
   async function handleInternal(project: string, instance: () => Instance | undefined, request: Request): Promise<Response> {
     const url = new URL(request.url)
     const route = `${request.method} ${url.pathname}`
-    if (route !== 'POST /v1/logs' && route !== 'POST /v1/db') {
+    if (!INTERNAL_ROUTES.has(route)) {
       return Response.json({ error: `${route} does not exist` }, { status: 404 })
     }
     const body = await request.text()
@@ -219,49 +260,35 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       if (!data) return Response.json({ error: 'This Hobwork host has no project DBs' }, { status: 503 })
       return dbResponse(body, (request) => data.execute({ project }, request))
     }
+    if (route === 'POST /v1/ha') {
+      return haResponse(body, {
+        ha: options.homeAssistant,
+        access: 'full',
+        log: ({ invocation, level, message }) => {
+          const lines = invocationLines(project, instance())
+          lines.add({ project, invocationId: invocation, source: 'runtime', level, message })
+          appendLogs(host, lines.entries)
+        },
+      })
+    }
     let batch: LogBatch
     try {
       batch = JSON.parse(body) as LogBatch
     } catch {
       return Response.json({ error: 'Body must be JSON' }, { status: 400 })
     }
-    const inst = instance()
-    const owned = host.db.prepare(
-      'SELECT 1 FROM invocations i JOIN projects p ON p.id = i.project_id WHERE i.id = ? AND p.name = ?',
-    )
-    const known = new Map<number, boolean>()
-    const entries: NewLogEntry[] = []
+    const lines = invocationLines(project, instance())
     for (const line of batch.lines ?? []) {
-      let invocationId = typeof line.invocation === 'number' ? line.invocation : undefined
-      if (invocationId !== undefined) {
-        if (!known.has(invocationId)) known.set(invocationId, owned.get(invocationId, project) !== undefined)
-        if (!known.get(invocationId)) invocationId = undefined
-      }
-      if (invocationId !== undefined && inst) {
-        const count = (inst.lines.get(invocationId) ?? 0) + 1
-        inst.lines.set(invocationId, count)
-        if (count > MAX_LINES_PER_INVOCATION + 1) continue
-        if (count === MAX_LINES_PER_INVOCATION + 1) {
-          entries.push({
-            project,
-            invocationId,
-            source: 'runtime',
-            level: 'warn',
-            message: `More than ${MAX_LINES_PER_INVOCATION} log lines; the rest of this invocation's lines were dropped`,
-          })
-          continue
-        }
-      }
-      entries.push({
+      lines.add({
         project,
-        invocationId,
+        invocationId: typeof line.invocation === 'number' ? line.invocation : undefined,
         source: 'handler',
         level: ['debug', 'info', 'warn', 'error'].includes(line.level) ? line.level : 'info',
         message: String(line.message),
         time: typeof line.time === 'string' && !Number.isNaN(Date.parse(line.time)) ? new Date(line.time).toISOString() : undefined,
       })
     }
-    appendLogs(host, entries)
+    appendLogs(host, lines.entries)
     return new Response(null, { status: 204 })
   }
 

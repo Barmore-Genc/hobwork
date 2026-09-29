@@ -2,6 +2,7 @@
 // reaches the runner over the VM's ingress, and the runner reaches the host at
 // http://hobwork.internal. Both sides ship together with the host, so there is
 // no versioning.
+import type { HaServiceTarget, HaStatesFilter } from '../homeassistant.ts'
 import type { Invocation, LogLevel } from '../index.ts'
 
 // Inside the guest. Nothing else listens there.
@@ -72,6 +73,26 @@ export type WireResult = {
 export type DbResponse =
   | { ok: true; results: WireResult[] }
   | { ok: false; error: { message: string; code?: string; statement?: number } }
+
+// POST http://hobwork.internal/v1/ha
+export type HaRequest = (
+  | {
+      action: 'callService'
+      domain: string
+      service: string
+      data?: Record<string, unknown>
+      target?: HaServiceTarget
+      returnResponse?: boolean
+    }
+  | { action: 'getState'; entityId: string }
+  | { action: 'getStates'; filter?: HaStatesFilter }
+  | { action: 'fireEvent'; eventType: string; data?: Record<string, unknown> }
+) & {
+  // Set by the runner inside an invocation, so the call is logged with it.
+  invocation?: number
+}
+
+export type HaResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
 
 // Where `pnpm build` puts a handler, relative to the build's root (the
 // project's dist/). The template's vite.config.ts writes the same layout.

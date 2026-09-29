@@ -1,3 +1,9 @@
+import type { HomeAssistant } from './homeassistant.ts'
+
+export type * from './homeassistant.ts'
+export { HomeAssistantError } from './runner/ha-client.ts'
+export * from './openrouter.ts'
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export type Logger = Record<LogLevel, (...args: unknown[]) => void>
@@ -28,6 +34,8 @@ export type Context = {
   log: Logger
   // The project DB. See `Db`.
   db: Db
+  // Home Assistant service calls and states, through the Hobwork host.
+  ha: HomeAssistant
   // Secret name -> placeholder. Send the placeholder in a request header to a
   // host the secret is bound to, and Hobwork replaces it with the real value on
   // the way out. The real value never reaches handler code.

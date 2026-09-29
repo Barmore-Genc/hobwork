@@ -15,7 +15,9 @@ const USAGE = `Usage: hobwork <command>
   logs [-f] [-n <lines>] project logs; -f keeps printing new lines
   invocations [-n <count>]  recent handler invocations
   sql "<statement>"      run one SQL statement on the branch DB, a copy of the
-                         production DB taken when the workspace VM started`
+                         production DB taken when the workspace VM started
+  ha state <entity_id>   a Home Assistant entity's state and attributes
+  ha states [<domain>]   every entity's state, or those of one domain (light, sensor, ...)`
 
 type CliResult = { output: string; ok: boolean; cursor?: number }
 
@@ -100,6 +102,30 @@ async function sql(statement: string): Promise<void> {
   else process.stdout.write(result?.changes ? `${result.changes} rows changed\n` : 'No rows\n')
 }
 
+// Workspaces read Home Assistant like ctx.ha does in a handler; service calls
+// only run from deployed handlers.
+async function ha(args: string[]): Promise<void> {
+  const [what, arg] = args
+  let request: object
+  if (what === 'state' && arg) request = { action: 'getState', entityId: arg }
+  else if (what === 'states') request = { action: 'getStates', filter: arg ? { domain: arg } : undefined }
+  else throw new UsageError(what === 'state' ? 'Give an entity ID' : `Unknown ha command "${what ?? ''}"`)
+  const res = await fetch(new URL('/v1/ha', BASE_URL), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  const body = (await res.json().catch(() => undefined)) as
+    | { ok: true; result: unknown }
+    | { ok: false; error: { message: string } }
+    | { error?: string }
+    | undefined
+  if (!body || !('ok' in body)) throw new Error(body?.error ?? `The host answered HTTP ${res.status}`)
+  if (!body.ok) throw new Error(body.error.message)
+  if (body.result === null) throw new Error(`${arg} does not exist`)
+  process.stdout.write(`${JSON.stringify(body.result, null, 2)}\n`)
+}
+
 async function followLogs(lines: number): Promise<void> {
   let result = await call('GET', `/v1/workspace/logs?limit=${lines}`)
   for (;;) {
@@ -124,6 +150,8 @@ async function main(argv: string[]): Promise<void> {
       return print(await call('GET', `/v1/workspace/logs?limit=${count(args, 50)}`))
     case 'sql':
       return sql(text(args, 'SQL statement'))
+    case 'ha':
+      return ha(args)
     case 'invocations':
       return print(await call('GET', `/v1/workspace/invocations?limit=${count(args, 20)}`))
     case undefined:

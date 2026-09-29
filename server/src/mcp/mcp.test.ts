@@ -166,7 +166,7 @@ test('creates a project, edits files on a branch and commits as the agent', asyn
   expect(JSON.parse(await ok('list_projects'))).toMatchObject([{ name: 'filament' }])
   const project = JSON.parse(await ok('get_project', { project: 'filament' }))
   expect(project.entryPoints.routes).toHaveProperty(['GET /greeting'])
-  expect(project.entryPoints.crons).toHaveProperty('morning-greeting')
+  expect(project.entryPoints.crons).toEqual({})
   expect(project.appUrl).toBe('http://filament.apps.localhost')
 
   expect(await ok('read_file', { project: 'filament', branch: 'main', path: 'AGENTS.md' })).toContain(

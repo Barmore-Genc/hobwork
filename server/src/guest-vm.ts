@@ -20,6 +20,7 @@ import type {
 import type {
   ExecOptions,
   ExecResult,
+  ExecWorkspaceVm,
   InteractiveWorkspaceVm,
   StartWorkspaceVm,
   Workspace,
@@ -72,8 +73,9 @@ export type VmEnvironment = {
 }
 
 export type WorkspaceEnvironment = {
-  // Called while a workspace VM starts.
-  start(workspace: Workspace): Promise<VmEnvironment>
+  // Called while a workspace VM starts. `vm` runs commands in that VM once it
+  // is up, for the internal handler to use.
+  start(workspace: Workspace, vm: Pick<ExecWorkspaceVm, 'exec'>): Promise<VmEnvironment>
   // Changes when start() would return different secrets or hosts, so the VM is replaced.
   fingerprint(workspace: Workspace): string
   stop?(workspace: Workspace): Promise<void>
@@ -220,7 +222,13 @@ export function workspaceVmBackend(
     const label = `workspace ${workspace.project}/${workspace.branch}`
     const environments = options.workspaceEnvironment
     const fingerprint = environments?.fingerprint(workspace) ?? ''
-    const environment = await environments?.start(workspace)
+    let started: Pick<ExecWorkspaceVm, 'exec'> | undefined
+    const environment = await environments?.start(workspace, {
+      exec: (command, execOptions) => {
+        if (!started) throw new Error(`${label} is not running`)
+        return started.exec(command, execOptions)
+      },
+    })
     // The registry is always reachable so agents can add and install extras.
     const readBranchFile = (path: string) => options.readBranchFile?.(workspace, path)
     const egress = [...new Set([NPM_REGISTRY, ...(await hobworkEgress(await readBranchFile('hobwork.json'))), ...(environment?.egress ?? [])])]
@@ -269,6 +277,7 @@ export function workspaceVmBackend(
       throw new Error(`Could not install the hobwork CLI in ${label}: ${cli instanceof Error ? cli.message : cli.stderr}`)
     }
     const vm = execVm(sandbox)
+    started = vm
 
     if (await hasExtraDependencies(await readBranchFile('package.json'))) {
       // A failed install does not fail the start: the agent sees missing

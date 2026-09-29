@@ -31,6 +31,10 @@ const fileResponse = z.union([
     truncated: z.boolean(),
     filesSearched: z.number().int().min(0),
   }),
+  z.object({
+    op: z.literal('migrations'),
+    files: z.array(z.object({ name: z.string().max(255), sql: text(1024 * 1024) })).max(1000),
+  }),
 ])
 
 const gitResponse = z.union([
@@ -54,7 +58,7 @@ export type ToolOptions = {
 }
 
 async function runTool(
-  vm: ExecWorkspaceVm,
+  vm: Pick<ExecWorkspaceVm, 'exec'>,
   tool: 'files' | 'git',
   request: { op: string },
   options: ToolOptions,
@@ -101,7 +105,7 @@ function checked<T extends { op: string }>(schema: z.ZodType<T>, request: { op: 
 }
 
 export async function runFileTool<R extends FileRequest>(
-  vm: ExecWorkspaceVm,
+  vm: Pick<ExecWorkspaceVm, 'exec'>,
   request: R,
   options: ToolOptions = {},
 ): Promise<Extract<FileResponse, { op: R['op'] }>> {
@@ -109,7 +113,7 @@ export async function runFileTool<R extends FileRequest>(
 }
 
 export async function runGitTool<R extends GitRequest>(
-  vm: ExecWorkspaceVm,
+  vm: Pick<ExecWorkspaceVm, 'exec'>,
   request: R,
   options: ToolOptions = {},
 ): Promise<Extract<GitResponse, { op: R['op'] }>> {

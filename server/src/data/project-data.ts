@@ -20,7 +20,6 @@ import { DbFileError, removeDbFiles, takeDbFile } from './db-file.ts'
 import type { RunMigrationVm } from './migration-vm.ts'
 import {
   newTablesNotStrict,
-  readMigrationsFromDir,
   readMigrationsFromGit,
   removedFromSchema,
   restrictMigrationDb,
@@ -475,17 +474,17 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
     },
 
     // Runs a query on the branch DB after applying the branch's pending
-    // migrations: those in the workspace checkout at `source`, or those of a
-    // commit for a branch preview.
+    // migrations, from `source`: read in the workspace VM, or from a commit
+    // for a branch preview.
     executeOnBranch(
       project: string,
       branch: string,
-      source: string | (() => Promise<Migration[]>),
+      source: () => Promise<Migration[]>,
       request: DbRequest,
     ): Promise<DbResponse> {
       return onBranch(project, branch, async () => {
         try {
-          await syncBranch(project, branch, typeof source === 'string' ? readMigrationsFromDir(source) : await source())
+          await syncBranch(project, branch, await source())
         } catch (err) {
           return { ok: false, error: { message: `The branch DB could not be migrated: ${(err as Error).message}`, code: 'migration' } }
         }

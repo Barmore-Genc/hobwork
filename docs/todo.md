@@ -17,7 +17,6 @@ Sections are in the order to work on them.
 
 ### Nothing on the host touches guest-writable files
 
-- **Workspace migrations from the checkout**: the workspace's branch DB takes `migrations/*.sql` from the checkout on the host (`readMigrationsFromDir`, lstat then read), so a symlink swapped in between can put a host file's content into the branch DB. Read them inside the workspace VM and pass them to the migration VM, keeping uncommitted migrations testable.
 - **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.
 
 ### Guest privilege

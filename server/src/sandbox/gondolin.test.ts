@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { createGondolinSandbox } from './gondolin.ts'
 import { imageDir, imageExists } from './image.ts'
 import type { OutputChunk, Sandbox, SandboxOptions } from './sandbox.ts'
+import { systemEnv } from './system-env.ts'
 
 // Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
 describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeout: 60_000 }, () => {
@@ -75,6 +76,24 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     expect(chunks).toContainEqual({ stream: 'stdout', text: 'hello\n' })
     expect(chunks).toContainEqual({ stream: 'stderr', text: 'oops\n' })
     expect(readFileSync(join(work, 'out.txt'), 'utf8')).toBe('hello\n')
+  })
+
+  test('has the host time zone and locale', async () => {
+    const script = [
+      'const zone = Intl.DateTimeFormat().resolvedOptions().timeZone',
+      'const offset = new Date(Date.UTC(2026, 0, 1)).getTimezoneOffset()',
+      'const german = new Date(Date.UTC(2026, 0, 1)).toLocaleDateString("de-DE", { month: "long", timeZone: "UTC" })',
+      'console.log(JSON.stringify({ zone, offset, german, lang: process.env.LANG ?? null }))',
+    ].join(';')
+    const result = await sandbox.exec(`node -e '${script}'; TZ=Europe/Istanbul date +%Z`).result
+    const [node, shell] = result.stdout.trim().split('\n')
+    expect(JSON.parse(node ?? '')).toEqual({
+      zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      offset: new Date(Date.UTC(2026, 0, 1)).getTimezoneOffset(),
+      german: 'Januar',
+      lang: systemEnv().LANG ?? null,
+    })
+    expect(shell).toBe('+03')
   })
 
   test('buffers output when no callback is given', async () => {

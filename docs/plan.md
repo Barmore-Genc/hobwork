@@ -123,4 +123,3 @@ Status of the iOS app, milestone 1: done in `apple/`. Native host address screen
 ## Backlog
 
 - Live updates in the web UI: a WebSocket from the host that tells open pages when something changed (projects, versions, invocations, branches, secrets, agent access), so lists refresh on their own instead of on reload. The project log's long poll could move onto it.
-- System settings in VMs: workspace, pipeline and runtime VMs should get the host's time zone (`TZ`) and locale (`LANG`, `LC_*`), so handlers and tests compute dates and format numbers and dates like the host. Only system-level variables, not the host's whole environment. Crons are already scheduled in the host's time zone, so handler code should see the same one.

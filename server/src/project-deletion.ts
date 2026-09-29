@@ -8,6 +8,7 @@ import { repoPath, type Host } from './host.ts'
 import { requireProject } from './projects.ts'
 import { projectBuildsDir } from './runtime/builds.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import type { StorageUsage } from './storage.ts'
 import { listVersions } from './versions.ts'
 import type { WorkspaceManager, WorkspaceVm } from './workspaces.ts'
 
@@ -31,6 +32,7 @@ export type ProjectDeletionDeps = {
   delivery?: Pick<Delivery, 'exclusive'>
   runtime?: Pick<Runtime, 'remove' | 'forget' | 'load'>
   data?: Pick<ProjectData, 'closeProject' | 'closeBranch'>
+  storage?: Pick<StorageUsage, 'forget'>
   now?: () => number
 }
 
@@ -99,6 +101,7 @@ async function deleteNow(
     rmSync(projectBuildsDir(host, name), { recursive: true, force: true })
     rmSync(join(host.dataDir, 'workspaces', name), { recursive: true, force: true })
     host.db.prepare('DELETE FROM projects WHERE id = ?').run(project.id)
+    deps.storage?.forget(project.id)
     return { trash, purgeAfter }
   } finally {
     runtime?.forget(name)

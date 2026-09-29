@@ -5,6 +5,7 @@ import { createAppOrigins } from './apps/origins.ts'
 import { createBackups } from './backup/backups.ts'
 import { loadConfig } from './config.ts'
 import { openHostDb } from './db.ts'
+import { migrationVmBackend } from './data/migration-vm.ts'
 import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
@@ -68,6 +69,7 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
 if (vmOptions) console.log(`guest image: ${image}`)
 else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
+data.useMigrationVm(vmOptions && migrationVmBackend(vmOptions))
 
 const workspaces: WorkspaceManager<InteractiveWorkspaceVm> = createWorkspaceManager<InteractiveWorkspaceVm>(host, {
   startVm:

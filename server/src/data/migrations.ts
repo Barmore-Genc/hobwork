@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DatabaseSync } from 'node:sqlite'
+import { constants, type DatabaseSync } from 'node:sqlite'
 import {
   MIGRATIONS_DIR,
   MIGRATIONS_TABLE,
@@ -8,6 +8,7 @@ import {
   parseMigrations,
   type Migration,
 } from '../../../packages/sdk/src/db/migrations.ts'
+import { firstKeyword, splitStatements } from '../../../packages/sdk/src/db/sql.ts'
 import { git } from '../git.ts'
 
 // Read from git rather than a checkout, so a symlink in the repo cannot make
@@ -81,4 +82,38 @@ export function removedFromSchema(before: Map<string, SchemaObject>, after: Map<
     }
   }
   return problems
+}
+
+// Migrations normally run in a VM. Without one they run on the host, where
+// ATTACH and VACUUM INTO could read and write any file the host user can. This
+// refuses them and extension loading, a first layer for hosts with no guest image.
+export function restrictMigrationDb(db: DatabaseSync, migrations: Migration[]) {
+  for (const migration of migrations) {
+    if (splitStatements(migration.sql).some((statement) => firstKeyword(statement) === 'VACUUM')) {
+      throw new MigrationError(`${MIGRATIONS_DIR}/${migration.name} failed: VACUUM is not allowed in migrations`)
+    }
+  }
+  db.setAuthorizer((action, _arg1, arg2) => {
+    if (action === constants.SQLITE_ATTACH || action === constants.SQLITE_DETACH) return constants.SQLITE_DENY
+    if (action === constants.SQLITE_FUNCTION && String(arg2).toLowerCase() === 'load_extension') return constants.SQLITE_DENY
+    return constants.SQLITE_OK
+  })
+}
+
+export function tableNames(db: DatabaseSync): Set<string> {
+  return new Set(
+    db
+      .prepare("SELECT name FROM pragma_table_list WHERE schema = 'main'")
+      .all()
+      .map((row) => String(row.name)),
+  )
+}
+
+// Tables that are not in `before` and are not STRICT.
+export function newTablesNotStrict(db: DatabaseSync, before: Set<string>): string[] {
+  return db
+    .prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND strict = 0")
+    .all()
+    .map((row) => String(row.name))
+    .filter((name) => !before.has(name) && !name.startsWith('sqlite_'))
 }

@@ -1,23 +1,32 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   applyMigrations,
   appliedMigrations,
   MIGRATIONS_DIR,
+  MIGRATIONS_TABLE,
   MigrationError,
   notStrictMessage,
   type Migration,
 } from '../../../packages/sdk/src/db/migrations.ts'
 import type { DbRequest, DbResponse } from '../../../packages/sdk/src/runner/protocol.ts'
-import { openDb } from '../db.ts'
 import { repoPath, workspaceDir, type Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import type { MigrationDryRun, StepOutcome } from '../pipeline/runner.ts'
 import { appendLog, type LogLevel } from '../runtime/logs.ts'
 import { createDbPool, DbTimeoutError, type DbPool } from './db-pool.ts'
-import { readMigrationsFromDir, readMigrationsFromGit, removedFromSchema, schemaOf } from './migrations.ts'
+import { DbFileError, removeDbFiles, takeDbFile } from './db-file.ts'
+import type { RunMigrationVm } from './migration-vm.ts'
+import {
+  newTablesNotStrict,
+  readMigrationsFromDir,
+  readMigrationsFromGit,
+  removedFromSchema,
+  restrictMigrationDb,
+  schemaOf,
+  tableNames,
+} from './migrations.ts'
 
 export const DEFAULT_SLOW_QUERY_MS = 500
 export const DEFAULT_SIZE_WARNING_BYTES = 100 * 1024 * 1024
@@ -26,6 +35,10 @@ const SIZE_CHECK_INTERVAL_MS = 60 * 1000
 // The same slow statement is logged at most this often, so a hot path cannot flood the log.
 const SLOW_LOG_INTERVAL_MS = 10 * 60 * 1000
 const LOGGED_SQL_CHARS = 500
+const MIGRATION_TIMEOUT_MS = 5 * 60 * 1000
+// A migrated DB may grow to this many times the size it started at, and is never limited below the floor.
+const MIGRATED_DB_GROWTH = 2
+const MIGRATED_DB_MIN_LIMIT_BYTES = 512 * 1024 * 1024
 
 export type DbTarget = { project: string; branch?: string }
 
@@ -40,6 +53,8 @@ export type DbStatus = {
 
 export type ProjectDataOptions = {
   pool?: DbPool
+  // Runs migrations in a VM. Without it they run on the host.
+  runMigrationVm?: RunMigrationVm
   slowQueryMs?: number
   sizeWarningBytes?: number
 }
@@ -67,16 +82,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function removeDbFiles(path: string) {
-  for (const file of [path, `${path}-wal`, `${path}-shm`]) rmSync(file, { force: true })
-}
-
-function openProjectDb(path: string): DatabaseSync {
-  const db = openDb(path)
-  db.enableDefensive(true)
-  return db
-}
-
 // Owns the project DBs: `<dataDir>/projects/<project>/db.sqlite` for main, and
 // a copy per branch workspace next to its checkout.
 export function createProjectData(host: Host, options: ProjectDataOptions = {}) {
@@ -85,6 +90,11 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
   const sizeWarningBytes = options.sizeWarningBytes ?? DEFAULT_SIZE_WARNING_BYTES
   const stats = new Map<string, Stats>()
   const branchQueues = new Map<string, Promise<unknown>>()
+  // Production queries wait here while a migrated copy of the DB replaces the file.
+  const gates = new Map<string, Promise<void>>()
+  // Migration fingerprint each branch DB was last brought up to, so most queries skip the check.
+  const syncedBranches = new Map<string, string>()
+  let runMigrationVm = options.runMigrationVm
 
   function dbPath(project: string): string {
     return join(host.dataDir, 'projects', project, 'db.sqlite')
@@ -150,6 +160,12 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
   }
 
   async function execute(target: DbTarget, request: DbRequest): Promise<DbResponse> {
+    // Nothing between this wait and the pool call may be async: a query that
+    // got past the gate has to be queued in the worker before a migration's
+    // snapshot is.
+    if (target.branch === undefined) {
+      for (let gate = gates.get(target.project); gate; gate = gates.get(target.project)) await gate
+    }
     const path = target.branch === undefined ? dbPath(target.project) : branchDbPath(target.project, target.branch)
     mkdirSync(dirname(path), { recursive: true })
     const invocation = ownInvocation(target.project, request?.invocation)
@@ -169,30 +185,165 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
     return execution.response
   }
 
+  function workRoot(): string {
+    const dir = join(host.dataDir, 'migration-work')
+    mkdirSync(dir, { recursive: true })
+    return dir
+  }
+
+  // Versions the DB at `path` has applied, with their checksums.
+  async function appliedIn(path: string): Promise<Map<number, string>> {
+    const applied = new Map<number, string>()
+    if (!existsSync(path)) return applied
+    const rows = async (sql: string, params?: string[]) => {
+      const { response } = await pool.execute(path, { statements: [{ sql, params }], transaction: false })
+      if (!response.ok) throw new Error(response.error.message)
+      return response.results[0]?.rows ?? []
+    }
+    if (!(await rows("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?", [MIGRATIONS_TABLE])).length) return applied
+    for (const row of await rows(`SELECT version, checksum FROM ${MIGRATIONS_TABLE}`)) {
+      applied.set(Number(row.version), String(row.checksum))
+    }
+    return applied
+  }
+
+  // Holds back queries to a production DB while `fn` replaces its file, so no
+  // write between the snapshot and the swap is lost.
+  async function paused<T>(project: string, fn: () => Promise<T>): Promise<T> {
+    for (let gate = gates.get(project); gate; gate = gates.get(project)) await gate
+    let open = () => {}
+    gates.set(
+      project,
+      new Promise<void>((resolve) => {
+        open = resolve
+      }),
+    )
+    try {
+      return await fn()
+    } finally {
+      gates.delete(project)
+      open()
+    }
+  }
+
+  // A consistent snapshot of the DB at `path` in `work`, or nothing when it does not exist yet.
+  async function snapshotOf(path: string, work: string): Promise<string | undefined> {
+    if (!existsSync(path)) return undefined
+    const snapshot = join(work, 'before.sqlite')
+    await pool.copy(path, snapshot)
+    return snapshot
+  }
+
+  function applyOnHost(path: string, migrations: Migration[], emptyCheck: boolean): { stage: 'empty' | 'copy'; error: string } | undefined {
+    const run = (target: string, stage: 'empty' | 'copy') => {
+      const db = new DatabaseSync(target)
+      try {
+        db.exec('PRAGMA foreign_keys = ON')
+        restrictMigrationDb(db, migrations)
+        applyMigrations(db, migrations)
+      } catch (err) {
+        if (err instanceof MigrationError) return { stage, error: err.message }
+        throw err
+      } finally {
+        db.close()
+      }
+    }
+    return (emptyCheck && run(':memory:', 'empty')) || run(path, 'copy')
+  }
+
+  // Applies `migrations` to `snapshot` (an empty DB when there is none), in a VM
+  // when the host has one, and moves the DB that comes back into `work` once it
+  // passes the checks in db-file.ts. The snapshot file is consumed.
+  async function migrateCopy(
+    work: string,
+    snapshot: string | undefined,
+    migrations: Migration[],
+    emptyCheck: boolean,
+  ): Promise<{ ok: true; db: string } | { ok: false; stage: 'empty' | 'copy'; error: string }> {
+    const dir = join(work, 'vm')
+    mkdirSync(dir)
+    const input = join(dir, 'db.sqlite')
+    const maxBytes = Math.max(MIGRATED_DB_MIN_LIMIT_BYTES, MIGRATED_DB_GROWTH * (snapshot ? statSync(snapshot).size : 0))
+    if (snapshot) renameSync(snapshot, input)
+    if (!runMigrationVm) {
+      const failure = applyOnHost(input, migrations, emptyCheck)
+      if (failure) return { ok: false, ...failure }
+    } else {
+      writeFileSync(join(dir, 'input.json'), JSON.stringify({ files: migrations.map(({ name, sql }) => ({ name, sql })), emptyCheck }))
+      const run = await runMigrationVm({ dir, timeoutMs: MIGRATION_TIMEOUT_MS })
+      if (run.timedOut) {
+        return { ok: false, stage: 'copy', error: `The migrations did not finish within ${MIGRATION_TIMEOUT_MS / 60_000} minutes` }
+      }
+      let result: unknown
+      try {
+        result = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '')
+      } catch {
+        return { ok: false, stage: 'copy', error: `The migration VM failed with exit code ${run.exitCode}: ${truncateMiddle(run.stderr.trim(), 500)}` }
+      }
+      const outcome = (typeof result === 'object' && result !== null ? result : {}) as { ok?: unknown; stage?: unknown; error?: unknown }
+      if (outcome.ok !== true) {
+        const error = typeof outcome.error === 'string' ? truncateMiddle(outcome.error, 4000) : 'The migration VM gave no result'
+        return { ok: false, stage: outcome.stage === 'empty' ? 'empty' : 'copy', error }
+      }
+    }
+    const db = join(work, 'result.sqlite')
+    try {
+      takeDbFile(input, db, maxBytes)
+    } catch (err) {
+      if (err instanceof DbFileError) return { ok: false, stage: 'copy', error: err.message }
+      throw err
+    }
+    return { ok: true, db }
+  }
+
+  // Replaces the DB at `path` with `fresh`, which must be on the same filesystem.
+  async function replaceDb(path: string, fresh: string): Promise<void> {
+    await pool.close(path)
+    mkdirSync(dirname(path), { recursive: true })
+    // A WAL left from the old file would be applied to the new one.
+    for (const file of [`${path}-wal`, `${path}-shm`]) rmSync(file, { force: true })
+    renameSync(fresh, path)
+  }
+
+  // The DB at `path` after `migrations`, migrated in a copy that replaces it.
+  // Nothing else may write to it meanwhile.
+  async function migrateInPlace(path: string, migrations: Migration[]): Promise<void> {
+    const work = mkdtempSync(join(workRoot(), 'migrate-'))
+    try {
+      const result = await migrateCopy(work, await snapshotOf(path, work), migrations, false)
+      if (!result.ok) throw new MigrationError(result.error)
+      await replaceDb(path, result.db)
+    } finally {
+      rmSync(work, { recursive: true, force: true })
+    }
+  }
+
   // Applies the migrations of a version on main to the production DB, before
   // the version starts. Changed migrations were refused by the dry run; a
-  // restore of an older version simply has fewer migrations.
+  // restore of an older version simply has fewer migrations. A failing
+  // migration leaves the DB as it was.
   async function migrate(project: string, commit: string): Promise<Migration[]> {
     const migrations = await readMigrationsFromGit(repoPath(host, project), commit)
     if (!migrations.length) return []
-    const db = openProjectDb(dbPath(project))
+    const path = dbPath(project)
     try {
-      const outcome = applyMigrations(db, migrations)
-      if (outcome.applied.length) {
-        log(project, 'info', `Applied migrations: ${outcome.applied.map((m) => m.name).join(', ')}`)
-      }
-      return outcome.applied
+      const done = await appliedIn(path)
+      const pending = migrations.filter((m) => !done.has(m.version))
+      if (!pending.length) return []
+      await paused(project, () => migrateInPlace(path, migrations))
+      log(project, 'info', `Applied migrations: ${pending.map((m) => m.name).join(', ')}`)
+      return pending
     } catch (err) {
       log(project, 'error', `Migration failed: ${(err as Error).message}`)
       throw err
     } finally {
-      db.close()
       checkSize(project, true)
     }
   }
 
   // Applies the candidate's new migrations to a copy of the production DB, and
   // all of them to an empty DB, which is what tests and new branches start from.
+  // The schema checks read the DB that comes back, not what the runner says.
   async function dryRun(candidate: { project: string; gitDir: string; commit: string }): Promise<StepOutcome> {
     let migrations: Migration[]
     try {
@@ -202,60 +353,66 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       throw err
     }
     if (!migrations.length) return { status: 'skipped', output: `No migrations in ${MIGRATIONS_DIR}/` }
-    const output: string[] = []
 
-    const empty = new DatabaseSync(':memory:')
-    empty.exec('PRAGMA foreign_keys = ON')
+    const work = mkdtempSync(join(workRoot(), 'dry-run-'))
     try {
-      applyMigrations(empty, migrations)
-      output.push(`All ${migrations.length} migrations apply to an empty DB`)
-    } catch (err) {
-      return { status: 'failed', output: `On an empty DB: ${(err as Error).message}` }
-    } finally {
-      empty.close()
-    }
-
-    const production = dbPath(candidate.project)
-    const tmp = mkdtempSync(join(tmpdir(), 'hobwork-dry-run-'))
-    try {
-      const copyPath = join(tmp, 'db.sqlite')
-      if (existsSync(production)) await pool.copy(production, copyPath)
-      const copy = openProjectDb(copyPath)
-      try {
-        const done = appliedMigrations(copy)
-        const before = schemaOf(copy)
-        const started = performance.now()
-        let outcome
+      const snapshot = await snapshotOf(dbPath(candidate.project), work)
+      let done = new Map<number, { checksum: string }>()
+      let before = schemaOf(new DatabaseSync(':memory:'))
+      let beforeTables = new Set<string>()
+      if (snapshot) {
+        const db = new DatabaseSync(snapshot)
         try {
-          outcome = applyMigrations(copy, migrations)
-        } catch (err) {
-          return { status: 'failed', output: `On a copy of the production DB: ${(err as Error).message}` }
+          done = appliedMigrations(db)
+          before = schemaOf(db)
+          beforeTables = tableNames(db)
+        } finally {
+          db.close()
         }
-        const problems = [
-          ...outcome.changed.map(
-            (m) =>
-              `${MIGRATIONS_DIR}/${m.name} changed after it was applied to the production DB. Applied migrations cannot change: undo the edit and add a new migration`,
-          ),
-          ...removedFromSchema(before, schemaOf(copy)).map(
+      }
+      const started = performance.now()
+      let result
+      try {
+        result = await migrateCopy(work, snapshot, migrations, true)
+      } catch (err) {
+        return { status: 'failed', output: `The migrations could not run: ${(err as Error).message}` }
+      }
+      if (!result.ok) {
+        return { status: 'failed', output: `${result.stage === 'empty' ? 'On an empty DB' : 'On a copy of the production DB'}: ${result.error}` }
+      }
+      const elapsed = Math.round(performance.now() - started)
+      const after = new DatabaseSync(result.db)
+      let problems: string[]
+      try {
+        after.exec('PRAGMA trusted_schema = OFF')
+        const notStrict = newTablesNotStrict(after, beforeTables)
+        problems = [
+          ...migrations
+            .filter((m) => done.has(m.version) && done.get(m.version)?.checksum !== m.checksum)
+            .map(
+              (m) =>
+                `${MIGRATIONS_DIR}/${m.name} changed after it was applied to the production DB. Applied migrations cannot change: undo the edit and add a new migration`,
+            ),
+          ...removedFromSchema(before, schemaOf(after)).map(
             (problem) => `${problem}. Migrations must only add tables and columns, so older versions keep working after a restore`,
           ),
-          ...(outcome.notStrict.length ? [notStrictMessage(outcome.notStrict)] : []),
+          ...(notStrict.length ? [notStrictMessage(notStrict)] : []),
         ]
-        if (problems.length) return { status: 'failed', output: problems.join('\n') }
-        if (!outcome.applied.length) {
-          output.push(`No new migrations for the production DB (${done.size} applied)`)
-        } else {
-          output.push(
-            `Applied ${outcome.applied.map((m) => m.name).join(', ')} to a copy of the production DB in ${Math.round(performance.now() - started)}ms`,
-          )
-        }
       } finally {
-        copy.close()
+        after.close()
       }
+      if (problems.length) return { status: 'failed', output: problems.join('\n') }
+      const output = [`All ${migrations.length} migrations apply to an empty DB`]
+      const applied = migrations.filter((m) => !done.has(m.version))
+      output.push(
+        applied.length
+          ? `Applied ${applied.map((m) => m.name).join(', ')} to a copy of the production DB in ${elapsed}ms`
+          : `No new migrations for the production DB (${done.size} applied)`,
+      )
+      return { status: 'passed', output: output.join('\n') }
     } finally {
-      rmSync(tmp, { recursive: true, force: true })
+      rmSync(work, { recursive: true, force: true })
     }
-    return { status: 'passed', output: output.join('\n') }
   }
 
   // Serializes work on one branch DB, since recreating it closes its worker.
@@ -273,6 +430,7 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
 
   async function copyProduction(project: string, branch: string): Promise<void> {
     const path = branchDbPath(project, branch)
+    syncedBranches.delete(path)
     await pool.close(path)
     removeDbFiles(path)
     mkdirSync(dirname(path), { recursive: true })
@@ -285,21 +443,17 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
   // from a fresh copy of production.
   async function syncBranch(project: string, branch: string, migrations: Migration[]): Promise<void> {
     const path = branchDbPath(project, branch)
-    const apply = () => {
-      const db = openProjectDb(path)
-      try {
-        return applyMigrations(db, migrations)
-      } finally {
-        db.close()
-      }
-    }
     if (!existsSync(path)) await copyProduction(project, branch)
     if (!migrations.length) return
-    const outcome = apply()
-    if (outcome.changed.length) {
+    const fingerprint = migrations.map((m) => `${m.version}:${m.checksum}`).join(',')
+    if (syncedBranches.get(path) === fingerprint) return
+    let done = await appliedIn(path)
+    if (migrations.some((m) => done.has(m.version) && done.get(m.version) !== m.checksum)) {
       await copyProduction(project, branch)
-      apply()
+      done = await appliedIn(path)
     }
+    if (migrations.some((m) => !done.has(m.version))) await migrateInPlace(path, migrations)
+    syncedBranches.set(path, fingerprint)
   }
 
   return {
@@ -334,7 +488,13 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
       })
     },
 
+    // Sets how migrations run once the guest image is known.
+    useMigrationVm(run: RunMigrationVm | undefined) {
+      runMigrationVm = run
+    },
+
     async closeBranch(project: string, branch: string): Promise<void> {
+      syncedBranches.delete(branchDbPath(project, branch))
       await pool.close(branchDbPath(project, branch))
     },
 

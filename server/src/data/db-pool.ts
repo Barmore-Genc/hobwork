@@ -6,6 +6,7 @@ import type { WorkerMessage, WorkerRequest, WorkerResponse } from './db-worker.t
 const DEFAULT_IDLE_MS = 5 * 60 * 1000
 const DEFAULT_TIMEOUT_MS = 30 * 1000
 const COPY_TIMEOUT_MS = 10 * 60 * 1000
+const CLOSE_TIMEOUT_MS = 10 * 1000
 
 type Pending = { resolve: (response: WorkerResponse) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }
 
@@ -94,6 +95,13 @@ export function createDbPool(options: { idleMs?: number; timeoutMs?: number } = 
   async function close(path: string): Promise<void> {
     const entry = entries.get(path)
     if (!entry) return
+    // Closing the connection itself checkpoints the WAL. Terminating alone
+    // leaves it to the process teardown.
+    await send(path, { close: true }, CLOSE_TIMEOUT_MS).catch(() => {})
+    if (entries.get(path) !== entry) {
+      await entry.worker.terminate()
+      return
+    }
     drop(path, entry, new Error('The DB was closed'))
     await entry.worker.terminate()
   }

@@ -9,6 +9,7 @@
     "create-project": "node src/cli/create-project.ts",
     "create-token": "node src/cli/create-token.ts",
     "add-ssh-key": "node src/cli/add-ssh-key.ts",
+    "sign-in-link": "node src/cli/sign-in-link.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -27,6 +28,7 @@
   "dependencies": {
     "@earendil-works/gondolin": "0.12.0",
     "@modelcontextprotocol/sdk": "^1.30.1",
+    "@simplewebauthn/server": "^14.0.3",
     "ajv": "^8.20.0",
     "openid-client": "^6.8.8",
     "ssh2": "^1.17.0",

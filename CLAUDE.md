@@ -5,7 +5,7 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 ## Layout
 
 - `server/` (`@hobwork/server`): the host. Node runs the TypeScript directly, no build step.
-- `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api`, `/auth` and `/theme` to the host on port 7420. The host serves the build (`pnpm -C web build`, `web/dist`) itself.
+- `web/` (`@hobwork/web`): Vite + React + Tailwind UI. Dev server proxies `/api`, `/auth`, `/theme`, `/oauth`, `/.well-known` and `/mcp` to the host on port 7420. The host serves the build (`pnpm -C web build`, `web/dist`) itself.
 - `packages/theme/` (`@hobwork/theme`): theme stylesheet (CSS variables, served at `/theme/theme.css`) and its Tailwind mapping, shared by the web UI and project UIs.
 - `packages/sdk/` (`@hobwork/sdk`): SDK types, the `hobwork.json` JSON schema (`hobwork.schema.json`), the runner (`src/runner/`) that the host mounts into project runtime VMs, and the `hobwork` CLI (`src/cli/`) that it mounts into workspace VMs.
 - `templates/project/`: template for new projects (not a workspace package).
@@ -13,6 +13,7 @@ Design source of truth: `docs/architecture.md` and `docs/plan.md`. Update them w
 - `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.
 - `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin. `server/src/guest-vm.ts` builds the workspace and pipeline VM backends on it.
 - `server/src/ssh/`: SSH gateway into workspace VMs and agent SSH keys. The `hobwork` CLI it offers lives in `packages/sdk/src/cli/` and is mounted into workspace VMs; `server/src/workspace-api.ts` answers it.
+- `server/src/auth/`: web sessions, OIDC, passkeys and sign-in links. `server/src/oauth/`: the OAuth authorization server for MCP clients.
 - `server/src/runtime/`: project runtime VMs, builds, invocations and logs, crons, routes and webhooks.
 - `dev/homeassistant/`: scripted local Home Assistant in Docker for testing the HA integration (`node dev/homeassistant/setup.ts`, creds land in the gitignored `.env.local`). The host connects to HA when `HOBWORK_HA_URL` and `HOBWORK_HA_TOKEN` are set. Integration tests against it run with `HOBWORK_HA_TESTS=1`. See its README.
 - `dev/pocket-id/`: scripted local Pocket ID in Docker for web UI sign-in (`node dev/pocket-id/setup.ts` writes host settings to the gitignored `.env.local`, `login-link` prints a passkey-free login link). See its README.
@@ -30,7 +31,14 @@ Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspac
 
 ## Connecting Claude Code to a local host
 
-The MCP endpoint is `/mcp` (streamable HTTP, stateless). Create an agent token, then add the server:
+The MCP endpoint is `/mcp` (streamable HTTP, stateless). Add it without a token and sign in through the browser (OAuth; approving creates an agent):
+
+```sh
+claude mcp add --transport http hobwork http://localhost:7420/mcp
+claude mcp login hobwork
+```
+
+Or create a static agent token and send it as a header:
 
 ```sh
 pnpm --filter @hobwork/server create-token claude-code
@@ -42,6 +50,12 @@ For SSH into a workspace, register a public key to an agent and connect with `<p
 ```sh
 pnpm --filter @hobwork/server add-ssh-key claude-code ~/.ssh/id_ed25519.pub
 ssh -p 2222 filament/add-spools@localhost
+```
+
+Without pocket-id, sign in with a one-time link and add a passkey in Settings (the email must be in `HOBWORK_ALLOWED_USERS`):
+
+```sh
+pnpm --filter @hobwork/server sign-in-link you@example.com --name "Your Name"
 ```
 
 `bash` needs a workspace VM backend and `merge` needs a pipeline VM backend. Without them these tools return an error and the other tools still work.

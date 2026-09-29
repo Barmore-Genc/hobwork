@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@hobwork/theme": "workspace:*",
+    "@simplewebauthn/browser": "^14.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

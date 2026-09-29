@@ -11,6 +11,9 @@ export default defineConfig({
       '/api': host,
       '/auth': host,
       '/theme': host,
+      '/oauth': host,
+      '/.well-known': host,
+      '/mcp': host,
     },
   },
 })

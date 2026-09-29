@@ -13,10 +13,7 @@ export class HttpError extends Error {
   }
 }
 
-export async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
-  if (!req.headers['content-type']?.startsWith('application/json')) {
-    throw new HttpError(415, 'Send the request body as application/json')
-  }
+async function readBody(req: IncomingMessage, limit: number): Promise<string> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req as AsyncIterable<Buffer>) {
@@ -24,11 +21,26 @@ export async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise
     if (size > limit) throw new HttpError(413, 'Request body is too large')
     chunks.push(chunk)
   }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+export async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
+  if (!req.headers['content-type']?.startsWith('application/json')) {
+    throw new HttpError(415, 'Send the request body as application/json')
+  }
+  const body = await readBody(req, limit)
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    return JSON.parse(body)
   } catch {
     throw new HttpError(400, 'Request body is not valid JSON')
   }
+}
+
+export async function readForm(req: IncomingMessage, limit = 64 * 1024): Promise<URLSearchParams> {
+  if (!req.headers['content-type']?.startsWith('application/x-www-form-urlencoded')) {
+    throw new HttpError(415, 'Send the request body as application/x-www-form-urlencoded')
+  }
+  return new URLSearchParams(await readBody(req, limit))
 }
 
 export function parseCookies(header: string | undefined): Map<string, string> {

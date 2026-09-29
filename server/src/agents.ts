@@ -35,6 +35,29 @@ export function createAgentToken(db: DatabaseSync, agentName: string): { agent: 
   return { agent, token }
 }
 
+export const MAX_AGENT_NAME = 64
+
+export function agentNameTaken(db: DatabaseSync, name: string): boolean {
+  return db.prepare('SELECT 1 FROM agents WHERE name = ?').get(name) !== undefined
+}
+
+// "Claude", then "Claude 2", "Claude 3", ... so a suggested name is free.
+export function freeAgentName(db: DatabaseSync, base: string): string {
+  const trimmed = base.trim().slice(0, MAX_AGENT_NAME - 4) || 'Agent'
+  if (!agentNameTaken(db, trimmed)) return trimmed
+  for (let n = 2; ; n++) {
+    const name = `${trimmed} ${n}`
+    if (!agentNameTaken(db, name)) return name
+  }
+}
+
+// Throws when the name is taken, so callers check agentNameTaken first to show a message.
+export function createAgent(db: DatabaseSync, name: string): Agent {
+  const row = db.prepare('INSERT INTO agents (name) VALUES (?) RETURNING id, name').get(name)
+  if (!row) throw new Error('Agent insert returned no row')
+  return { id: Number(row.id), name: String(row.name) }
+}
+
 export type AgentToken = {
   id: number
   createdAt: string

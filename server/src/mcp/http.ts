@@ -10,15 +10,27 @@ import { createMcpServer } from './server.ts'
 
 export const MCP_PATH = '/mcp'
 
-// A function so MCP OAuth can replace static agent tokens without touching the
-// request handling.
 export type McpAuthenticator = (req: IncomingMessage) => Agent | undefined
+
+function bearerToken(req: IncomingMessage): string | undefined {
+  const header = req.headers.authorization
+  return header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined
+}
 
 export function bearerTokenAuth(host: Host): McpAuthenticator {
   return (req) => {
-    const header = req.headers.authorization
-    if (!header?.startsWith('Bearer ')) return undefined
-    return verifyAgentToken(host.db, header.slice('Bearer '.length).trim())
+    const token = bearerToken(req)
+    return token ? verifyAgentToken(host.db, token) : undefined
+  }
+}
+
+// Static agent tokens (Claude Code with --header) and OAuth access tokens
+// issued for this MCP endpoint.
+export function mcpAuth(host: Host, verifyAccessToken: (token: string) => Agent | undefined): McpAuthenticator {
+  return (req) => {
+    const token = bearerToken(req)
+    if (!token) return undefined
+    return verifyAgentToken(host.db, token) ?? verifyAccessToken(token)
   }
 }
 
@@ -32,6 +44,8 @@ export function createMcpHandler(options: {
   workspaces: WorkspaceManager<ExecWorkspaceVm>
   delivery: Delivery
   authenticate?: McpAuthenticator
+  // RFC 9728: sent in the 401 challenge so OAuth clients find the authorization server.
+  resourceMetadataUrl?: string
   homeAssistant?: HomeAssistant
   runtime?: Runtime
 }) {
@@ -42,8 +56,11 @@ export function createMcpHandler(options: {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const agent = authenticate(req)
     if (!agent) {
-      return jsonRpcError(res, 401, 'Send an agent token as "Authorization: Bearer <token>"', {
-        'www-authenticate': 'Bearer realm="Hobwork"',
+      const challenge = ['Bearer realm="Hobwork"']
+      if (options.resourceMetadataUrl) challenge.push(`resource_metadata="${options.resourceMetadataUrl}"`)
+      if (bearerToken(req)) challenge.push('error="invalid_token"')
+      return jsonRpcError(res, 401, 'Sign in with OAuth or send an agent token as "Authorization: Bearer <token>"', {
+        'www-authenticate': challenge.join(', '),
       })
     }
     if (req.method !== 'POST') {

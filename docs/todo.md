@@ -31,10 +31,6 @@ A platform set or SDK update takes effect for every project at once, on its next
 
 Connecting Hobwork as a custom connector in claude.ai, Claude Desktop and Cowork needs the host on public https. The OAuth flow is tested with the MCP SDK client and Claude Code only; check it end to end with claude.ai.
 
-## Renaming passkeys
-
-Passkeys can be added and deleted in Settings, not renamed. Add a name people can set, so several passkeys can be told apart.
-
 ## Interrupting runaway queries
 
 A project DB query that runs longer than 30s is abandoned by terminating its worker, since SQLite cannot be interrupted from Node. Interrupt the query instead once Node exposes a way to (SQLite's `sqlite3_interrupt` or a progress handler), so the connection survives.

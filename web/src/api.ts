@@ -440,16 +440,18 @@ export const api = {
   passkeys: () => request<Passkey[]>('GET', '/api/passkeys'),
   backups: () => request<BackupStatus>('GET', '/api/backups'),
   startBackup: () => request<BackupRun>('POST', '/api/backups'),
+  renamePasskey: (id: number, name: string) => request<Passkey>('PATCH', `/api/passkeys/${id}`, { name }),
   deletePasskey: (id: number) => request<void>('DELETE', `/api/passkeys/${id}`),
 
   // Both throw the browser's error when the person cancels the passkey prompt.
-  async addPasskey(name: string): Promise<Passkey> {
+  // Without a name the host picks one from the password manager or the device.
+  async addPasskey(name: string, device: string): Promise<Passkey> {
     const { flowId, options } = await request<{ flowId: string; options: PublicKeyCredentialCreationOptionsJSON }>(
       'POST',
       '/api/passkeys/options',
     )
     const response = await startRegistration({ optionsJSON: options })
-    return request<Passkey>('POST', '/api/passkeys', { flowId, name, response })
+    return request<Passkey>('POST', '/api/passkeys', { flowId, name, device, response })
   },
   async signInWithPasskey(): Promise<void> {
     const { flowId, options } = await request<{ flowId: string; options: PublicKeyCredentialRequestOptionsJSON }>(

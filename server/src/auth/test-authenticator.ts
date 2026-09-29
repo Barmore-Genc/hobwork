@@ -25,9 +25,11 @@ export class SoftwareAuthenticator {
   userHandle: string | undefined
   counter = 0
   origin: string
+  aaguid: Buffer
 
-  constructor(origin: string) {
+  constructor(origin: string, aaguid = '00000000-0000-0000-0000-000000000000') {
     this.origin = origin
+    this.aaguid = Buffer.from(aaguid.replaceAll('-', ''), 'hex')
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
     this.privateKey = privateKey
     const jwk = publicKey.export({ format: 'jwk' })
@@ -58,7 +60,7 @@ export class SoftwareAuthenticator {
     )
     const idLength = Buffer.alloc(2)
     idLength.writeUInt16BE(this.credentialId.length)
-    const attested = Buffer.concat([Buffer.alloc(16), idLength, this.credentialId, Buffer.from(cose)])
+    const attested = Buffer.concat([this.aaguid, idLength, this.credentialId, Buffer.from(cose)])
     const attestationObject = isoCBOR.encode(
       new Map<string, string | Map<string, string> | Uint8Array>([
         ['fmt', 'none'],

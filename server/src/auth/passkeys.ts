@@ -13,13 +13,13 @@ import {
 import type { Allowlist } from '../config.ts'
 import { HttpError, json, readJson } from '../http.ts'
 import type { Auth } from './auth.ts'
+import { MAX_PASSKEY_NAME, passkeyName } from './passkey-names.ts'
 import { getUser, isAllowed, markSignedIn, webauthnUserId, type User } from './users.ts'
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 // EdDSA, ES256 and RS256. The library's default list probes Node for ML-DSA
 // support, which prints an experimental feature warning.
 const ALGORITHMS = [-8, -7, -257]
-const MAX_NAME = 64
 
 const SIGN_IN_OPTIONS_PATH = '/auth/passkey/options'
 const SIGN_IN_PATH = '/auth/passkey'
@@ -126,7 +126,12 @@ export function createPasskeys(options: {
   }
 
   async function register(user: User, input: unknown): Promise<Passkey> {
-    const { flowId, response, name } = body<{ flowId: string; response: RegistrationResponseJSON; name: string }>(input)
+    const { flowId, response, name, device } = body<{
+      flowId: string
+      response: RegistrationResponseJSON
+      name: string
+      device: string
+    }>(input)
     const challenge = takeChallenge(db, flowId, user.id, now())
     if (typeof response !== 'object' || response === null) throw new HttpError(400, 'Send the passkey response')
     let verification
@@ -142,8 +147,8 @@ export function createPasskeys(options: {
       throw new HttpError(400, `The passkey could not be verified: ${(err as Error).message}`)
     }
     if (!verification.verified) throw new HttpError(400, 'The passkey could not be verified')
-    const { credential } = verification.registrationInfo
-    const label = typeof name === 'string' && name.trim() ? name.trim().slice(0, MAX_NAME) : 'Passkey'
+    const { credential, aaguid } = verification.registrationInfo
+    const label = passkeyName({ name, aaguid, device })
     const row = db
       .prepare(
         `INSERT INTO passkeys (user_id, credential_id, public_key, counter, transports, name) VALUES (?, ?, ?, ?, ?, ?)
@@ -152,6 +157,18 @@ export function createPasskeys(options: {
       )
       .get(user.id, credential.id, credential.publicKey, credential.counter, JSON.stringify(credential.transports ?? []), label)
     if (!row) throw new HttpError(409, 'This passkey is already registered')
+    return toPasskey(row)
+  }
+
+  function rename(user: User, id: number, input: unknown): Passkey {
+    const { name } = body<{ name: string }>(input)
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed) throw new HttpError(400, 'Give the passkey a name')
+    if (trimmed.length > MAX_PASSKEY_NAME) throw new HttpError(400, `Keep the name to ${MAX_PASSKEY_NAME} characters`)
+    const row = db
+      .prepare('UPDATE passkeys SET name = ? WHERE id = ? AND user_id = ? RETURNING id, name, created_at, last_used_at')
+      .get(trimmed, id, user.id)
+    if (!row) throw new HttpError(404, 'This passkey does not exist')
     return toPasskey(row)
   }
 
@@ -218,7 +235,7 @@ export function createPasskeys(options: {
     const known =
       (pathname === PASSKEYS_PATH && (req.method === 'GET' || req.method === 'POST')) ||
       (pathname === REGISTER_OPTIONS_PATH && req.method === 'POST') ||
-      (match && req.method === 'DELETE')
+      (match && (req.method === 'DELETE' || req.method === 'PATCH'))
     if (!known) {
       if (pathname === PASSKEYS_PATH || pathname === REGISTER_OPTIONS_PATH || match) {
         res.writeHead(405).end()
@@ -229,6 +246,7 @@ export function createPasskeys(options: {
     const user = auth.requireUser(req, res)
     if (!user) return true
     if (pathname === REGISTER_OPTIONS_PATH) json(res, 200, await registrationOptions(user))
+    else if (match && req.method === 'PATCH') json(res, 200, rename(user, Number(match[1]), await readJson(req)))
     else if (match) {
       const result = db.prepare('DELETE FROM passkeys WHERE id = ? AND user_id = ?').run(Number(match[1]), user.id)
       if (Number(result.changes) === 0) throw new HttpError(404, 'This passkey does not exist')

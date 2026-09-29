@@ -35,9 +35,14 @@ const signedOutHeaders = () => {
   return headers
 }
 
-async function addPasskey(authenticator: SoftwareAuthenticator, name = 'Laptop', headers = writeHeaders(cookie)) {
+async function addPasskey(
+  authenticator: SoftwareAuthenticator,
+  name: string | null = 'Laptop',
+  headers = writeHeaders(cookie),
+  device?: string,
+) {
   const { flowId, options } = await jsonOf(await post('/api/passkeys/options', {}, headers))
-  return post('/api/passkeys', { flowId, name, response: authenticator.register(options) }, headers)
+  return post('/api/passkeys', { flowId, name, device, response: authenticator.register(options) }, headers)
 }
 
 async function signInWith(authenticator: SoftwareAuthenticator) {
@@ -125,6 +130,35 @@ test('users remove only their own passkeys', async () => {
   expect((await remove(cookie)).status).toBe(204)
   expect(await jsonOf(await fetch(`${app.base}/api/passkeys`, { headers: { cookie } }))).toEqual([])
   expect((await signInWith(authenticator)).status).toBe(401)
+})
+
+test('new passkeys without a name are named after their password manager or the device', async () => {
+  const apple = new SoftwareAuthenticator(TEST_PUBLIC_URL, 'fbfc3007-154e-4ecc-8c0b-6e020557d7bd')
+  expect(await jsonOf(await addPasskey(apple, '', undefined, 'Mac'))).toMatchObject({ name: 'Apple Passwords' })
+  const unknown = new SoftwareAuthenticator(TEST_PUBLIC_URL)
+  expect(await jsonOf(await addPasskey(unknown, null, undefined, 'Windows'))).toMatchObject({ name: 'Windows' })
+  const bare = new SoftwareAuthenticator(TEST_PUBLIC_URL)
+  expect(await jsonOf(await addPasskey(bare, '  '))).toMatchObject({ name: 'Passkey' })
+})
+
+test('users rename only their own passkeys', async () => {
+  const { id } = await jsonOf(await addPasskey(new SoftwareAuthenticator(TEST_PUBLIC_URL)))
+  const guest = signedIn(host, 'guest@example.com').cookie
+  const rename = (who: string, name: unknown) =>
+    fetch(`${app.base}/api/passkeys/${id}`, { method: 'PATCH', headers: writeHeaders(who), body: JSON.stringify({ name }) })
+
+  expect((await rename(guest, 'Mine now')).status).toBe(404)
+  expect((await rename(cookie, '   ')).status).toBe(400)
+  expect((await rename(cookie, 'x'.repeat(65))).status).toBe(400)
+  const renamed = await rename(cookie, '  Work laptop ')
+  expect(renamed.status).toBe(200)
+  expect(await jsonOf(renamed)).toMatchObject({ id, name: 'Work laptop' })
+  expect(await jsonOf(await fetch(`${app.base}/api/passkeys`, { headers: { cookie } }))).toMatchObject([{ name: 'Work laptop' }])
+
+  const { cookie: _, ...noCookie } = writeHeaders('')
+  expect(
+    (await fetch(`${app.base}/api/passkeys/${id}`, { method: 'PATCH', headers: noCookie, body: '{"name":"x"}' })).status,
+  ).toBe(401)
 })
 
 test('a sign-in link lets someone without an identity provider enroll a passkey', async () => {

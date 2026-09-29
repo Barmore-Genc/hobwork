@@ -27,7 +27,10 @@ just build                # build for the simulator
 just run                  # newest iPhone simulator
 just run "iPhone 17"      # a named one
 just run-device           # first connected iPhone, signed with team 63QQLP356Q
+just testflight            # archive a release build and upload it to App Store Connect
 ```
+
+`testflight` signs with the Apple account signed in to Xcode and uploads to the Hobwork app record on App Store Connect. The build number is the UTC time of the build, so every upload is higher than the last.
 
 On a device the first build needs the team's signing: open the project in Xcode once, or pass `-allowProvisioningUpdates` (the `install-device` recipe does). Push needs the Push Notifications capability on the `dev.bgenc.hobwork` App ID, which automatic signing adds from `Hobwork.entitlements`. The extension's App ID is `dev.bgenc.hobwork.NotificationService`.
 

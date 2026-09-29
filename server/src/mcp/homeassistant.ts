@@ -6,6 +6,11 @@ import { truncateMiddle } from './output.ts'
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 500
+const HOUR_MS = 3_600_000
+const DEFAULT_WINDOW_HOURS = 24
+const DEFAULT_STATISTICS_DAYS = 7
+const DEFAULT_CHANGES = 100
+const MAX_CHANGES = 1000
 const DEFAULT_LISTEN_SECONDS = 60
 const MAX_LISTEN_SECONDS = 300
 const PROGRESS_INTERVAL_MS = 10_000
@@ -39,6 +44,28 @@ const search = z.string().optional()
 const limit = z.number().int().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT).describe('Maximum number of results')
 const offset = z.number().int().min(0).default(0).describe('Number of results to skip, for paging')
 const triggerObject = z.record(z.string(), z.unknown())
+const scriptEntity = z.string().describe('Entity ID of an automation or script, e.g. "automation.coffee_came_back"')
+const start = z.iso.datetime({ offset: true }).optional()
+const end = z.iso.datetime({ offset: true }).optional().describe('End of the period (ISO 8601). Default: now')
+
+function period(from: string | undefined, to: string | undefined, defaultHours: number) {
+  return {
+    start_time: from ?? new Date(Date.now() - defaultHours * HOUR_MS).toISOString(),
+    ...(to ? { end_time: to } : {}),
+  }
+}
+
+function fromSeconds(seconds: number): string {
+  return new Date(seconds * 1000).toISOString()
+}
+
+function scriptDomain(entityId: string): 'automation' | 'script' {
+  const domain = entityId.split('.')[0]
+  if (domain !== 'automation' && domain !== 'script') {
+    throw new HomeAssistantError('invalid_input', 'Pass an automation.* or script.* entity ID')
+  }
+  return domain
+}
 
 export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant): void {
   function connected(): HomeAssistant {
@@ -49,6 +76,21 @@ export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant)
       )
     }
     return ha
+  }
+
+  // Traces are keyed by the automation's `id` from its config, not by entity ID.
+  async function traceItem(client: HomeAssistant, entityId: string) {
+    const domain = scriptDomain(entityId)
+    if (domain === 'script') return { domain, itemId: entityId.slice('script.'.length) }
+    const state = await client.getState(entityId)
+    if (!state) {
+      throw new HomeAssistantError('not_found', `Home Assistant has no automation "${entityId}". Find them with ha_list_entities and domain "automation"`)
+    }
+    const id = state.attributes.id
+    if (typeof id !== 'string') {
+      throw new HomeAssistantError('not_found', `${entityId} has no id in its config, so Home Assistant keeps no traces for it`)
+    }
+    return { domain, itemId: id }
   }
 
   async function areaNames(client: HomeAssistant): Promise<Map<string, string>> {
@@ -214,14 +256,11 @@ export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant)
     {
       description:
         'Show a Home Assistant automation or script: its config (triggers, conditions and actions, as in the YAML editor), whether it is on and when it last ran. Find them with ha_list_entities and domain "automation" or "script", or with ha_find_related.',
-      inputSchema: { entity_id: z.string().describe('Entity ID, e.g. "automation.coffee_came_back" or "script.announce"') },
+      inputSchema: { entity_id: scriptEntity },
       annotations: { readOnlyHint: true },
     },
     async ({ entity_id }) => {
-      const domain = entity_id.split('.')[0]
-      if (domain !== 'automation' && domain !== 'script') {
-        throw new HomeAssistantError('invalid_input', 'Pass an automation.* or script.* entity ID')
-      }
+      const domain = scriptDomain(entity_id)
       const client = connected()
       const [state, config] = await Promise.all([
         client.getState(entity_id),
@@ -260,6 +299,245 @@ export function registerHomeAssistantTools(server: McpServer, ha: HomeAssistant)
       annotations: { readOnlyHint: true },
     },
     async ({ item_type, item_id }) => json(await connected().searchRelated(item_type, item_id)),
+  )
+
+  server.registerTool(
+    'ha_list_traces',
+    {
+      description:
+        'List the recent runs of a Home Assistant automation or script, newest first: when it ran, what triggered it, the step it stopped at and any error. Home Assistant keeps the last 5 runs unless the automation sets stored_traces. Show one run with ha_get_trace.',
+      inputSchema: { entity_id: scriptEntity },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ entity_id }) => {
+      const client = connected()
+      const { domain, itemId } = await traceItem(client, entity_id)
+      const traces = await client.listTraces(domain, itemId)
+      return json(
+        traces
+          .map((t) => ({
+            run_id: t.run_id,
+            started: t.timestamp.start,
+            finished: t.timestamp.finish,
+            state: t.state,
+            execution: t.script_execution,
+            trigger: t.trigger ?? null,
+            last_step: t.last_step,
+            error: t.error ?? null,
+          }))
+          .sort((a, b) => b.started.localeCompare(a.started)),
+      )
+    },
+  )
+
+  server.registerTool(
+    'ha_get_trace',
+    {
+      description:
+        'Show one run of a Home Assistant automation or script step by step: the trigger variables, each condition with its result, each action with its result or error. Use it to see why an automation did not do what it should.',
+      inputSchema: { entity_id: scriptEntity, run_id: z.string().describe('run_id from ha_list_traces') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ entity_id, run_id }) => {
+      const client = connected()
+      const { domain, itemId } = await traceItem(client, entity_id)
+      const trace = await client.getTrace(domain, itemId, run_id).catch((err: unknown) => {
+        if (err instanceof HomeAssistantError && err.code === 'not_found') {
+          throw new HomeAssistantError('not_found', `${entity_id} has no run "${run_id}". List runs with ha_list_traces`)
+        }
+        throw err
+      })
+      // The config is what ha_get_automation shows, and `this` in every step
+      // repeats the automation's own state.
+      const shown: Record<string, unknown> = { ...trace }
+      delete shown.config
+      delete shown.blueprint_inputs
+      const steps = trace.trace as Record<string, Record<string, unknown>[]> | undefined
+      if (steps) {
+        shown.trace = Object.fromEntries(
+          Object.entries(steps).map(([path, runs]) => [
+            path,
+            runs.map((run) => {
+              const variables = run.changed_variables as Record<string, unknown> | undefined
+              if (!variables || !('this' in variables)) return run
+              const rest = { ...variables }
+              delete rest.this
+              return { ...run, changed_variables: rest }
+            }),
+          ]),
+        )
+      }
+      return json(shown)
+    },
+  )
+
+  server.registerTool(
+    'ha_history',
+    {
+      description: `Show how Home Assistant entities changed over a period: each state with when it changed, oldest first, from the recorder. Default period: the last ${DEFAULT_WINDOW_HOURS} hours. Shows the latest \`limit\` changes per entity.`,
+      inputSchema: {
+        entity_ids: z.array(z.string()).min(1).max(20).describe('Entity IDs, e.g. ["binary_sensor.door"]'),
+        start: start.describe(`Start of the period (ISO 8601, e.g. "2026-09-28T06:00:00+02:00"). Default: ${DEFAULT_WINDOW_HOURS} hours ago`),
+        end,
+        attributes: z.boolean().default(false).describe('Include attributes, and changes of attributes only'),
+        limit: z.number().int().min(1).max(MAX_CHANGES).default(DEFAULT_CHANGES).describe('Maximum number of changes per entity'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ entity_ids, start: from, end: to, attributes, limit: max }) => {
+      const history = await connected().history({
+        ...period(from, to, DEFAULT_WINDOW_HOURS),
+        entity_ids,
+        no_attributes: !attributes,
+      })
+      return json(
+        Object.fromEntries(
+          entity_ids.map((id) => {
+            const changes = history[id] ?? []
+            return [
+              id,
+              {
+                total: changes.length,
+                changes: changes.slice(-max).map((c) => ({
+                  state: c.s,
+                  last_changed: fromSeconds(c.lc ?? c.lu),
+                  ...(c.lc !== undefined ? { last_updated: fromSeconds(c.lu) } : {}),
+                  ...(c.a ? { attributes: c.a } : {}),
+                })),
+              },
+            ]
+          }),
+        ),
+      )
+    },
+  )
+
+  server.registerTool(
+    'ha_logbook',
+    {
+      description: `Show the Home Assistant logbook, newest first: state changes and events with what caused them, e.g. "triggered by state of binary_sensor.door" or the automation, script or user behind a change. Default period: the last ${DEFAULT_WINDOW_HOURS} hours. Without entity_ids or device_ids it covers everything.`,
+      inputSchema: {
+        start: start.describe(`Start of the period (ISO 8601). Default: ${DEFAULT_WINDOW_HOURS} hours ago`),
+        end,
+        entity_ids: z.array(z.string()).optional().describe('Only these entities (automations and scripts included)'),
+        device_ids: z.array(z.string()).optional().describe('Only these devices'),
+        context_id: z.string().optional().describe('Only entries from this context, to follow what one trigger caused'),
+        limit,
+        offset,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ start: from, end: to, entity_ids, device_ids, context_id, limit: max, offset: skip }) => {
+      const entries = await connected().logbook({
+        ...period(from, to, DEFAULT_WINDOW_HOURS),
+        ...(entity_ids ? { entity_ids } : {}),
+        ...(device_ids ? { device_ids } : {}),
+        ...(context_id ? { context_id } : {}),
+      })
+      const items = entries
+        .sort((a, b) => b.when - a.when)
+        .map((e) => ({ ...e, when: fromSeconds(e.when) }))
+      return json(page(items, skip, max))
+    },
+  )
+
+  server.registerTool(
+    'ha_system_log',
+    {
+      description:
+        "Show Home Assistant's own warnings and errors, newest first, such as an integration losing a device or a service call failing. Repeated messages are counted once. Home Assistant keeps the latest 50 unless system_log sets max_entries.",
+      inputSchema: {
+        level: z.enum(['critical', 'error', 'warning', 'info', 'debug']).optional().describe('Only entries of this level'),
+        search: search.describe('Case-insensitive text matched against the logger name and message'),
+        limit,
+        offset,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ level, search: q, limit: max, offset: skip }) => {
+      const items = (await connected().systemLog())
+        .filter((e) => !level || e.level.toLowerCase() === level)
+        .map((e) => ({
+          level: e.level,
+          logger: e.name,
+          message: e.message.join('\n'),
+          source: `${e.source[0]}:${e.source[1]}`,
+          count: e.count,
+          first_occurred: fromSeconds(e.first_occurred),
+          last_occurred: fromSeconds(e.timestamp),
+          ...(e.exception ? { exception: e.exception } : {}),
+        }))
+        .filter((e) => matches(q, e.logger, e.message))
+        .sort((a, b) => b.last_occurred.localeCompare(a.last_occurred))
+      return json(page(items, skip, max))
+    },
+  )
+
+  server.registerTool(
+    'ha_list_statistics',
+    {
+      description:
+        'List the long-term statistics Home Assistant keeps, such as sensor means and energy totals. Sensors with a state_class have one under their entity ID. Read them with ha_statistics.',
+      inputSchema: {
+        search: search.describe('Case-insensitive text matched against statistic_id and name'),
+        limit,
+        offset,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ search: q, limit: max, offset: skip }) => {
+      const items = (await connected().listStatisticIds())
+        .map((s) => ({
+          statistic_id: s.statistic_id,
+          name: s.name,
+          unit: s.statistics_unit_of_measurement,
+          source: s.source,
+          has_mean: s.has_mean,
+          has_sum: s.has_sum,
+        }))
+        .filter((s) => matches(q, s.statistic_id, s.name))
+        .sort((a, b) => a.statistic_id.localeCompare(b.statistic_id))
+      return json(page(items, skip, max))
+    },
+  )
+
+  server.registerTool(
+    'ha_statistics',
+    {
+      description: `Read Home Assistant long-term statistics, aggregated per period (5 minutes, hour, day, week or month), oldest first. Statistics outlive the recorder history: hourly ones are kept indefinitely, 5-minute ones for about 10 days. Default period: the last ${DEFAULT_STATISTICS_DAYS} days. mean, min and max exist for measurements, sum, state and change for totals such as energy.`,
+      inputSchema: {
+        statistic_ids: z.array(z.string()).min(1).max(10).describe('Statistic IDs from ha_list_statistics, e.g. ["sensor.outdoor_temperature"]'),
+        start: start.describe(`Start of the period (ISO 8601). Default: ${DEFAULT_STATISTICS_DAYS} days ago`),
+        end,
+        period: z.enum(['5minute', 'hour', 'day', 'week', 'month']).default('hour'),
+        types: z
+          .array(z.enum(['mean', 'min', 'max', 'sum', 'state', 'change']))
+          .min(1)
+          .default(['mean', 'min', 'max', 'sum', 'state', 'change'])
+          .describe('Values to return'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ statistic_ids, start: from, end: to, period: every, types }) => {
+      const statistics = await connected().statistics({
+        ...period(from, to, DEFAULT_STATISTICS_DAYS * 24),
+        statistic_ids,
+        period: every,
+        types,
+      })
+      return json(
+        Object.fromEntries(
+          statistic_ids.map((id) => [
+            id,
+            (statistics[id] ?? []).map((row) => ({
+              ...row,
+              start: new Date(row.start).toISOString(),
+              end: new Date(row.end).toISOString(),
+            })),
+          ]),
+        ),
+      )
+    },
   )
 
   server.registerTool(

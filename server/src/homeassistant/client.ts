@@ -76,6 +76,72 @@ export type HaServiceTarget = {
   label_id?: string | string[]
 }
 
+export type HaTraceSummary = {
+  run_id: string
+  state: string
+  script_execution: string | null
+  timestamp: { start: string; finish: string | null }
+  trigger?: string
+  last_step: string | null
+  error?: string
+  [key: string]: unknown
+}
+
+export type HaHistoryRequest = {
+  start_time: string
+  end_time?: string
+  entity_ids: string[]
+  no_attributes: boolean
+}
+
+// Times are seconds since the epoch. `lc` is left out when it equals `lu`.
+export type HaCompressedState = { s: string; a?: Record<string, unknown>; lu: number; lc?: number }
+
+export type HaLogbookRequest = {
+  start_time: string
+  end_time?: string
+  entity_ids?: string[]
+  device_ids?: string[]
+  context_id?: string
+}
+
+export type HaLogbookEntry = { when: number; [key: string]: unknown }
+
+export type HaSystemLogEntry = {
+  name: string
+  message: string[]
+  level: string
+  source: [string, number]
+  timestamp: number
+  exception: string
+  count: number
+  first_occurred: number
+}
+
+export type HaStatisticId = {
+  statistic_id: string
+  name: string | null
+  source: string
+  statistics_unit_of_measurement: string | null
+  has_mean: boolean
+  has_sum: boolean
+  [key: string]: unknown
+}
+
+export type HaStatisticsPeriod = '5minute' | 'hour' | 'day' | 'week' | 'month'
+export type HaStatisticType = 'mean' | 'min' | 'max' | 'sum' | 'state' | 'change'
+
+export type HaStatisticsRequest = {
+  start_time: string
+  end_time?: string
+  statistic_ids: string[]
+  period: HaStatisticsPeriod
+  types: HaStatisticType[]
+}
+
+// start and end are milliseconds since the epoch.
+export type HaStatisticRow = { start: number; end: number; [key: string]: unknown }
+
 export type CallServiceResult = { context: HaContext; response?: unknown }
 
 export type HomeAssistantStatus = 'idle' | 'unconfigured' | 'connecting' | 'connected' | 'disconnected' | 'stopped'
@@ -129,6 +195,13 @@ export type HomeAssistant = {
   // For automation.* and script.* entities: the stored config, as in the HA editor's YAML view.
   getConfig(entityId: string): Promise<Record<string, unknown>>
   searchRelated(itemType: string, itemId: string): Promise<Record<string, string[]>>
+  listTraces(domain: 'automation' | 'script', itemId: string): Promise<HaTraceSummary[]>
+  getTrace(domain: 'automation' | 'script', itemId: string, runId: string): Promise<Record<string, unknown>>
+  history(request: HaHistoryRequest): Promise<Record<string, HaCompressedState[]>>
+  logbook(request: HaLogbookRequest): Promise<HaLogbookEntry[]>
+  systemLog(): Promise<HaSystemLogEntry[]>
+  listStatisticIds(): Promise<HaStatisticId[]>
+  statistics(request: HaStatisticsRequest): Promise<Record<string, HaStatisticRow[]>>
   // Resolves once HA accepted the trigger, and rejects if HA refuses it. While
   // disconnected it resolves right away and the trigger is subscribed on
   // connect; later refusals go to onError. Every subscription is renewed after
@@ -539,6 +612,21 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     },
     searchRelated: (itemType, itemId) =>
       request<Record<string, string[]>>({ type: 'search/related', item_type: itemType, item_id: itemId }),
+    listTraces: (domain, itemId) => request<HaTraceSummary[]>({ type: 'trace/list', domain, item_id: itemId }),
+    getTrace: (domain, itemId, runId) =>
+      request<Record<string, unknown>>({ type: 'trace/get', domain, item_id: itemId, run_id: runId }),
+    history: (req) =>
+      request<Record<string, HaCompressedState[]>>({
+        type: 'history/history_during_period',
+        ...req,
+        // Minimal responses carry attributes only on the first and last state.
+        minimal_response: req.no_attributes,
+        significant_changes_only: false,
+      }),
+    logbook: (req) => request<HaLogbookEntry[]>({ type: 'logbook/get_events', ...req }),
+    systemLog: () => request<HaSystemLogEntry[]>({ type: 'system_log/list' }),
+    listStatisticIds: () => request<HaStatisticId[]>({ type: 'recorder/list_statistic_ids' }),
+    statistics: (req) => request<Record<string, HaStatisticRow[]>>({ type: 'recorder/statistics_during_period', ...req }),
     subscribeTrigger,
   }
 }

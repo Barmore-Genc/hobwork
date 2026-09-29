@@ -1,6 +1,6 @@
-# Hobwork for iOS
+# Hobwork for iOS and macOS
 
-SwiftUI app for iOS 26 (`dev.bgenc.hobwork`). It pairs with a Hobwork host, shows the web UI and project apps in a web view, keeps the device WebSocket open, shows notifications from projects and runs their device commands: alarms and timers, Screen Time, Focus, NFC tags and Health. The protocol is in "Device protocol" in `docs/architecture.md`.
+SwiftUI app for iOS 26 and macOS 26 (`dev.bgenc.hobwork`). It pairs with a Hobwork host, shows the web UI and project apps in a web view, keeps the device WebSocket open, shows notifications from projects and runs their device commands: alarms and timers, Screen Time, Focus, NFC tags and Health on iOS, Focus on macOS. The protocol is in "Device protocol" in `docs/architecture.md`.
 
 Needs Xcode 26 or newer, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and [just](https://github.com/casey/just).
 
@@ -15,14 +15,16 @@ open Hobwork.xcodeproj
 
 Every `just` recipe regenerates the project first. Targets:
 
-- `Hobwork`: the app.
-- `HobworkNotificationService`: notification service extension. Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before iOS shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, iOS shows the host's text.
-- `HobworkDeviceActivityMonitor`: DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
-- `HobworkWidgets`: widget extension with the Live Activity AlarmKit shows for timers.
-- `HobworkTests`: unit tests (Swift Testing).
-- `HobworkUITests`: a smoke test against a running host, skipped unless `just smoke` runs it.
+- `Hobwork`: the app, for iOS and macOS.
+- `HobworkNotificationService`: notification service extension, for iOS and macOS. Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
+- `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
+- `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers.
+- `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
+- `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it.
 
 Sources in `Hobwork/Shared/` are compiled into the app and the notification service extension: the command runner (`Commands/`), the host API and credentials, and the capabilities that run without the app on screen. The monitor and widget extensions take only the files they need (see `project.yml`). NFC, the Focus filter and Health background delivery are in `Hobwork/Capabilities/`, app only.
+
+The `Hobwork` scheme builds for both platforms from one target. macOS 26 has no AlarmKit or Core NFC, ManagedSettings and most of DeviceActivity are unavailable there, and HealthKit has no data on a Mac (`HKHealthStore.isHealthDataAvailable()` is false), so `project.yml` compiles the alarms, Screen Time, NFC and Health sources for iOS only (`destinationFilters`) and the code around them checks `#if os(iOS)`. The macOS app reports `notifications` and `focus` in `hello`. It has one window and a Settings window (⌘,), keeps running with the window closed so the socket stays open, and reconnects when the Mac wakes.
 
 State shared with the extensions lives in the app group `group.dev.bgenc.hobwork`: JSON files for command IDs already run (1 day), Screen Time app sets and rules, Focus labels, Health sharing and anchors, and alarm titles. Device credentials are in the Keychain under the app group's access group; items from earlier versions move there on the first launch.
 
@@ -34,8 +36,12 @@ State shared with the extensions lives in the app group `group.dev.bgenc.hobwork
 | HobworkNotificationService | App Groups, HealthKit, Family Controls |
 | HobworkDeviceActivityMonitor | App Groups, Family Controls |
 | HobworkWidgets | App Groups |
+| Hobwork (macOS) | Push, App Sandbox with outgoing connections, App Groups |
+| HobworkNotificationService (macOS) | App Sandbox with outgoing connections, App Groups |
 
-Two build settings pick the entitlements files:
+The macOS targets use the `-macOS` files (`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`) and the hardened runtime.
+
+Two build settings pick the iOS entitlements files:
 
 - `HOBWORK_FAMILY_CONTROLS` (default `YES`): `NO` signs every target without Family Controls (the `-NoFamilyControls` files). The development entitlement works for Xcode builds; TestFlight and the App Store need the distribution entitlement, which Apple approves on request. Until then `just testflight` archives with `NO`, and that build does not offer Screen Time.
 - `HOBWORK_APPLINKS_HOST` (default empty): a host name such as `hobwork.example.com` adds `applinks:<host>` (the `-AppLinks` files), so NFC tags with `https://<host>/nfc/<tag>` open the app. The host serves the matching `apple-app-site-association`.
@@ -56,13 +62,25 @@ just testflight            # archive a release build and upload it to App Store 
 
 On a device the first build needs the team's signing: open the project in Xcode once, or pass `-allowProvisioningUpdates` (the `install-device` recipe does). Automatic signing adds the capabilities from the entitlements files to the App IDs `dev.bgenc.hobwork`, `dev.bgenc.hobwork.NotificationService`, `dev.bgenc.hobwork.DeviceActivityMonitor` and `dev.bgenc.hobwork.Widgets`, and registers the app group `group.dev.bgenc.hobwork`, as long as an Apple account of team 63QQLP356Q is signed in to Xcode. If it can't, enable them in the developer portal (Certificates, Identifiers & Profiles): App Groups with `group.dev.bgenc.hobwork` on all four App IDs, HealthKit (with background delivery) and NFC Tag Reading on the app, HealthKit on the notification service extension, Family Controls (Development) on the app, the notification service extension and the monitor, and Associated Domains on the app when `HOBWORK_APPLINKS_HOST` is set.
 
+### macOS
+
+```sh
+just build-mac            # build for this Mac, signed with team 63QQLP356Q
+just run-mac              # build and open it
+just run-mac local        # signed to run on this Mac only
+```
+
+Team signing needs an Apple account of team 63QQLP356Q in Xcode, as for iPhone builds; `-allowProvisioningUpdates` registers the Mac and adds the macOS platform to the App IDs `dev.bgenc.hobwork` and `dev.bgenc.hobwork.NotificationService`. Both apps share the bundle ID, so pushes use the same APNs topic. With `local` (all macOS recipes take it), the app is signed ad hoc with `Hobwork/Hobwork-macOS-Local.entitlements`: it pairs, shows the web UI and keeps the socket open, but gets no push token, has no app group, and keeps its device token in the file-based keychain, since the data protection keychain needs a provisioning profile.
+
 Plain http works for `localhost`, `*.localhost`, `.local` names and IP addresses, so the app can pair with a development host at `http://hobwork.localhost:7420`. Everything else needs https.
 
 ## Tests
 
 ```sh
 just test                           # unit tests on an iPhone simulator
+just test-mac                       # unit tests on this Mac (`just test-mac local` without the team)
 just test-host <url> '<cookie>'     # device protocol against a running host
+just test-host-mac <url> '<cookie>' # the same from the macOS app, which pairs as `macos`
 just smoke <url>                    # UI: fresh install, enter the address, open pairing
 ```
 
@@ -81,7 +99,7 @@ It pairs a device, asks for a web session, sets and clears the push token, conne
 
 ## Device capabilities
 
-The app lists a capability in `hello` only when it is set up and allowed. People set them up under Settings in the app: allow alarms, allow Screen Time and create app sets (a name such as `social` and apps, categories and websites from the system picker), choose the Health types to share, and add the Hobwork Focus filter to a Focus in the Settings app. NFC needs no setup; Settings has a "Scan Tag" button that sends any tag's link to the host. `hobwork://nfc/<tag>` and, with Associated Domains, `https://<host>/nfc/<tag>` report the tag as scanned.
+The app lists a capability in `hello` only when it is set up and allowed. People set them up under Settings in the app: allow alarms, allow Screen Time and create app sets (a name such as `social` and apps, categories and websites from the system picker), choose the Health types to share, and add the Hobwork Focus filter to a Focus in the Settings app. NFC needs no setup; Settings has a "Scan Tag" button that sends any tag's link to the host. `hobwork://nfc/<tag>` and, with Associated Domains, `https://<host>/nfc/<tag>` report the tag as scanned. On macOS, Settings has only notifications and Focus; the Focus filter is added in System Settings, Focus.
 
 `Hobwork/Capabilities/NFC/NFCIntents.swift` has two App Intents for tags with other links, which iOS opens in Safari: "Scan NFC Tag" opens the app and scans (Action Button, Control Center, Siri), and "Send Tag to Hobwork" sends a link to the host in the background, for a Shortcuts personal automation "When I tap an NFC tag". See "Tags with other links" in `docs/architecture.md`.
 
@@ -95,7 +113,8 @@ Unit tests cover argument checks, command dedup and expiry, result, event and sa
 - NFC reading and writing (the simulator has no NFC), universal links, and iOS background tag reading.
 - The Scan NFC Tag and Send Tag to Hobwork actions from Shortcuts, the Action Button and a "When I tap an NFC tag" automation.
 - Health: authorization, queries while locked (`locked`) and background delivery waking the app.
-- The Focus filter running when a Focus turns on and off.
+- The Focus filter running when a Focus turns on and off, on iOS and macOS.
+- On macOS with team signing: the push token, pushes with actions and command pushes through the notification service extension, and the credentials in the app group's keychain access group.
 
 ## Push in the simulator
 
@@ -108,4 +127,4 @@ just push path/to/other.apns
 
 `push/actions.apns` has the payload the host sends: title and body in `aps.alert`, `category: "hobwork.<id>"` with `mutable-content: 1`, and `hobwork: { id, project, actions }`. Long-press the notification to see the actions. `push/timer.apns` is a command push (the extension runs it once the app is paired) and `push/nfc.apns` a prompt push for an NFC read that runs when tapped. Tapping one sends `{ capability: "notifications", name: "action", data: { id, action } }` to the host, over the socket when connected and with `POST /api/devices/events` otherwise. Tapping the notification itself opens the project in the app.
 
-For real pushes the host needs an APNs key (`HOBWORK_APNS_KEY_FILE`, `HOBWORK_APNS_KEY_ID`, `HOBWORK_APNS_TEAM_ID`). Debug builds register with the sandbox environment, release builds with production.
+The macOS app has no simulator; pushes to it go through APNs. For real pushes the host needs an APNs key (`HOBWORK_APNS_KEY_FILE`, `HOBWORK_APNS_KEY_ID`, `HOBWORK_APNS_TEAM_ID`). Debug builds register with the sandbox environment, release builds with production.

@@ -36,11 +36,7 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 
 ## Checking push notifications on a device
 
-The host's APNs client is tested against a local HTTP/2 server, and the iOS app with unit tests and `just test-host`. Check APNs delivery and the web view sign-in on a real device.
-
-## macOS app
-
-A macOS version of the Apple app, with pairing, the web UI in a web view, the device WebSocket and notifications, like the iOS app.
+The host's APNs client is tested against a local HTTP/2 server, and the Apple app with unit tests and `just test-host` (`just test-host-mac` on macOS). Check APNs delivery and the web view sign-in on a real iPhone, and on a Mac with a team-signed build: the macOS app has only run signed ad hoc (`just run-mac local`), which gets no push token, no app group and no data protection keychain.
 
 ## Shared UI components
 

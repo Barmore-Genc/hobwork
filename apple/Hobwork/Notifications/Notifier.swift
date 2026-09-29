@@ -1,5 +1,9 @@
+#if os(macOS)
+    import AppKit
+#else
+    import UIKit
+#endif
 import Foundation
-import UIKit
 import UserNotifications
 
 /// The `notifications` capability, and what happens when someone acts on a notification.
@@ -30,7 +34,11 @@ final class Notifier: NSObject, CapabilityHandler {
     /// token works once the person allows notifications in Settings.
     func requestAuthorization() async {
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
-        UIApplication.shared.registerForRemoteNotifications()
+        #if os(macOS)
+            NSApplication.shared.registerForRemoteNotifications()
+        #else
+            UIApplication.shared.registerForRemoteNotifications()
+        #endif
     }
 
     func authorizationStatus() async -> UNAuthorizationStatus {
@@ -44,9 +52,8 @@ final class Notifier: NSObject, CapabilityHandler {
         guard let args, let notification = try? args.decode(as: HobworkNotification.self) else {
             throw CallError(code: "bad_request", message: "notifications.send needs an id and a title")
         }
-        switch await authorizationStatus() {
-        case .authorized, .provisional, .ephemeral: break
-        default: throw CallError(code: "not_authorized", message: "Notifications are turned off for Hobwork on this device")
+        guard await authorizationStatus().allowsNotifications else {
+            throw CallError(code: "not_authorized", message: "Notifications are turned off for Hobwork on this device")
         }
         let content = UNMutableNotificationContent()
         content.title = notification.title
@@ -82,6 +89,16 @@ final class Notifier: NSObject, CapabilityHandler {
             let data: JSONValue = .object(["id": .string(notification.id), "action": .string(actionIdentifier)])
             return Response(event: DeviceEvent(capability: capability, name: "action", data: data), path: nil)
         }
+    }
+}
+
+extension UNAuthorizationStatus {
+    var allowsNotifications: Bool {
+        #if os(iOS)
+            [.authorized, .provisional, .ephemeral].contains(self)
+        #else
+            [.authorized, .provisional].contains(self)
+        #endif
     }
 }
 

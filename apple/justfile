@@ -1,6 +1,12 @@
 bundle_id := "dev.bgenc.hobwork"
 derived := "build/DerivedData"
 app := derived + "/Build/Products/Debug-iphonesimulator/Hobwork.app"
+mac_app := derived + "/Build/Products/Debug/Hobwork.app"
+mac_destination := "platform=macOS,arch=" + `uname -m`
+# `sign="local"` on the macOS recipes: signed to run on this Mac only, for when no Apple
+# account of the team is signed in to Xcode. Push and the app group need the team's profile,
+# so that build gets neither.
+mac_local_signing := "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS=Hobwork/Hobwork-macOS-Local.entitlements"
 
 _default:
     @just --list
@@ -129,8 +135,36 @@ smoke host name="": generate
     xcrun simctl boot "$udid" 2>/dev/null || true
     xcrun simctl bootstatus "$udid" -b
     xcrun simctl uninstall "$udid" {{bundle_id}}
-    TEST_RUNNER_HOBWORK_SMOKE_HOST='{{host}}' xcodebuild -scheme Hobwork -destination "id=$udid" \
+    TEST_RUNNER_HOBWORK_SMOKE_HOST='{{host}}' xcodebuild -scheme HobworkUITests -destination "id=$udid" \
         -derivedDataPath {{derived}} -only-testing:HobworkUITests test
+
+# Build the macOS app, signed with team 63QQLP356Q or with `sign="local"` for this Mac only
+build-mac sign="team": generate
+    xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
+        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} build
+
+# Build and open the macOS app, e.g. `just run-mac local`
+run-mac sign="team": (build-mac sign)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    binary='{{mac_app}}/Contents/MacOS/Hobwork'
+    pkill -f "$binary" || true
+    # `open` fails while the old instance is still quitting.
+    while pgrep -f "$binary" >/dev/null; do sleep 0.2; done
+    open '{{mac_app}}'
+
+# Run the unit tests on this Mac
+test-mac sign="team": generate
+    xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
+        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} \
+        -only-testing:HobworkTests test
+
+# The device protocol against a running host from the macOS app, as `test-host`
+test-host-mac host cookie sign="team": generate
+    TEST_RUNNER_HOBWORK_TEST_HOST='{{host}}' TEST_RUNNER_HOBWORK_TEST_COOKIE='{{cookie}}' \
+        xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
+        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} \
+        -only-testing:HobworkTests/HostIntegrationTests test
 
 # Erase the app and its data from a simulator
 reset-app name="":

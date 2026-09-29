@@ -4,12 +4,18 @@ import Foundation
 /// service extension.
 @MainActor
 enum BackgroundCapabilities {
-    static func register(on runner: CommandRunner, alarms: AlarmKitScheduler = AlarmKitScheduler(), health: HealthKitReader = HealthKitReader()) {
-        runner.register(AlarmsCapability(scheduler: alarms), for: AlarmsCapability.capability)
-        if AppGroup.hasFamilyControls {
-            runner.register(ScreenTimeCapability(), for: ScreenTimeCapability.capability)
+    #if os(iOS)
+        static func register(on runner: CommandRunner, alarms: AlarmKitScheduler = AlarmKitScheduler(), health: HealthKitReader = HealthKitReader()) {
+            runner.register(AlarmsCapability(scheduler: alarms), for: AlarmsCapability.capability)
+            if AppGroup.hasFamilyControls {
+                runner.register(ScreenTimeCapability(), for: ScreenTimeCapability.capability)
+            }
+            runner.register(FocusCapability(), for: FocusCapability.capability)
+            runner.register(HealthCapability(reader: health), for: HealthCapability.capability)
         }
-        runner.register(FocusCapability(), for: FocusCapability.capability)
-        runner.register(HealthCapability(reader: health), for: HealthCapability.capability)
-    }
+    #else
+        static func register(on runner: CommandRunner) {
+            runner.register(FocusCapability(), for: FocusCapability.capability)
+        }
+    #endif
 }

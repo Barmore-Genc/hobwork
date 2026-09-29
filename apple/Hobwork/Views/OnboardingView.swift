@@ -6,7 +6,7 @@ struct OnboardingView: View {
 
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @AppStorage("lastHostInput") private var hostInput = ""
-    @State private var deviceName = UIDevice.current.name
+    @State private var deviceName = Self.defaultDeviceName
     @State private var error: String?
     @State private var pairing = false
     @FocusState private var focused: Bool
@@ -32,11 +32,8 @@ struct OnboardingView: View {
                 }
 
                 Section {
-                    TextField("hobwork.example.com", text: $hostInput)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    TextField("hobwork.example.com", text: $hostInput, prompt: Text("hobwork.example.com"))
+                        .addressInput()
                         .focused($focused)
                         .submitLabel(.go)
                         .onSubmit(pair)
@@ -45,9 +42,8 @@ struct OnboardingView: View {
                 }
 
                 Section {
-                    TextField("Device name", text: $deviceName)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    TextField("Device name", text: $deviceName, prompt: Text("Device name"))
+                        .plainTextInput()
                 } header: {
                     Text("Device name")
                 } footer: {
@@ -74,8 +70,17 @@ struct OnboardingView: View {
                         || deviceName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Hobwork")
         }
+    }
+
+    private static var defaultDeviceName: String {
+        #if os(macOS)
+            Host.current().localizedName ?? "Mac"
+        #else
+            UIDevice.current.name
+        #endif
     }
 
     private func pair() {
@@ -111,5 +116,32 @@ struct OnboardingView: View {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+extension View {
+    /// A field for a web address. macOS forms show a field's title as a label next to it;
+    /// the section header already names these fields, so they show only their prompt.
+    func addressInput() -> some View {
+        #if os(iOS)
+            keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        #else
+            textContentType(.URL)
+                .autocorrectionDisabled()
+                .labelsHidden()
+        #endif
+    }
+
+    func plainTextInput() -> some View {
+        #if os(iOS)
+            textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        #else
+            autocorrectionDisabled()
+                .labelsHidden()
+        #endif
     }
 }

@@ -26,35 +26,44 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Notifications", value: notificationsText)
                     if notifications == .denied {
-                        Button("Open Settings") {
-                            if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
+                        Button(Self.openSettingsTitle) {
+                            if let url = Self.notificationSettingsURL { openURL(url) }
                         }
                     }
                 }
 
-                AlarmsSection(model: model)
-                ScreenTimeSection(model: model)
+                #if os(iOS)
+                    AlarmsSection(model: model)
+                    ScreenTimeSection(model: model)
+                #endif
                 FocusSection(model: model)
-                NFCSection(model: model)
-                HealthSection(model: model)
+                #if os(iOS)
+                    NFCSection(model: model)
+                    HealthSection(model: model)
+                #endif
 
-                Section {
-                    Button("Sign Out", role: .destructive) { confirmingSignOut = true }
-                } footer: {
-                    Text("Removes this device from the host. To use it again, connect it again.")
+                if model.pairing != nil {
+                    Section {
+                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+                    } footer: {
+                        Text("Removes this device from the host. To use it again, connect it again.")
+                    }
                 }
 
                 Section {
                     LabeledContent("Version", value: AppModel.appVersion)
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
                 }
-            }
+            #endif
             .confirmationDialog("Sign out of this host?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) {
                     Task {
@@ -67,15 +76,28 @@ struct SettingsView: View {
                 notifications = await model.notifier.authorizationStatus()
                 await model.refreshCapabilities()
             }
-            .alert(model.nfcNotice ?? "", isPresented: nfcNoticeShown) {
-                Button("OK") {}
-            }
+            #if os(iOS)
+                .alert(model.nfcNotice ?? "", isPresented: nfcNoticeShown) {
+                    Button("OK") {}
+                }
+            #endif
         }
+        #if os(macOS)
+            .frame(minWidth: 420, idealWidth: 480, minHeight: 360, idealHeight: 520)
+        #endif
     }
 
-    private var nfcNoticeShown: Binding<Bool> {
-        Binding(get: { model.nfcNotice != nil }, set: { if !$0 { model.nfcNotice = nil } })
-    }
+    #if os(iOS)
+        private var nfcNoticeShown: Binding<Bool> {
+            Binding(get: { model.nfcNotice != nil }, set: { if !$0 { model.nfcNotice = nil } })
+        }
+
+        private static let openSettingsTitle = "Open Settings"
+        private static let notificationSettingsURL = URL(string: UIApplication.openNotificationSettingsURLString)
+    #else
+        private static let openSettingsTitle = "Open System Settings"
+        private static let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=dev.bgenc.hobwork")
+    #endif
 
     private var connectionText: String {
         switch model.connection?.state {
@@ -89,15 +111,17 @@ struct SettingsView: View {
     }
 
     private var notificationsText: String {
+        guard let notifications else { return "" }
+        if notifications.allowsNotifications { return "On" }
         switch notifications {
-        case .authorized, .provisional, .ephemeral: "On"
-        case .denied: "Off"
-        case .notDetermined: "Not set up"
-        default: ""
+        case .denied: return "Off"
+        case .notDetermined: return "Not set up"
+        default: return ""
         }
     }
 }
 
+#if os(iOS)
 private struct AlarmsSection: View {
     let model: AppModel
 
@@ -113,6 +137,8 @@ private struct AlarmsSection: View {
     }
 }
 
+#endif
+
 private struct FocusSection: View {
     let model: AppModel
 
@@ -125,11 +151,17 @@ private struct FocusSection: View {
                 LabeledContent("Active", value: labels.active.joined(separator: ", "))
             }
         } footer: {
-            Text("To let projects know when a Focus turns on or off, open Settings, go to Focus, choose a Focus, tap Add Filter, choose Hobwork and enter a label such as work.")
+            #if os(macOS)
+                Text("To let projects know when a Focus turns on or off, open System Settings, go to Focus, choose a Focus, click Add Filter, choose Hobwork and enter a label such as work.")
+            #else
+                Text("To let projects know when a Focus turns on or off, open Settings, go to Focus, choose a Focus, tap Add Filter, choose Hobwork and enter a label such as work.")
+            #endif
         }
         .task { labels = FocusLabels.file.read() }
     }
 }
+
+#if os(iOS)
 
 private struct NFCSection: View {
     let model: AppModel
@@ -146,3 +178,4 @@ private struct NFCSection: View {
         }
     }
 }
+#endif

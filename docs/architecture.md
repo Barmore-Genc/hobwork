@@ -449,6 +449,25 @@ The host backs itself up to an S3-compatible bucket (AWS S3, Backblaze B2, Cloud
 - **Restore**: on the new machine, with the same `HOBWORK_BACKUP_*` settings, run `pnpm --filter @hobwork/server backup restore <empty-dir>` (the newest snapshot, or `--snapshot <id>` from `backup list`). It connects with a throwaway Kopia config, restores into the dir and sets the key files to mode 0600. Then start the host with `HOBWORK_DATA_DIR` pointing there (and the old `HOBWORK_SECRET_KEY`, if one was used). On start the host reinstalls repo hooks; workspaces are cloned again when used and builds are rebuilt on the first invocation. By hand, the same is `kopia repository connect s3 ...`, `kopia snapshot list --all` and `kopia snapshot restore <id> <dir>`.
 - **Tests**: unit tests use a fake `kopia`. `HOBWORK_BACKUP_TESTS=1` runs an integration test against MinIO with Kopia in Docker (`dev/backups/`): two backups with a change in between, where the second uploads a small fraction of the first, then a restore into an empty dir and a host started on it with its projects, DBs and secrets intact.
 
+## Releases
+
+The host ships as a tarball built by `.github/workflows/release.yml`. Pull requests, pushes to `main`, `v*` tags and manual runs all run install (frozen lockfile), typecheck, lint and test. Except on pull requests, it then packages the host on an x86_64 runner and attaches the tarball to a GitHub release for a tag, or keeps it as a workflow artifact for 30 days otherwise. `release/package.sh <version>` does the packaging and runs anywhere with git, Node and pnpm, but packages only for the architecture it runs on.
+
+- **Contents**: `hobwork-<version>-linux-x86_64.tar.gz` (about 160MB, 560MB unpacked) holds one directory, `hobwork-<version>-linux-x86_64/`, laid out like the repo: the committed `server/` source and migrations, `packages/sdk`, `packages/theme`, `templates/project`, `images/platform`, the built `web/dist`, the x86_64 guest image at `images/build/x86_64` built from the same commit (it contains `packages/sdk`), production `node_modules` installed for linux-x64, and `VERSION` with the version and commit. A `.sha256` file sits next to it. The version is the tag without its `v`, or `<branch>-<short commit>` otherwise.
+- **`node_modules`**: installed with `pnpm install --prod --filter @hobwork/server --filter @hobwork/theme` in the staged tree. `pnpm deploy` would give the server a standalone directory and break its relative imports of `packages/sdk` and `packages/theme`. pnpm's links are relative symlinks, so the tree works from any path; the script fails on an absolute one.
+- **From the machine**: Node >= 24.12 (`colossus` runs 26), `qemu-system-x86_64` and `qemu-img` 7.2 or newer (Gondolin 0.12 uses `-netdev stream`; `qemu-img` makes the copy-on-write root disks), git with `git http-backend` (part of git on Arch and Debian), Kopia 0.17 when backups are on, and read-write `/dev/kvm` for the service user.
+- **Install and upgrade**: releases go to `/opt/hobwork/releases/`, with `/opt/hobwork/current` a symlink to the running one. The data dir lives elsewhere (`HOBWORK_DATA_DIR=/var/lib/hobwork`), since the default `data/` is inside the release.
+
+  ```sh
+  sha256sum -c hobwork-1.2.0-linux-x86_64.tar.gz.sha256
+  sudo tar -xzf hobwork-1.2.0-linux-x86_64.tar.gz -C /opt/hobwork/releases
+  sudo ln -sfn releases/hobwork-1.2.0-linux-x86_64 /opt/hobwork/current
+  sudo systemctl restart hobwork
+  ```
+
+  The systemd unit runs `/usr/bin/node server/src/index.ts` with `WorkingDirectory=/opt/hobwork/current` and the `HOBWORK_*` settings in its environment. Host CLIs run the same way, e.g. `cd /opt/hobwork/current && HOBWORK_DATA_DIR=/var/lib/hobwork node server/src/cli/create-token.ts <name>` (the release has no pnpm). Rolling back is pointing `current` at the previous release. Host DB migrations are forward-only, so an older release then runs against a DB that newer migrations may have changed.
+- **Private repo**: downloading a release needs a GitHub token with read access to the repo's contents, e.g. `gh release download v1.2.0 -R Barmore-Genc/hobwork` on a machine that is signed in to `gh`, then copying the files over.
+
 ## Secrets and network
 
 - **Library and assignments**: there is one library of secrets. A secret has a name for people (`Spoolman API key`, unique ignoring case, at most 80 characters), a value, and the hosts it may be sent to. A project gets a secret only when it is assigned to it, and each assignment picks the env name the project sees (`SPOOLMAN_TOKEN` in one project, `API_KEY` in another). A project has at most one assignment per secret and one secret per env name. Env names are env var style and must not replace variables the guest relies on (`PATH`, `NODE_OPTIONS`, `HOBWORK_*` and similar). Host patterns follow Gondolin: `api.example.com` or `*.example.com`. `*` alone and `hobwork.internal` are refused.

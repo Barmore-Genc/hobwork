@@ -35,6 +35,7 @@ const TOKEN_PATH = '/api/devices/token'
 const WEB_SESSION_PATH = '/api/devices/web-session'
 const PUSH_PATH = '/api/devices/push'
 const EVENTS_PATH = '/api/devices/events'
+const SELF_PATH = '/api/devices/self'
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
 const MAX_RETURN_TO = 2048
@@ -167,9 +168,16 @@ export function createDeviceRoutes(options: {
   const { db, auth, allowlist, publicUrl, devices } = options
 
   function requireDevice(req: IncomingMessage): Device {
-    const device = deviceFromRequest(db, allowlist, req)
-    if (!device) throw new HttpError(401, 'Send a device token of a paired device as Authorization: Bearer')
-    return device
+    const auth = deviceFromRequest(db, allowlist, req)
+    if ('refused' in auth) throw new HttpError(auth.refused.status, auth.refused.error)
+    return auth.device
+  }
+
+  // Signing out in the app, which removes the device like Settings does.
+  async function removeSelf(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    devices.revoke(device.id)
+    res.writeHead(204).end()
   }
 
   async function token(req: IncomingMessage, res: ServerResponse) {
@@ -219,6 +227,7 @@ export function createDeviceRoutes(options: {
     [WEB_SESSION_PATH]: { method: 'POST', handle: webSession },
     [PUSH_PATH]: { method: 'PUT', handle: push },
     [EVENTS_PATH]: { method: 'POST', handle: events },
+    [SELF_PATH]: { method: 'DELETE', handle: removeSelf },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {

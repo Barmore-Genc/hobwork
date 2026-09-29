@@ -1,0 +1,131 @@
+bundle_id := "dev.bgenc.hobwork"
+derived := "build/DerivedData"
+app := derived + "/Build/Products/Debug-iphonesimulator/Hobwork.app"
+
+_default:
+    @just --list
+
+# Regenerate Hobwork.xcodeproj from project.yml
+generate:
+    xcodegen generate
+
+# Print the UDID of an iPhone simulator: the newest one, or one named `name`
+[no-exit-message]
+_udid name="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    devices="$(xcrun simctl list devices available)"
+    if [ -n '{{name}}' ]; then
+        match="$(echo "$devices" | grep -F '{{name}} (' | tail -1 || true)"
+    else
+        match="$(echo "$devices" | awk '/^-- iOS /{in_ios=1; next} /^-- /{in_ios=0} in_ios' \
+            | grep -E '^ +iPhone' | tail -1 || true)"
+    fi
+    if [ -z "$match" ]; then
+        echo 'no available iPhone simulator{{ if name != "" { " named " + name } else { "" } }}' >&2
+        exit 1
+    fi
+    echo "$match" | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/'
+
+# Build for the iOS Simulator
+build: generate
+    xcodebuild -scheme Hobwork -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath {{derived}} build
+
+# Run in an iPhone simulator, e.g. `just run "iPhone 17"`
+run name="": generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid="$(just _udid '{{name}}')"
+    xcodebuild -scheme Hobwork -destination "id=$udid" -derivedDataPath {{derived}} build
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b
+    open -a Simulator
+    xcrun simctl install "$udid" "{{app}}"
+    xcrun simctl launch "$udid" {{bundle_id}}
+
+# Send a test push to the app in the booted simulator, e.g. `just push push/actions.apns`
+push file="push/actions.apns":
+    xcrun simctl push booted {{bundle_id}} {{file}}
+
+# Print the CoreDevice identifier of a reachable iPhone or iPad, the first one or one named
+# `name`, or with `field="udid"` the hardware UDID that xcodebuild destinations take
+[no-exit-message]
+_device name="" field="identifier":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    json="$(mktemp)"
+    xcrun devicectl list devices --json-output "$json" >/dev/null
+    python3 - "$json" '{{name}}' '{{field}}' <<'PY'
+    import json, sys
+    devices = json.load(open(sys.argv[1]))["result"]["devices"]
+    for device in devices:
+        if device["hardwareProperties"].get("platform") != "iOS":
+            continue
+        if device["connectionProperties"].get("pairingState") != "paired":
+            continue
+        if device["connectionProperties"].get("tunnelState") == "unavailable":
+            continue
+        if sys.argv[2] and device["deviceProperties"]["name"] != sys.argv[2]:
+            continue
+        print(device["hardwareProperties"]["udid"] if sys.argv[3] == "udid" else device["identifier"])
+        sys.exit(0)
+    sys.exit("no reachable iPhone or iPad" + (f" named {sys.argv[2]}" if sys.argv[2] else ""))
+    PY
+
+# Build a debug build for a connected iPhone or iPad and install it
+install-device name="": generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    device="$(just _device '{{name}}')"
+    # Signing registers a device with the team only when it builds for that device.
+    xcodebuild -scheme Hobwork -destination "id=$(just _device '{{name}}' udid)" \
+        -derivedDataPath {{derived}} -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+    xcrun devicectl device install app --device "$device" \
+        "{{derived}}/Build/Products/Debug-iphoneos/Hobwork.app"
+
+# Run on a connected iPhone or iPad, e.g. `just run-device "Kaan's iPhone"`
+run-device name="": (install-device name)
+    xcrun devicectl device process launch --device "$(just _device '{{name}}')" {{bundle_id}}
+
+# Run the unit tests on an iPhone simulator
+test name="": generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid="$(just _udid '{{name}}')"
+    xcodebuild -scheme Hobwork -destination "id=$udid" -derivedDataPath {{derived}} \
+        -only-testing:HobworkTests test
+
+# Run the device protocol against a running host, with the `Cookie` header of a signed-in
+# person, e.g. `just test-host http://hobwork.localhost:7420 'hobwork_session=...'`
+test-host host cookie name="": generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid="$(just _udid '{{name}}')"
+    TEST_RUNNER_HOBWORK_TEST_HOST='{{host}}' TEST_RUNNER_HOBWORK_TEST_COOKIE='{{cookie}}' \
+        xcodebuild -scheme Hobwork -destination "id=$udid" -derivedDataPath {{derived}} \
+        -only-testing:HobworkTests/HostIntegrationTests test
+
+# Pair a fresh install with a running host and load its web UI, e.g.
+# `just smoke http://hobwork.localhost:7420`
+smoke host name="": generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid="$(just _udid '{{name}}')"
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b
+    xcrun simctl uninstall "$udid" {{bundle_id}}
+    TEST_RUNNER_HOBWORK_SMOKE_HOST='{{host}}' xcodebuild -scheme Hobwork -destination "id=$udid" \
+        -derivedDataPath {{derived}} -only-testing:HobworkUITests test
+
+# Erase the app and its data from a simulator
+reset-app name="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid="$(just _udid '{{name}}')"
+    xcrun simctl bootstatus "$udid" -b
+    xcrun simctl uninstall "$udid" {{bundle_id}}
+
+# Delete build products
+clean:
+    rm -rf build

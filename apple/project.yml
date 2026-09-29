@@ -1,0 +1,113 @@
+name: Hobwork
+options:
+  bundleIdPrefix: dev.bgenc
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: 63QQLP356Q
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  Hobwork:
+    type: application
+    supportedDestinations: [iOS]
+    sources:
+      - path: Hobwork
+    info:
+      path: Hobwork/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
+        # Hosts on the home network are often plain http on a local name or IP.
+        # `.localhost` names are what the host's development setup uses; local
+        # networking alone does not cover them.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            localhost:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+    dependencies:
+      - target: HobworkNotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork
+        PRODUCT_NAME: Hobwork
+        INFOPLIST_KEY_CFBundleDisplayName: Hobwork
+        CODE_SIGN_ENTITLEMENTS: Hobwork/Hobwork.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  HobworkNotificationService:
+    type: app-extension
+    supportedDestinations: [iOS]
+    sources:
+      - path: NotificationService
+      - path: Hobwork/Shared
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.NotificationService
+        PRODUCT_NAME: HobworkNotificationService
+        INFOPLIST_KEY_CFBundleDisplayName: Hobwork
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  HobworkTests:
+    type: bundle.unit-test
+    supportedDestinations: [iOS]
+    sources:
+      - path: HobworkTests
+    dependencies:
+      - target: Hobwork
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Hobwork.app/Hobwork"
+
+  HobworkUITests:
+    type: bundle.ui-testing
+    supportedDestinations: [iOS]
+    sources:
+      - path: HobworkUITests
+    dependencies:
+      - target: Hobwork
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Hobwork:
+    build:
+      targets:
+        Hobwork: all
+        HobworkNotificationService: all
+        HobworkTests: [test]
+        HobworkUITests: [test]
+    test:
+      targets: [HobworkTests, HobworkUITests]

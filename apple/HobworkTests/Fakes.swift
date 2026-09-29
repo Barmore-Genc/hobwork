@@ -1,0 +1,184 @@
+import Foundation
+@testable import Hobwork
+
+/// A socket the test plays the host side of.
+final class FakeSocket: DeviceSocket, @unchecked Sendable {
+    private let lock = NSLock()
+    private var inbox: [Result<String, Error>] = []
+    private var waiter: CheckedContinuation<String, Error>?
+    private var _sent: [String] = []
+    private var _cancelled = false
+    private let sendError: Error?
+
+    init(sendError: Error? = nil) {
+        self.sendError = sendError
+    }
+
+    var sent: [DeviceMessage] {
+        lock.withLock { _sent }.compactMap { try? DeviceMessage.decode($0) }
+    }
+
+    var cancelled: Bool {
+        lock.withLock { _cancelled }
+    }
+
+    func send(_ text: String) async throws {
+        try lock.withLock {
+            if _cancelled { throw DeviceSocketError.closed }
+            if let sendError { throw sendError }
+            _sent.append(text)
+        }
+    }
+
+    func receive() async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.withLock {
+                if !inbox.isEmpty {
+                    continuation.resume(with: inbox.removeFirst())
+                } else if _cancelled {
+                    continuation.resume(throwing: DeviceSocketError.closed)
+                } else {
+                    waiter = continuation
+                }
+            }
+        }
+    }
+
+    func cancel() {
+        let waiter = lock.withLock {
+            _cancelled = true
+            defer { self.waiter = nil }
+            return self.waiter
+        }
+        waiter?.resume(throwing: DeviceSocketError.closed)
+    }
+
+    /// The host sends a message.
+    func deliver(_ message: DeviceMessage) throws {
+        push(.success(try message.encoded()))
+    }
+
+    func deliver(raw text: String) {
+        push(.success(text))
+    }
+
+    /// The connection drops.
+    func fail(_ error: Error = DeviceSocketError.closed) {
+        push(.failure(error))
+    }
+
+    private func push(_ result: Result<String, Error>) {
+        let waiter = lock.withLock {
+            if let waiter = self.waiter {
+                self.waiter = nil
+                return Optional(waiter)
+            }
+            inbox.append(result)
+            return nil
+        }
+        waiter?.resume(with: result)
+    }
+}
+
+/// Hands out sockets for each connection attempt and records the requests.
+@MainActor
+final class SocketFactory {
+    private(set) var sockets: [FakeSocket] = []
+    private(set) var requests: [URLRequest] = []
+    /// Sockets to use for the next attempts, before falling back to working ones.
+    var queued: [FakeSocket] = []
+
+    func make(_ request: URLRequest) -> any DeviceSocket {
+        requests.append(request)
+        let socket = queued.isEmpty ? FakeSocket() : queued.removeFirst()
+        sockets.append(socket)
+        return socket
+    }
+
+    var last: FakeSocket? { sockets.last }
+}
+
+/// A clock the test advances by hand, so ping and backoff timing need no real waiting.
+final class ManualClock: @unchecked Sendable {
+    private struct Sleeper {
+        var id: UUID
+        var deadline: Duration
+        var continuation: CheckedContinuation<Void, Error>
+    }
+
+    private let lock = NSLock()
+    private var now: Duration = .zero
+    private var sleepers: [Sleeper] = []
+
+    var pending: [Duration] {
+        lock.withLock { sleepers.map { $0.deadline - now } }
+    }
+
+    func sleep(for duration: Duration) async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.add(id: id, duration: duration, continuation: continuation)
+            }
+        } onCancel: {
+            self.cancel(id: id)
+        }
+    }
+
+    private func add(id: UUID, duration: Duration, continuation: CheckedContinuation<Void, Error>) {
+        lock.lock()
+        defer { lock.unlock() }
+        if Task.isCancelled {
+            continuation.resume(throwing: CancellationError())
+        } else {
+            sleepers.append(Sleeper(id: id, deadline: now + duration, continuation: continuation))
+        }
+    }
+
+    private func cancel(id: UUID) {
+        lock.lock()
+        let index = sleepers.firstIndex { $0.id == id }
+        let sleeper = index.map { sleepers.remove(at: $0) }
+        lock.unlock()
+        sleeper?.continuation.resume(throwing: CancellationError())
+    }
+
+    func advance(by duration: Duration) {
+        let due = lock.withLock {
+            now += duration
+            let due = sleepers.filter { $0.deadline <= now }
+            sleepers.removeAll { $0.deadline <= now }
+            return due
+        }
+        for sleeper in due { sleeper.continuation.resume() }
+    }
+}
+
+/// Polls until the condition holds, giving the connection's tasks time to run.
+@MainActor
+func eventually(
+    _ description: String = "condition",
+    timeout: Duration = .seconds(2),
+    _ condition: @MainActor () -> Bool
+) async throws {
+    let start = ContinuousClock.now
+    while !condition() {
+        if ContinuousClock.now - start > timeout { throw TimedOut(description: description) }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+}
+
+struct TimedOut: Error, CustomStringConvertible {
+    var description: String
+}
+
+@MainActor
+final class RecordingHandler: CapabilityHandler {
+    var calls: [(method: String, args: JSONValue?)] = []
+    var reply: @MainActor (String, JSONValue?) throws -> JSONValue = { _, _ in .null }
+
+    func handle(method: String, args: JSONValue?) async throws -> JSONValue {
+        calls.append((method, args))
+        return try reply(method, args)
+    }
+}

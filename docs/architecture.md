@@ -77,7 +77,19 @@ Measured with `pnpm -C server bench:sandbox` (Hobwork image, Gondolin 0.12.0, 51
 | 8 VMs in parallel | ready in 1.1s, 2.1GB host RSS total |
 | HTTPS GET through egress proxy | curl median 36ms, node fetch 177ms including node startup |
 
-Numbers on `colossus` are blocked: it has no `/dev/kvm`. The `kvm` module is loaded but `kvm_intel`/`kvm_amd` is not, and the user is not in the `kvm` group. Once that is fixed, run the same script there (see `images/README.md`).
+Measured the same way on `colossus` (Arch Linux, AMD, 16 CPUs, 27GB RAM, KVM, Node 26), run directly on the bare host (`-accel kvm -cpu host` confirmed in the QEMU command line):
+
+| | |
+|---|---|
+| Create to first command | median 2512ms (2496-2768ms) |
+| Command on a running VM | median 5ms |
+| `node -e 0` in guest | median 48ms |
+| 10 concurrent `sleep 1` in one VM | 1.1s total |
+| Host RSS per VM | 171MB fresh, 277MB after running tsc and node |
+| 8 VMs in parallel | ready in 3.2s, 1.4GB host RSS total |
+| HTTPS GET through egress proxy | curl median 44ms, node fetch 165ms including node startup |
+
+Boot is about 5x slower than on the Mac. The x86_64 `microvm` machine type boots the Alpine kernel more slowly here than HVF on Apple Silicon; the cause is not investigated. The VM test suite (`pnpm -C server test:vm`) passes on `colossus` (37 tests).
 
 ### VM kinds
 

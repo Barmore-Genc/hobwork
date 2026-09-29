@@ -21,13 +21,13 @@ Done when: `pnpm dev` starts host and web, `pnpm test` runs, the web UI loads.
 - `Sandbox` interface in the host, Gondolin implementation.
 - Hobwork guest image: Alpine + Node + pnpm + git, larger root disk, platform dependency set.
 - Decide how extra per-project dependencies layer on top of the platform set.
-- Benchmark on `colossus` with KVM (boot, exec, memory, egress), same script as the Mac run.
+- Benchmark on `colossus` with KVM (boot, exec, memory, egress), same script as the Mac run. Done, numbers in architecture.md.
 - Test Gondolin VFS performance for `vitest` and `tsc` in a mounted checkout vs on the VM disk. Decide how workspaces hold their files.
 - Decide and prototype the internal SDK to host endpoint.
 
 Done when: the host can start a VM with a directory mounted, run a command with streamed output, and stop it, with numbers from `colossus`.
 
-Status: done except the `colossus` numbers, which are blocked on KVM access there (see architecture.md). Mac numbers, the dependency layering, the workspace file layout and the internal endpoint are in architecture.md.
+Status: done. Mac and `colossus` numbers (KVM, bare host; VM tests pass there too), the dependency layering, the workspace file layout and the internal endpoint are in architecture.md.
 
 ## Phase 2: Projects and git
 

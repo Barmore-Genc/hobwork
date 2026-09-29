@@ -6,12 +6,12 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 
-case "$(uname -m)" in
+arch=${HOBWORK_IMAGE_ARCH:-$(uname -m)}
+case "$arch" in
   arm64 | aarch64) arch=aarch64 platform=linux/arm64 ;;
   x86_64 | amd64) arch=x86_64 platform=linux/amd64 ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
-arch=${HOBWORK_IMAGE_ARCH:-$arch}
 
 gondolin_version=$(sed -n 's/.*"@earendil-works\/gondolin": "\(.*\)".*/\1/p' "$here/../server/package.json")
 if [ -z "$gondolin_version" ]; then

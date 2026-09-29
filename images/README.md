@@ -22,11 +22,26 @@ pnpm -C images/platform install --lockfile-only --ignore-workspace
 
 ## On colossus (x86_64 Linux)
 
-Needs Docker, `qemu-system-x86_64`, `qemu-img`, Node >= 24.12 and read-write access to `/dev/kvm`.
+Needs `qemu-system-x86_64`, `qemu-img`, Node >= 23.6 and read-write access to `/dev/kvm`. colossus has no pnpm and no Docker access for the user, so build on another machine with Docker and copy the result over. From the repo root on the Mac (the `--platform` flags make Docker emulate x86_64):
 
 ```sh
-npx pnpm@12.5.1 install
-images/build.sh                        # writes images/build/x86_64
-npx pnpm@12.5.1 -C server test:vm
-npx pnpm@12.5.1 -C server bench:sandbox
+HOBWORK_IMAGE_ARCH=x86_64 images/build.sh
+
+# linux-x64 node_modules (Gondolin optional dependencies are per platform)
+docker run --rm --platform linux/amd64 -v "$PWD:/repo" -w /repo node:26 \
+  sh -euc 'npm i -g pnpm@12.5.1 && pnpm install --frozen-lockfile'
+
+rsync -a --exclude .git --exclude data ./ colossus:hobwork-bench/
 ```
+
+Do this from a scratch copy of the repo, not the working checkout, because it replaces the Mac `node_modules`. Then run on colossus with the host's Node:
+
+```sh
+cd ~/hobwork-bench/server
+export HOBWORK_IMAGE_DIR=$HOME/hobwork-bench/images/build/x86_64
+HOBWORK_VM_TESTS=1 node node_modules/vitest/vitest.mjs run src/sandbox src/guest-vm src/runtime/runtime.vm src/ssh/ssh.vm
+node scripts/bench-sandbox.ts vm
+node scripts/bench-sandbox.ts vfs
+```
+
+Once the user has Docker access on colossus, `pnpm install`, `images/build.sh` and the `pnpm -C server` commands work there directly.

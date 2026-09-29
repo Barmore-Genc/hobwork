@@ -1,0 +1,22 @@
+{
+  "Simulator Target Bundle": "dev.bgenc.hobwork",
+  "aps": {
+    "alert": {
+      "title": "Scan an NFC tag",
+      "body": "kitchen is waiting. Tap to start."
+    },
+    "sound": "default",
+    "thread-id": "kitchen"
+  },
+  "hobwork": {
+    "project": "kitchen",
+    "command": {
+      "id": "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a",
+      "capability": "nfc",
+      "method": "read",
+      "args": {},
+      "expiresAt": "2099-01-01T00:00:00Z",
+      "foreground": true
+    }
+  }
+}

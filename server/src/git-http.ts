@@ -24,7 +24,14 @@ function plain(res: ServerResponse, status: number, message: string, headers: Re
   res.end(`${message}\n`)
 }
 
-export function handleGit(host: Host, req: IncomingMessage, res: ServerResponse, pathname: string, query: string) {
+export function handleGit(
+  host: Host,
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string,
+  query: string,
+  remoteAddress: string | undefined,
+) {
   const match = GIT_PATH.exec(pathname)
   if (!match || pathname.includes('..')) return plain(res, 404, 'Not found')
   const [, project = '', rest = ''] = match
@@ -63,7 +70,7 @@ export function handleGit(host: Host, req: IncomingMessage, res: ServerResponse,
     REQUEST_METHOD: req.method ?? 'GET',
     QUERY_STRING: query,
     REMOTE_USER: agent.name,
-    REMOTE_ADDR: req.socket.remoteAddress ?? '',
+    REMOTE_ADDR: remoteAddress ?? '',
   })
   const optional = {
     CONTENT_TYPE: 'content-type',

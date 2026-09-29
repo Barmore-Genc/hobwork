@@ -143,6 +143,7 @@ const server = createApp(host, {
     oidc: config.oidc,
     webDist: config.webDist,
     appleAppId: config.appleAppId,
+    trustedProxies: config.trustedProxies,
   },
 })
 

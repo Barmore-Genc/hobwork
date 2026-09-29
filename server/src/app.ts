@@ -16,6 +16,7 @@ import { createPasskeys } from './auth/passkeys.ts'
 import { createAuthRoutes } from './auth/routes.ts'
 import type { Backups } from './backup/backups.ts'
 import { createBackupRoutes } from './backup/routes.ts'
+import { clientAddress, parseTrustedProxies, type TrustedProxies } from './client-address.ts'
 import { defaultAppsUrl, type Allowlist, type OidcConfig } from './config.ts'
 import type { ProjectData } from './data/project-data.ts'
 import { createDelivery, type Delivery } from './delivery.ts'
@@ -47,6 +48,8 @@ export type WebOptions = {
   allowlist: Allowlist
   oidc?: OidcConfig
   webDist?: string
+  // Empty when the host is reached directly.
+  trustedProxies?: TrustedProxies
   // Tests replace how client ID metadata documents are fetched and the clock.
   fetchClientMetadata?: (url: URL) => Promise<FetchedDocument>
   now?: () => number
@@ -73,6 +76,8 @@ export function createApp(
   const workspaces = options.workspaces ?? createWorkspaceManager<ExecWorkspaceVm>(host)
   const delivery = options.delivery ?? createDelivery(host, { workspaces })
   const web = options.web ?? { publicUrl: 'http://localhost', allowlist: { emails: [], subjects: [] } }
+  const trustedProxies = web.trustedProxies ?? parseTrustedProxies('')
+  const addressOf = (req: IncomingMessage) => clientAddress(req, trustedProxies)
   const auth = createAuth({ db: host.db, publicUrl: web.publicUrl, allowlist: web.allowlist })
   const devices = options.devices ?? createDevices({ host, allowlist: web.allowlist, publicUrl: web.publicUrl })
   const oauth = createOAuthServer({
@@ -80,6 +85,7 @@ export function createApp(
     publicUrl: web.publicUrl,
     auth,
     mcpPath: MCP_PATH,
+    clientAddress: addressOf,
     fetchDocument: web.fetchClientMetadata,
     now: web.now,
   })
@@ -193,7 +199,7 @@ export function createApp(
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
 
     if (pathname.startsWith(GIT_PREFIX)) {
-      return handleGit(host, req, res, pathname, search.slice(1))
+      return handleGit(host, req, res, pathname, search.slice(1), addressOf(req))
     }
     if (pathname === MCP_PATH) {
       return void handleMcp(req, res)

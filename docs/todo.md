@@ -16,3 +16,7 @@ Expose more of the phone and Mac to handlers through `ctx.device`, as calls over
 - Screen Time and Focus: block or allow apps and turn it on or off on a schedule or from a handler (Family Controls, Managed Settings, Device Activity). Use case: a handler that blocks certain apps on a phone at a set time. iOS has no public API to turn Focus modes on or off; check whether a Shortcuts action the app provides can do it. On macOS, the same for the Mac's apps and Focus.
 
 Check which of HealthKit, AlarmKit and Family Controls macOS 26 supports before planning the Mac side.
+
+## Storage use in the projects list
+
+Show how much disk each project uses in the web UI's projects list, with the project DB broken out since it is the part that grows. Other parts worth counting: the bare repo, branch DB copies, builds and logs. Sizes can be read from the data dir; cache them or compute them in the background so the list stays fast.

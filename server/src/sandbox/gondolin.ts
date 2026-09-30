@@ -73,6 +73,10 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     // encodings of private IPv4 addresses and the LAN's global IPv6 prefixes,
     // so an allowed name could still lead to a LAN device.
     isIpAllowed: (info) => isPublicAddress(info.ip, { extraBlocked: hostNetworks() }),
+    // Streamed bodies have no size limit, so only hobwork.internal handlers,
+    // which bound what they read, can opt in.
+    streamRequestBody: (request) =>
+      new URL(request.url).hostname === INTERNAL_HOST && (options.streamInternal?.(request) ?? false),
     // Gondolin injects secrets after onRequest, so the internal handler and
     // the interceptor only see placeholders.
     onRequest: async (request) => {

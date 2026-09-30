@@ -36,7 +36,7 @@ commit=$(git -C "$root" rev-parse HEAD)
 # host reads everything listed here at runtime (packages/sdk is mounted into
 # VMs, images/platform decides which dependencies the guest image provides).
 git -C "$root" archive --format=tar HEAD \
-  package.json pnpm-lock.yaml pnpm-workspace.yaml \
+  package.json pnpm-lock.yaml pnpm-workspace.yaml patches \
   server/package.json server/src server/migrations \
   packages/sdk packages/theme templates/project images/platform \
   web/package.json |

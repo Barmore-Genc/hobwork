@@ -72,6 +72,10 @@ export type SandboxOptions = {
   // Env var name -> secret. The guest only ever sees a placeholder.
   secrets?: Record<string, Secret>
   internal?: InternalHandler
+  // Requests to hobwork.internal that this returns true for reach `internal`
+  // with their body as a stream. They are not buffered and have no size limit,
+  // so `internal` must bound what it reads. Gets the request head only.
+  streamInternal?: (request: Request) => boolean
   intercept?: Interceptor
   onEgressBlocked?: (event: EgressBlocked) => void
   // Called at most once a minute per host and reason.

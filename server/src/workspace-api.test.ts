@@ -1,9 +1,12 @@
 import { execFile, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
+import { Readable } from 'node:stream'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ensureAgent } from './agents.ts'
 import { createAppOrigins } from './apps/origins.ts'
@@ -18,6 +21,7 @@ import { createTestHost } from './test-host.ts'
 import { seedMain } from './test-project.ts'
 import { startHostWorkspaceVm } from './test-workspace-vm.ts'
 import { createWorkspaceApi } from './workspace-api.ts'
+import { checkPushCommands } from './workspace-git.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm, type WorkspaceSession } from './workspaces.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -29,9 +33,11 @@ let workspaces: ReturnType<typeof createWorkspaceManager<ExecWorkspaceVm>>
 let server: Server
 let internalUrl: string
 let session: WorkspaceSession
+let handler: (request: Request) => Response | Promise<Response>
 
 // Serves the handler of the filament/spools workspace VM over local HTTP, the
-// way Gondolin answers hobwork.internal inside the VM.
+// way Gondolin answers hobwork.internal inside the VM: bodies stream both ways,
+// and chunked request bodies arrive without framing headers.
 beforeEach(async () => {
   host = createTestHost()
   await createProject(host, 'filament')
@@ -40,26 +46,27 @@ beforeEach(async () => {
   workspaces = createWorkspaceManager<ExecWorkspaceVm>(host, { startVm: startHostWorkspaceVm(host) })
   await workspaces.open('filament', 'spools')
   const delivery = createDelivery(host, { workspaces, pipeline: { startVm: startHostPipelineVm } })
-  const handler = createWorkspaceApi({
+  handler = createWorkspaceApi({
     host,
     workspaces,
     delivery,
     appOrigin: createAppOrigins('https://apps.example.com').origin,
   })({ project: 'filament', branch: 'spools' })
-  server = createServer((req, res) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', async () => {
-      const response = await handler(
-        new Request(`http://hobwork.internal${req.url}`, {
-          method: req.method,
-          headers: req.headers as Record<string, string>,
-          body: req.method === 'GET' ? undefined : Buffer.concat(chunks),
-        }),
-      )
-      res.writeHead(response.status, Object.fromEntries(response.headers))
-      res.end(Buffer.from(await response.arrayBuffer()))
-    })
+  server = createServer(async (req, res) => {
+    const headers = new Headers(req.headers as Record<string, string>)
+    headers.delete('transfer-encoding')
+    headers.delete('connection')
+    const response = await handler(
+      new Request(`http://hobwork.internal${req.url}`, {
+        method: req.method,
+        headers,
+        body: req.method === 'GET' ? undefined : (Readable.toWeb(req) as ReadableStream),
+        duplex: 'half',
+      }),
+    )
+    res.writeHead(response.status, Object.fromEntries(response.headers))
+    if (response.body) Readable.fromWeb(response.body as NodeReadableStream).pipe(res)
+    else res.end()
   })
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
   internalUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -203,4 +210,56 @@ test('the git route needs the session and the workspace hob, and serves fetches'
   ).rejects.toThrow(/not found/)
   await gitRemote(dir, ['fetch', '--quiet', 'REMOTE', '+refs/heads/main:refs/remotes/origin/main'])
   expect((await git(['rev-parse', 'refs/remotes/origin/main'], { cwd: dir })).trim()).toMatch(/^[0-9a-f]{40}$/)
+})
+
+test('the git route streams chunked pushes into git', async () => {
+  const dir = await clientRepo()
+  // Incompressible, so the pack is larger than git's post buffer and goes chunked.
+  writeFileSync(join(dir, 'large.bin'), randomBytes(4 * 1024 * 1024))
+  await git(['add', '.'], { cwd: dir })
+  await git(['commit', '--quiet', '-m', 'Large'], {
+    cwd: dir,
+    env: { GIT_AUTHOR_NAME: 'a', GIT_AUTHOR_EMAIL: 'a@b', GIT_COMMITTER_NAME: 'a', GIT_COMMITTER_EMAIL: 'a@b' },
+  })
+  await gitRemote(dir, ['-c', 'http.postBuffer=65536', 'push', '--quiet', 'REMOTE', 'HEAD:refs/heads/spools'])
+  const head = (await git(['rev-parse', 'HEAD'], { cwd: dir })).trim()
+  expect((await git(['--git-dir', repoPath(host, 'filament'), 'rev-parse', 'spools'])).trim()).toBe(head)
+})
+
+function pktLine(line: string): string {
+  return `${(line.length + 4).toString(16).padStart(4, '0')}${line}`
+}
+
+test('push commands are checked however the body is split', () => {
+  const body = Buffer.from(`${pktLine(`${'0'.repeat(40)} ${'a'.repeat(40)} refs/heads/spools\0report-status\n`)}0000PACK`)
+  for (let end = 0; end < body.indexOf('0000PACK') + 4; end++) {
+    expect(checkPushCommands(body.subarray(0, end), 'refs/heads/spools')).toBeUndefined()
+  }
+  expect(checkPushCommands(body, 'refs/heads/spools')).toEqual({})
+  expect(checkPushCommands(body, 'refs/heads/other')).toEqual({ problem: 'This workspace can only push to refs/heads/other' })
+  expect(checkPushCommands(Buffer.from('zzzz'), 'refs/heads/spools')).toEqual({ problem: 'Malformed push request' })
+})
+
+test('a refused push answers without reading the rest of the body', async () => {
+  let canceled = false
+  const commands = pktLine(`${'0'.repeat(40)} ${'a'.repeat(40)} refs/heads/other\n`)
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Buffer.from(`${commands}0000PACK`))
+    },
+    cancel() {
+      canceled = true
+    },
+  })
+  const response = await handler(
+    new Request('http://hobwork.internal/git/filament.git/git-receive-pack', {
+      method: 'POST',
+      headers: { 'x-hobwork-session': session.env.HOBWORK_SESSION ?? '' },
+      body,
+      duplex: 'half',
+    }),
+  )
+  expect(response.status).toBe(403)
+  expect(await response.text()).toContain('can only push to refs/heads/spools')
+  expect(canceled).toBe(true)
 })

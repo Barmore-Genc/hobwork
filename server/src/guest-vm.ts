@@ -28,6 +28,7 @@ import type {
   Workspace,
 } from './workspaces.ts'
 import { SESSION_HEADER } from './workspaces.ts'
+import { streamsWorkspaceGitBody } from './workspace-git.ts'
 import { TOOL_COMMAND } from './workspace-tools.ts'
 
 export const GUEST_DIR = '/workspace'
@@ -331,6 +332,7 @@ export function workspaceVmBackend(
           }
           return cliApi?.(request) ?? Response.json({ error: 'not found' }, { status: 404 })
         },
+        streamInternal: streamsWorkspaceGitBody,
       })
     } catch (err) {
       await environments?.stop?.(workspace)

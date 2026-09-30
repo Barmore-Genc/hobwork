@@ -8,6 +8,8 @@ import { createAgentToken } from './agents.ts'
 import { createApp } from './app.ts'
 import { createDelivery } from './delivery.ts'
 import { branchFileReader } from './files.ts'
+import { git } from './git.ts'
+import { repoPath } from './host.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
@@ -128,6 +130,15 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     const [head] = JSON.parse(await ok('log', { hob: p.hob, ref: 'tools', limit: 1 }))
     expect(head).toMatchObject({ subject: 'Add made', author: 'claude', sha: commit.slice('Committed '.length) })
     expect(await ok('diff', tools)).toBe('No changes')
+  })
+
+  test('commits push more than Gondolin buffers (64MB)', async () => {
+    const large = { hob: p.hob, branch: 'large' }
+    await ok('create_branch', large)
+    await ok('bash', { ...large, command: 'head -c 70000000 /dev/urandom > large.bin' })
+    expect(await ok('commit', { ...large, message: 'Add a large file' })).toMatch(/^Committed [0-9a-f]{40}$/)
+    const size = await git(['--git-dir', repoPath(host, p.hob), 'cat-file', '-s', 'large:large.bin'])
+    expect(size.trim()).toBe('70000000')
   })
 
   test('commands run unprivileged and cannot read session tokens, while the hobwork CLI still works', async () => {

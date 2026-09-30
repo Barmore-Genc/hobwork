@@ -11,10 +11,6 @@ The principle for the larger items: the host never reads, writes or runs git on 
 
 Sections are in the order to work on them.
 
-### Supply chain
-
-- **Install script changes in the UI**: a merge that changes `allowBuilds` gets a notice in its pipeline output. The web UI has no version diff to show it in; add one, or a flag on the version in `list_versions` and the versions list.
-
 ### Nothing on the host touches guest-writable files
 
 - **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.

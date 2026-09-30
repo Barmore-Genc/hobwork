@@ -129,12 +129,20 @@ export function allowedBuilds(raw: string | undefined): string[] {
     .sort()
 }
 
-// Undefined when the list did not change.
-export function describeAllowedBuildsChange(before: string | undefined, after: string | undefined): string | undefined {
+export type AllowedBuildsChange = { added: string[]; removed: string[] }
+
+export function allowedBuildsChange(before: string | undefined, after: string | undefined): AllowedBuildsChange {
   const was = new Set(allowedBuilds(before))
   const now = new Set(allowedBuilds(after))
-  const added = [...now].filter((name) => !was.has(name))
-  const removed = [...was].filter((name) => !now.has(name))
+  return {
+    added: [...now].filter((name) => !was.has(name)),
+    removed: [...was].filter((name) => !now.has(name)),
+  }
+}
+
+// Undefined when the list did not change.
+export function describeAllowedBuildsChange(before: string | undefined, after: string | undefined): string | undefined {
+  const { added, removed } = allowedBuildsChange(before, after)
   if (!added.length && !removed.length) return undefined
   const lines = ['This version changes which packages may run install scripts (allowBuilds in pnpm-workspace.yaml):']
   if (added.length) lines.push(`  now allowed: ${added.join(', ')}`)

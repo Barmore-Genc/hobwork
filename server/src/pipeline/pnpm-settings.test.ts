@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
 import {
   allowedBuilds,
+  allowedBuildsChange,
   checkInstallConfig,
   checkPnpmWorkspace,
   describeAllowedBuildsChange,
@@ -61,6 +62,7 @@ test('describes changes to the allowed packages', () => {
   const after = 'allowBuilds:\n  esbuild: true\n  core-js: true\n'
   expect(describeAllowedBuildsChange(before, before)).toBeUndefined()
   expect(describeAllowedBuildsChange(undefined, 'allowBuilds:\n  esbuild: false\n')).toBeUndefined()
+  expect(allowedBuildsChange(before, after)).toEqual({ added: ['core-js'], removed: ['sharp'] })
   const message = describeAllowedBuildsChange(before, after)
   expect(message).toContain('now allowed: core-js')
   expect(message).toContain('no longer allowed: sharp')

@@ -35,6 +35,7 @@ export type TrashInfo = {
     agentId?: number | null
     userId?: number | null
     restoredFrom?: number | null
+    installScripts?: { added: string[]; removed: string[] }
   }[]
   createdAt?: string
   secrets?: {
@@ -157,7 +158,8 @@ function restorableRows(
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
     versions: all(
-      `SELECT number, commit_sha, summary, created_at, agent_id, user_id, restored_from FROM versions
+      `SELECT number, commit_sha, summary, created_at, agent_id, user_id, restored_from, builds_added, builds_removed
+       FROM versions
        WHERE project_id = ? ORDER BY number DESC`,
     ).map((row) => ({
       number: Number(row.number),
@@ -167,6 +169,7 @@ function restorableRows(
       agentId: nullable(row.agent_id),
       userId: nullable(row.user_id),
       restoredFrom: nullable(row.restored_from),
+      installScripts: { added: JSON.parse(String(row.builds_added)), removed: JSON.parse(String(row.builds_removed)) },
     })),
     secrets: all(
       `SELECT secret_id, env_name, assigned_by_user_id, assigned_by_agent_id, assigned_at FROM secret_assignments
@@ -339,8 +342,9 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     const projectId = Number(row!.id)
     claimName(host, name)
     const version = db.prepare(
-      `INSERT INTO versions (project_id, number, commit_sha, summary, agent_id, user_id, restored_from, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO versions (project_id, number, commit_sha, summary, agent_id, user_id, restored_from,
+         builds_added, builds_removed, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     for (const v of info.versions) {
       version.run(
@@ -351,6 +355,8 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
         existing('agents', v.agentId),
         existing('users', v.userId),
         v.restoredFrom ?? null,
+        JSON.stringify(v.installScripts?.added ?? []),
+        JSON.stringify(v.installScripts?.removed ?? []),
         v.createdAt,
       )
     }

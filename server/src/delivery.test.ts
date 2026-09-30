@@ -110,6 +110,28 @@ test('a passing merge squashes onto main, records a version, deploys and resets 
   expect(again.status).toBe('merged')
 })
 
+test('a merge records the packages it added to or removed from allowBuilds, and a restore does too', async () => {
+  const workspace = (...names: string[]) => `allowBuilds:\n${names.map((n) => `  ${n}: true\n`).join('')}`
+  await branchWith('none', { 'src/a.ts': '1\n' })
+  const plain = await delivery().merge({ project, branch: 'none', summary: 'Plain', agent })
+  if (plain.status !== 'merged') throw new Error(JSON.stringify(plain))
+  expect(plain.version.installScripts).toEqual({ added: [], removed: [] })
+
+  await changeBranch('none', { 'pnpm-workspace.yaml': workspace('esbuild', 'sharp') })
+  const added = await delivery().merge({ project, branch: 'none', summary: 'Allow builds', agent })
+  if (added.status !== 'merged') throw new Error(JSON.stringify(added))
+  expect(added.version.installScripts).toEqual({ added: ['esbuild', 'sharp'], removed: [] })
+
+  await changeBranch('none', { 'pnpm-workspace.yaml': workspace('esbuild', 'core-js') })
+  const swapped = await delivery().merge({ project, branch: 'none', summary: 'Swap builds', agent })
+  if (swapped.status !== 'merged') throw new Error(JSON.stringify(swapped))
+  expect(swapped.version.installScripts).toEqual({ added: ['core-js'], removed: ['sharp'] })
+  expect(listVersions(host, project).map((v) => v.installScripts.added)).toEqual([['core-js'], ['esbuild', 'sharp'], [], []])
+
+  const restored = await delivery().restore({ project, version: 2, agent })
+  expect(restored.version.installScripts).toEqual({ added: [], removed: ['core-js', 'esbuild'] })
+})
+
 test('a failing test step returns its output and leaves main untouched', async () => {
   const before = await inRepo(['rev-parse', DEFAULT_BRANCH])
   await branchWith('broken', {

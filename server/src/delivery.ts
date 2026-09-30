@@ -5,7 +5,8 @@ import type { Agent } from './agents.ts'
 import type { User } from './auth/users.ts'
 import { git, GitError, HOBWORK_IDENTITY } from './git.ts'
 import { repoPath, type Host } from './host.ts'
-import { runPipeline, type PipelineOptions, type PipelineRun } from './pipeline/runner.ts'
+import { allowedBuildsChange } from './pipeline/pnpm-settings.ts'
+import { readBlob, runPipeline, type PipelineOptions, type PipelineRun } from './pipeline/runner.ts'
 import { ALLOW_MAIN_ENV, DEFAULT_BRANCH, ProjectError, requireProject } from './projects.ts'
 import { assertNotDefaultBranch, branchExists, validateBranchName } from './repo.ts'
 import { getVersion, recordVersion, type Version } from './versions.ts'
@@ -63,6 +64,14 @@ function userEnv(user: User): Record<string, string> {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+async function installScriptChange(gitDir: string, before: string, after: string) {
+  const [was, now] = await Promise.all([
+    readBlob(gitDir, before, 'pnpm-workspace.yaml'),
+    readBlob(gitDir, after, 'pnpm-workspace.yaml'),
+  ])
+  return allowedBuildsChange(was, now)
 }
 
 export function createDelivery(host: Host, options: DeliveryOptions) {
@@ -172,6 +181,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
           summary,
           agentId: agent.id,
           pipelineRunId: run.id,
+          installScripts: await installScriptChange(join(work, '.git'), `${candidate.commit}^`, candidate.commit),
         })
         const branchReset = await options.workspaces.moveBranch(
           project,
@@ -226,6 +236,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
         agentId: agent?.id,
         userId: user?.id,
         restoredFrom: target.number,
+        installScripts: await installScriptChange(repo, main, commit),
       })
       const deployError = await deployVersion({ project, version: version.number, commit, reason: 'restore' })
       return { version, ...(deployError ? { deployError } : {}) }

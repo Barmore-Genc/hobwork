@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { allowsProject } from './access.ts'
+import type { AiConfig } from './ai/settings.ts'
 import { aiSettingsRoutes } from './api/ai-settings.ts'
 import { haServicesRoutes } from './api/ha-services.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
@@ -73,6 +74,7 @@ export function createApp(
     storage?: StorageUsage
     backups?: Backups
     devices?: Devices
+    ai?: AiConfig
     sshPort?: number
     web?: WebOptions
   } = {},
@@ -112,6 +114,7 @@ export function createApp(
     secrets: options.secrets,
     storage: options.storage,
     devices,
+    ai: options.ai,
     appOrigin: origins.origin,
   })
 
@@ -146,7 +149,7 @@ export function createApp(
   const liveSockets = createLiveSockets({ db: host.db, auth, publicUrl: web.publicUrl })
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
-    ...aiSettingsRoutes({ host }),
+    ...aiSettingsRoutes({ host, ai: options.ai }),
     ...haServicesRoutes({ host }),
     ...deviceUserRoutes({ db: host.db, devices, publicUrl: web.publicUrl }),
     ...projectDeletionRoutes({

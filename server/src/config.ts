@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { AiSettingsError, DEFAULT_MODELS, parseModel, type AiModels } from './ai/settings.ts'
 import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
 import { loadVmBudget, type VmBudget } from './sandbox/budget.ts'
@@ -49,6 +50,8 @@ export type Config = {
   appleAppId: string
   // Reverse proxies whose X-Forwarded-For header names the client.
   trustedProxies: TrustedProxies
+  // The AI models hobs get unless people or agents choose others.
+  aiModels: AiModels
 }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
@@ -156,6 +159,20 @@ function loadAppleAppId(env: NodeJS.ProcessEnv): string {
   return value
 }
 
+function loadAiModels(env: NodeJS.ProcessEnv): AiModels {
+  const decision = env.HOBWORK_AI_DECISION_MODEL?.trim()
+  try {
+    return {
+      model: parseModel(env.HOBWORK_AI_MODEL || null) ?? DEFAULT_MODELS.model,
+      decisionModel: decision === 'off' ? null : (parseModel(decision || null) ?? DEFAULT_MODELS.decisionModel),
+      embeddingModel: parseModel(env.HOBWORK_AI_EMBEDDING_MODEL || null) ?? DEFAULT_MODELS.embeddingModel,
+    }
+  } catch (err) {
+    if (err instanceof AiSettingsError) throw new Error(`HOBWORK_AI_MODEL, HOBWORK_AI_DECISION_MODEL and HOBWORK_AI_EMBEDDING_MODEL: ${err.message}`)
+    throw err
+  }
+}
+
 function loadAllowlist(env: NodeJS.ProcessEnv): Allowlist {
   const entries = (env.HOBWORK_ALLOWED_USERS ?? '')
     .split(',')
@@ -205,5 +222,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     backup: loadBackupConfig(env),
     appleAppId: loadAppleAppId(env),
     trustedProxies: parseTrustedProxies(env.HOBWORK_TRUSTED_PROXIES),
+    aiModels: loadAiModels(env),
   }
 }

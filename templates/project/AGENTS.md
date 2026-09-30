@@ -57,7 +57,9 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 
 ## LLMs
 
-`openrouter(ctx)` from `@hobwork/sdk` has `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Both take `{ timeout, signal }` as a second argument (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
+`openrouter(ctx)` from `@hobwork/sdk` has `check`, `pick`, `decide`, `embed`, `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Every call takes `{ timeout, signal }` in its options (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
+
+Hobwork picks the model for every request, so requests do not name one. People choose the models on the hob's AI page, and agents with `set_ai_model`; `get_hob` shows them under `ai.models`. `check`, `pick` and `decide` go to the decision model, `embed` to the embedding model, the rest to the chat model.
 
 ### What AI is for
 
@@ -66,16 +68,20 @@ Use a model as an `if` or a `pick` inside a handler: evaluating a condition, or 
 ```ts
 const ai = openrouter(ctx)
 // true or false
-const shipped = await ai.check('Does this email say the order has shipped?', { input: email.body })
+const shipped = await ai.check('Is the order in this email on its way?', { input: email.body })
 // exactly one of the choices (an array, or an object of choice to description)
 const label = await ai.pick('What kind of email is this?', ['bill', 'shipping', 'promo', 'other'] as const, { input: email })
 ```
 
-`check(prompt, { model?, input?, timeout?, signal? })` returns a boolean. `pick(prompt, choices, options)` returns one of `choices`, typed as their union. Put the question in `prompt` and the data to judge in `input` (a string, or any JSON value); the model is told to treat `input` as data only, which makes it harder, not impossible, for text in it to change the question. Both use structured output at temperature 0 with a small token limit, and the default model is `DEFAULT_JUDGE_MODEL` (`google/gemini-2.5-flash-lite`). Pass `model` if it is not allowed for the hob. An answer that is not a boolean or not one of the choices throws `OpenRouterError` with code `invalid_output`; the helpers do not retry, so handle the error or let the invocation fail.
+`check(prompt, { input?, threshold?, timeout?, signal? })` returns whether the probability of yes is at least `threshold` (default 0.5). `pick(prompt, choices, options)` returns one of at least two `choices`, typed as their union. Put the question in `prompt` and the data to judge in `input` (a string, object or array; other values go in as JSON). The model treats `input` as data, which makes it harder, not impossible, for text in it to change the question. An answer that does not fit throws `OpenRouterError` with code `invalid_output`; the helpers do not retry, so handle the error or let the invocation fail.
+
+`decide({ state, questions })` asks several questions at once through OpenRouter's Decisions API and returns typed answers: `noul` (probability of yes), `choice` (one of the `criteria` keys, with probabilities) and `score` (the expected level of an ordered scale, lowest first). Decision models read questions literally and cannot count, do arithmetic or compare dates: compute those in code and ask about the result. Ask one judgment per question, about a property of the data, and keep `state` to what the question needs.
+
+`embed(input)` takes a string or an array of strings and returns `{ embeddings, model }`, one vector per input. Store `model` with the vectors: people can change the embedding model, and vectors from different models cannot be compared, so re-embed rows whose model differs from the current one before comparing.
 
 ### Limits
 
-People limit which models a hob may use and how many requests and dollars it may spend; `get_hob` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_model_not_allowed` (pick an allowed model), or `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the hob's AI page in Hobwork.
+People limit how many requests and dollars a hob may spend; `get_hob` shows the limits and current spend under `ai`. Every OpenRouter request counts, from workspaces and previews too, so tests fake `ctx.fetch` instead of calling OpenRouter. Past a limit, calls throw `OpenRouterError` with code `hobwork_rate_limit` or `hobwork_spend_limit` (`metadata.retry_after_seconds` says when to try again). Handle these instead of retrying in a loop. Only people change the limits, on the hob's AI page in Hobwork.
 
 ## Workflow
 

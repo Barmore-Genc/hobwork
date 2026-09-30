@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { verifyAgentToken, type AuthenticatedAgent } from '../agents.ts'
+import type { AiConfig } from '../ai/settings.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
@@ -58,6 +59,7 @@ export function createMcpHandler(options: {
   runtime?: Runtime
   data?: ProjectData
   secrets?: SecretStore
+  ai?: AiConfig
   storage?: StorageUsage
   devices?: Devices
   appOrigin?: (target: AppTarget) => string | undefined
@@ -93,6 +95,7 @@ export function createMcpHandler(options: {
       secrets: options.secrets,
       storage: options.storage,
       devices: options.devices,
+      ai: options.ai,
       appOrigin: options.appOrigin,
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })

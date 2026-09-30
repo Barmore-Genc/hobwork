@@ -2,8 +2,9 @@ import type { Host } from '../host.ts'
 import { getProject } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
 import type { Interceptor } from '../sandbox/sandbox.ts'
-import { estimateUsage, openRouterPrices, type PriceSource } from './pricing.ts'
-import { effectiveAiSettings, modelAllowed, type EffectiveAiSettings } from './settings.ts'
+import { estimateUsage, openRouterCatalog, type CatalogSource } from './catalog.ts'
+import { chatToDecisions, decisionsToChat } from './decisions.ts'
+import { DEFAULT_MODELS, effectiveAiSettings, type AiModels } from './settings.ts'
 import {
   finishAiRequest,
   limitHit,
@@ -21,12 +22,12 @@ export const OPENROUTER_HOSTS = ['openrouter.ai', '*.openrouter.ai']
 // Codes of the errors Hobwork answers with instead of OpenRouter. The SDK
 // reports them as OpenRouterError.code.
 export const AI_ERROR_CODES = {
-  model: 'hobwork_model_not_allowed',
   rate: 'hobwork_rate_limit',
   spend: 'hobwork_spend_limit',
   path: 'hobwork_path_not_allowed',
   https: 'hobwork_https_required',
   port: 'hobwork_port_not_allowed',
+  body: 'hobwork_invalid_request',
 } as const
 
 const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
@@ -34,21 +35,34 @@ const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
 // the guest sent, since the spend limits rely on the reported cost.
 const USAGE_PATHS = /\/(chat\/)?completions$/
 
+const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const DECISIONS_PATH = '/api/alpha/decisions'
+
 // Paths hobs use. Everything else on OpenRouter (API keys, credits, account
 // settings) is refused, since the API key is filled in for all of it.
 const API_PREFIX = '/api/v1'
-const METERED_PATHS = new Set(['/chat/completions', '/completions', '/messages', '/responses', '/embeddings'])
+const GENERATE_PATHS = new Set(['/chat/completions', '/completions', '/messages', '/responses'])
+const EMBEDDINGS_PATH = '/embeddings'
 const READ_PATHS = /^\/(models(\/[^/]+){0,3}|key|generation)$/
 
-function pathAllowed(method: string, pathname: string): boolean {
-  if (!pathname.startsWith(`${API_PREFIX}/`)) return false
+type Endpoint = 'generate' | 'decide' | 'embed' | 'read'
+
+function endpoint(method: string, pathname: string): Endpoint | undefined {
+  if (method === 'POST' && pathname === DECISIONS_PATH) return 'decide'
+  if (!pathname.startsWith(`${API_PREFIX}/`)) return undefined
   const path = pathname.slice(API_PREFIX.length)
-  if (method === 'POST') return METERED_PATHS.has(path)
-  if (method === 'GET' || method === 'HEAD') return READ_PATHS.test(path)
-  return false
+  if (method === 'POST') return GENERATE_PATHS.has(path) ? 'generate' : path === EMBEDDINGS_PATH ? 'embed' : undefined
+  if (method === 'GET' || method === 'HEAD') return READ_PATHS.test(path) ? 'read' : undefined
+  return undefined
 }
 
-type Refusal = { kind: RefusalKind | 'path' | 'https' | 'port'; status: number; message: string; metadata: Record<string, unknown>; retryAfterMs?: number }
+type Refusal = {
+  kind: RefusalKind | 'path' | 'https' | 'port' | 'body'
+  status: number
+  message: string
+  metadata: Record<string, unknown>
+  retryAfterMs?: number
+}
 
 // Refusals that are recorded with the request, since the request was one a hob was allowed to make.
 type CountedRefusal = Refusal & { kind: RefusalKind }
@@ -62,39 +76,6 @@ export type AiGateway = {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-// OpenRouter falls back through `models` when `model` fails, so all of them must be allowed.
-function requestedModels(body: Record<string, unknown> | undefined): string[] {
-  if (!body) return []
-  const models = [body.model, ...(Array.isArray(body.models) ? body.models : [])]
-  return [...new Set(models.filter((m): m is string => typeof m === 'string' && m !== ''))]
-}
-
-function allowedText(settings: EffectiveAiSettings): string {
-  const list = settings.projectModels ?? settings.hostModels ?? []
-  return list.length ? `It may use ${list.join(', ')}` : 'It may not use any model'
-}
-
-function modelRefusal(models: string[], settings: EffectiveAiSettings): CountedRefusal | undefined {
-  if (settings.hostModels === null && settings.projectModels === null) return undefined
-  const metadata = { allowed_models: settings.projectModels ?? settings.hostModels }
-  if (!models.length) {
-    return {
-      kind: 'model',
-      status: 403,
-      message: `Hobwork only passes on requests that name their model, since this hob may only use some models. ${allowedText(settings)}.`,
-      metadata,
-    }
-  }
-  const refused = models.find((model) => !modelAllowed(model, settings))
-  if (!refused) return undefined
-  return {
-    kind: 'model',
-    status: 403,
-    message: `Hobwork does not let this project use ${refused}. ${allowedText(settings)}. ${WHERE_TO_CHANGE}.`,
-    metadata: { ...metadata, model: refused },
-  }
 }
 
 function duration(ms: number): string {
@@ -188,12 +169,21 @@ export function parseUsage(text: string, contentType: string | null): Usage | un
   }
 }
 
-// Limits and records what project VMs send to OpenRouter. It runs on the host
-// in the VM's egress path, so project code cannot get around it: the API key
-// is only filled in for these hosts, and only after the checks here.
-export function createAiGateway(host: Host, options: { now?: () => number; prices?: PriceSource } = {}): AiGateway {
+function errorResponse(status: number, code: string, message: string): Response {
+  return Response.json({ error: { code, message } }, { status })
+}
+
+// Picks the model, limits and records what project VMs send to OpenRouter. It
+// runs on the host in the VM's egress path, so project code cannot get around
+// it: the API key is only filled in for these hosts, and only after the checks
+// here. `models` are the host's defaults from its environment.
+export function createAiGateway(
+  host: Host,
+  options: { now?: () => number; catalog?: CatalogSource; models?: AiModels } = {},
+): AiGateway {
   const now = options.now ?? Date.now
-  const prices = options.prices ?? openRouterPrices()
+  const catalog = options.catalog ?? openRouterCatalog()
+  const defaults = options.models ?? DEFAULT_MODELS
   // A handler that keeps retrying would fill the log with the same line.
   const lastLogged = new Map<string, number>()
 
@@ -217,6 +207,11 @@ export function createAiGateway(host: Host, options: { now?: () => number; price
     }
   }
 
+  function refuse(project: string, scope: AiScope, refusal: Refusal): Response {
+    logRefusal(project, scope, refusal)
+    return refusalResponse(refusal)
+  }
+
   return {
     interceptor(project, scope) {
       const record = getProject(host, project)
@@ -226,57 +221,73 @@ export function createAiGateway(host: Host, options: { now?: () => number; price
         hosts: OPENROUTER_HOSTS,
         async handle(request, upstream) {
           const url = new URL(request.url)
+          const kind = endpoint(request.method, url.pathname)
           const wrong =
             url.protocol !== 'https:'
               ? { kind: 'https' as const, message: 'Hobwork only lets hobs reach OpenRouter over https. Use https://openrouter.ai/api/v1.' }
               : url.port !== ''
                 ? { kind: 'port' as const, message: `Hobwork only lets hobs reach OpenRouter on port 443, not ${url.port}. Use https://openrouter.ai/api/v1.` }
-                : !pathAllowed(request.method, url.pathname)
-                ? { kind: 'path' as const, message: `Hobwork does not let hobs call ${request.method} ${url.pathname} on OpenRouter. Hobs can use the chat, completions, messages, responses and embeddings endpoints and read model lists.` }
-                : undefined
-          if (wrong) {
-            const refusal = { ...wrong, status: 403, metadata: {} }
-            logRefusal(project, scope, refusal)
-            return refusalResponse(refusal)
-          }
+                : !kind
+                  ? {
+                      kind: 'path' as const,
+                      message: `Hobwork does not let hobs call ${request.method} ${url.pathname} on OpenRouter. Hobs can use the chat, completions, messages, responses, embeddings and decisions endpoints and read model lists.`,
+                    }
+                  : undefined
+          if (wrong) return refuse(project, scope, { ...wrong, status: 403, metadata: {} })
           // Model lists, key info and the like cost nothing.
-          if (request.method !== 'POST') return upstream(request)
+          if (kind === 'read') return upstream(request)
+
           const text = await request.text()
           let body: Record<string, unknown> | undefined
           try {
             const parsed: unknown = JSON.parse(text)
             if (isObject(parsed)) body = parsed
           } catch {
-            // Sent on as it is; only the model list needs a body to check.
+            // Refused below.
           }
-          const models = requestedModels(body)
-          const settings = effectiveAiSettings(host.db, projectId)
+          // The body is sent on as Hobwork rewrote it, so it must be one Hobwork can read.
+          if (!body) {
+            return refuse(project, scope, { kind: 'body', status: 400, message: 'Send a JSON object to OpenRouter.', metadata: {} })
+          }
+
+          const settings = effectiveAiSettings(host.db, projectId, defaults)
+          const decisionModel = kind === 'decide' ? settings.models.decisionModel : null
+          const model = kind === 'embed' ? settings.models.embeddingModel : (decisionModel ?? settings.models.model)
           const started = now()
           const hit = limitHit(host.db, projectId, settings.limits, started)
-          const refusal = modelRefusal(models, settings) ?? (hit && limitRefusal(hit))
+          const refusal = hit && limitRefusal(hit)
           const id = startAiRequest(host.db, {
             projectId,
             branch: scope.branch,
             source: scope.source,
             path: url.pathname,
-            model: models[0] ?? null,
+            model,
             refused: refusal && { kind: refusal.kind, status: refusal.status },
             now: started,
           })
-          if (refusal) {
-            logRefusal(project, scope, refusal)
-            return refusalResponse(refusal)
+          if (refusal) return refuse(project, scope, refusal)
+
+          // Decision models are off: the chat model answers the questions.
+          const translated =
+            kind === 'decide' && !decisionModel
+              ? decisionsToChat(body, model, { disableReasoning: (await catalog()).get(model.toLowerCase())?.canDisableReasoning ?? false })
+              : undefined
+          if (translated && 'error' in translated) {
+            finishAiRequest(host.db, id, 400, undefined, now())
+            return errorResponse(400, AI_ERROR_CODES.body, translated.error)
           }
 
-          const forward = body && USAGE_PATHS.test(url.pathname)
-            ? JSON.stringify({ ...body, usage: { include: true } })
-            : text
+          const chosen: Record<string, unknown> = { ...body, model }
+          // OpenRouter's list of fallbacks, which would let a hob pick its own model.
+          delete chosen.models
+          const forwardBody = translated ? translated.chat : USAGE_PATHS.test(url.pathname) ? { ...chosen, usage: { include: true } } : chosen
           const headers = new Headers(request.headers)
           headers.delete('content-length')
+          headers.set('content-type', 'application/json')
           let response: Response
           let responseText: string
           try {
-            response = await upstream(new Request(request.url, { method: 'POST', headers, body: forward }))
+            response = await upstream(new Request(translated ? CHAT_URL : request.url, { method: 'POST', headers, body: JSON.stringify(forwardBody) }))
             responseText = await response.text()
           } catch (err) {
             finishAiRequest(host.db, id, 502, undefined, now())
@@ -284,8 +295,21 @@ export function createAiGateway(host: Host, options: { now?: () => number; price
           }
           const reported = parseUsage(responseText, response.headers.get('content-type'))
           const billable = reported?.cost === undefined && response.status >= 200 && response.status < 300
-          const usage = estimateUsage(reported, { models, text }, { status: response.status, text: responseText }, billable ? await prices() : new Map())
+          const usage = estimateUsage(reported, { model, text }, { status: response.status, text: responseText }, billable ? await catalog() : new Map())
           finishAiRequest(host.db, id, response.status, usage, now())
+
+          if (translated && response.ok) {
+            let completion: unknown
+            try {
+              completion = JSON.parse(responseText)
+            } catch {
+              return errorResponse(502, 'invalid_output', `OpenRouter's answer is not JSON: ${responseText.slice(0, 500)}`)
+            }
+            // OpenRouter reports errors after it started answering with HTTP 200, in the same format decisions use.
+            if (isObject(completion) && completion.error) return Response.json(completion, { status: 200 })
+            const answer = chatToDecisions(completion, translated.questions)
+            return 'error' in answer ? errorResponse(502, 'invalid_output', answer.error) : Response.json(answer.answer)
+          }
           const empty = [204, 205, 304].includes(response.status)
           return new Response(empty ? null : responseText, {
             status: response.status,

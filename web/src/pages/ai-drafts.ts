@@ -1,4 +1,4 @@
-import type { AiLimits } from '../api.ts'
+import type { AiLimits, ModelChoice } from '../api.ts'
 
 export const inputClass =
   'mt-2 min-h-10 w-full rounded-md border border-border bg-surface-raised px-3 text-fg placeholder:text-muted/70 focus:border-accent focus:outline-none disabled:opacity-60'
@@ -12,18 +12,33 @@ export function count(n: number): string {
   return n.toLocaleString()
 }
 
-export type ModelsDraft = { any: boolean; text: string }
+// inherit: the level above picks (Settings for a hob, the server for Settings).
+// off: no decision model, so the chat model answers decisions too.
+export type ModelDraft = { mode: 'inherit' | 'set' | 'off'; text: string }
 
-export function modelsDraft(models: string[] | null): ModelsDraft {
-  return { any: models === null, text: (models ?? []).join('\n') }
+export function modelDraft(value: string | false | null): ModelDraft {
+  if (value === false) return { mode: 'off', text: '' }
+  return value === null ? { mode: 'inherit', text: '' } : { mode: 'set', text: value }
 }
 
-export function draftModels(draft: ModelsDraft): string[] | null {
-  if (draft.any) return null
-  return draft.text
-    .split(/[\s,]+/)
-    .map((model) => model.trim())
-    .filter(Boolean)
+export function draftModel(draft: ModelDraft): string | false | null {
+  if (draft.mode === 'off') return false
+  return draft.mode === 'inherit' ? null : draft.text.trim()
+}
+
+export type ModelsDraft = { model: ModelDraft; decisionModel: ModelDraft; embeddingModel: ModelDraft }
+
+export function modelsDraft(settings: ModelChoice): ModelsDraft {
+  return {
+    model: modelDraft(settings.model),
+    decisionModel: modelDraft(settings.decisionModel),
+    embeddingModel: modelDraft(settings.embeddingModel),
+  }
+}
+
+export function draftModels(draft: ModelsDraft): ModelChoice {
+  const text = (field: ModelDraft) => (field.mode === 'inherit' ? null : field.text.trim())
+  return { model: text(draft.model), decisionModel: draftModel(draft.decisionModel), embeddingModel: text(draft.embeddingModel) }
 }
 
 type LimitField = Exclude<keyof AiLimits, 'throttle'>

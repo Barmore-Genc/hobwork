@@ -115,3 +115,20 @@ test('the Apple app ID for universal links has a default and must be <team ID>.<
   expect(loadConfig({ HOBWORK_APPLE_APP_ID: 'ABCDE12345.example.app' }).appleAppId).toBe('ABCDE12345.example.app')
   expect(() => loadConfig({ HOBWORK_APPLE_APP_ID: 'dev.bgenc.hobwork' })).toThrow('<team ID>.<bundle ID>')
 })
+
+test('AI models have defaults, and the environment picks others or turns decision models off', () => {
+  expect(loadConfig({}).aiModels).toEqual({
+    model: 'deepseek/deepseek-v4.1-flash',
+    decisionModel: 'typesafe/jev-1.13',
+    embeddingModel: 'openai/text-embedding-3-small',
+  })
+  expect(
+    loadConfig({
+      HOBWORK_AI_MODEL: 'google/gemini-2.5-flash',
+      HOBWORK_AI_DECISION_MODEL: 'respan/span-01-lite',
+      HOBWORK_AI_EMBEDDING_MODEL: 'qwen/qwen3-embedding-8b',
+    }).aiModels,
+  ).toEqual({ model: 'google/gemini-2.5-flash', decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' })
+  expect(loadConfig({ HOBWORK_AI_DECISION_MODEL: 'off' }).aiModels.decisionModel).toBeNull()
+  expect(() => loadConfig({ HOBWORK_AI_MODEL: 'two words' })).toThrow('"two words" is not a model ID')
+})

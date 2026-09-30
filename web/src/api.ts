@@ -340,18 +340,27 @@ export type AiUsageTotals = {
   cost: number
 }
 
-export type AiSettings = {
-  models: string[] | null
+// The models hobs get. decisionModel null: none, so the model answers decisions too.
+export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string }
+
+// null: the level above picks. decisionModel false: no decision model.
+export type ModelChoice = { model: string | null; decisionModel: string | false | null; embeddingModel: string | null }
+
+export type AiSettings = ModelChoice & {
+  // What hobs get with these settings.
+  models: AiModels
   limits: AiLimits
-  defaults: AiLimits
+  // The server's models and the suggested limits.
+  defaults: { models: AiModels; limits: AiLimits }
   updatedAt: string | null
   updatedBy: string | null
   usage: (AiUsageTotals & { project: string })[]
 }
 
 export type ProjectAi = {
-  host: { models: string[] | null; limits: AiLimits }
-  project: { models: string[] | null; limits: AiLimits | null; updatedAt: string | null; updatedBy: string | null }
+  host: { models: AiModels; limits: AiLimits }
+  project: ModelChoice & { limits: AiLimits | null; updatedAt: string | null; updatedBy: string | null }
+  models: AiModels
   limits: AiLimits
   usage: {
     lastMinute: number
@@ -514,10 +523,10 @@ export const api = {
   denyPairing: (query: Record<string, string>) =>
     request<{ redirectTo: string }>('POST', '/api/devices/pairing/deny', { request: query }),
   aiSettings: () => request<AiSettings>('GET', '/api/settings/ai'),
-  saveAiSettings: (settings: { models: string[] | null; limits: AiLimits }) =>
+  saveAiSettings: (settings: ModelChoice & { limits: AiLimits }) =>
     request<AiSettings>('PUT', '/api/settings/ai', settings),
   projectAi: (project: string) => request<ProjectAi>('GET', `/api/projects/${encodeURIComponent(project)}/ai`),
-  saveProjectAi: (project: string, settings: { models: string[] | null; limits: AiLimits | null }) =>
+  saveProjectAi: (project: string, settings: ModelChoice & { limits: AiLimits | null }) =>
     request<ProjectAi>('PUT', `/api/projects/${encodeURIComponent(project)}/ai`, settings),
   haServices: (project: string) =>
     request<{ services: string[] }>('GET', `/api/projects/${encodeURIComponent(project)}/home-assistant-services`),

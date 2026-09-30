@@ -128,6 +128,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'revoke_ssh_key',
       'rotate_webhook_token',
       'search',
+      'set_ai_model',
       'tail_logs',
       'unassign_secret',
       'write_file',
@@ -144,7 +145,8 @@ test('creates a project, edits files on a branch and commits as the agent', asyn
   expect(project.entryPoints.crons).toEqual({})
   expect(project.appUrl).toBe('http://filament.apps.localhost')
   expect(project.ai).toMatchObject({
-    models: { host: null, hob: null },
+    models: { model: 'deepseek/deepseek-v4.1-flash', decisionModel: 'typesafe/jev-1.13', embeddingModel: 'openai/text-embedding-3-small' },
+    ownModels: { model: null, decisionModel: null, embeddingModel: null },
     limits: { throttle: true, requestsPerMinute: 20 },
     usage: { requestsLastMinute: 0, last30Days: { requests: 0, cost: 0 } },
   })

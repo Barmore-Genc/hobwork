@@ -1,5 +1,6 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http'
 import { createServer, type AddressInfo } from 'node:net'
+import type { AiConfig } from './ai/settings.ts'
 import type { Backups } from './backup/backups.ts'
 import { createAppCode, redeemAppCode } from './apps/sessions.ts'
 import { CSRF_HEADER } from './auth/auth.ts'
@@ -46,6 +47,7 @@ export async function startTestApp(
     homeAssistant?: HomeAssistant
     homeAssistantSettings?: HomeAssistantSettings
     devices?: Devices
+    ai?: AiConfig
   } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
@@ -60,6 +62,7 @@ export async function startTestApp(
     data: options.data,
     backups: options.backups,
     devices: options.devices,
+    ai: options.ai,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,
       allowlist: { emails: ['kaan@example.com'], subjects: [] },

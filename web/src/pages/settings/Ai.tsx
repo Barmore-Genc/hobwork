@@ -5,11 +5,11 @@ import { Link } from '../../router.tsx'
 import { Button, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { draftLimits, draftModels, limitsDraft, modelsDraft } from '../ai-drafts.ts'
-import { LimitsFields, ModelsField, UsageTable } from '../ai.tsx'
+import { LimitsFields, ModelFields, UsageTable } from '../ai.tsx'
 import { projectPath } from '../project/names.ts'
 
 function AiForm({ current, onSaved }: { current: AiSettings; onSaved: () => void }) {
-  const [models, setModels] = useState(() => modelsDraft(current.models))
+  const [models, setModels] = useState(() => modelsDraft(current))
   const [limits, setLimits] = useState(() => limitsDraft(current.limits))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,8 +21,8 @@ function AiForm({ current, onSaved }: { current: AiSettings; onSaved: () => void
     setError(null)
     setSaved(false)
     try {
-      const next = await api.saveAiSettings({ models: draftModels(models), limits: draftLimits(limits) })
-      setModels(modelsDraft(next.models))
+      const next = await api.saveAiSettings({ ...draftModels(models), limits: draftLimits(limits) })
+      setModels(modelsDraft(next))
       setLimits(limitsDraft(next.limits))
       setSaved(true)
       onSaved()
@@ -35,13 +35,13 @@ function AiForm({ current, onSaved }: { current: AiSettings; onSaved: () => void
 
   return (
     <form onSubmit={save} className="mt-6 space-y-6 rounded-lg border border-border bg-surface p-5 sm:p-6">
-      <ModelsField id="ai" draft={models} onChange={setModels} anyLabel="Any model" />
+      <ModelFields id="ai" draft={models} onChange={setModels} inherited={current.defaults.models} inheritFrom="The default" />
       <LimitsFields id="ai" draft={limits} onChange={setLimits} />
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" variant="primary" disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
         </Button>
-        <Button onClick={() => setLimits(limitsDraft(current.defaults))} disabled={busy}>
+        <Button onClick={() => setLimits(limitsDraft(current.defaults.limits))} disabled={busy}>
           Use the suggested limits
         </Button>
         {current.updatedAt && (
@@ -66,8 +66,8 @@ export function AiSection() {
         AI
       </h2>
       <p className="mt-2 max-w-prose text-muted">
-        Hobs use AI models through OpenRouter. Choose which models they may use and how much. A hob can narrow
-        the models and get its own limits on its AI page.
+        Hobs use AI models through OpenRouter. Choose the models they use and how much they may spend. A hob can
+        get its own models and limits on its AI page.
       </p>
 
       {error && (

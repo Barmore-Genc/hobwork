@@ -598,18 +598,25 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
 })
 
 test('runtime VMs send OpenRouter requests through the AI gateway', async () => {
-  saveHostAiSettings(host.db, { models: ['openai/*'], limits: DEFAULT_LIMITS }, null)
+  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, limits: { ...DEFAULT_LIMITS, requestsPerMinute: 1 } }, null)
   start({ ai: createAiGateway(host) })
   await deploy()
   const intercept = sandboxes.created[0]?.intercept
   expect(intercept?.hosts).toEqual(OPENROUTER_HOSTS)
-  const res = await intercept!.handle(
-    new Request('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', body: '{"model":"x-ai/grok-4"}' }),
-    async () => Response.json({}),
-  )
-  expect(res.status).toBe(403)
+  const models: unknown[] = []
+  const send = () =>
+    intercept!.handle(
+      new Request('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', body: '{"model":"x-ai/grok-4"}' }),
+      async (request) => {
+        models.push(((await request.json()) as { model: unknown }).model)
+        return Response.json({})
+      },
+    )
+  expect((await send()).status).toBe(200)
+  expect(models).toEqual(['google/gemini-2.5-flash'])
+  expect((await send()).status).toBe(429)
   const line = queryLogs(host, { project: 'filament', limit: 50 }).find((l) => l.event === 'ai-limit')
-  expect(line?.message).toContain('Hobwork does not let this project use x-ai/grok-4')
+  expect(line?.message).toContain('This hob sent 1 requests to OpenRouter in the last minute')
 })
 
 test('blocked egress is logged to the project log', async () => {

@@ -54,15 +54,18 @@ Phases:
 
 Left before turning isolation on (`HOBWORK_SANDBOX_ISOLATION=namespaces`, off by default until then):
 
-- **Run it on `colossus`**: bubblewrap 0.13.0 is installed. Set `RuntimeDirectory=hobwork` and `HOBWORK_SANDBOX_ISOLATION=namespaces` in the unit, start the host (the start check reports what is missing), then run `HOBWORK_SANDBOX_ISOLATION=namespaces pnpm -C server test:vm` (it includes `isolation.test.ts`), again with `HOBWORK_QEMU_SANDBOX=1`, and `bench:sandbox` with isolation off and on. Only a KVM host shows whether QEMU under `bwrap` needs more than `/dev/kvm` for `-accel kvm`, `microvm` and `-cpu host` (for example `/sys/devices/system/cpu` read-only, which `qemuBwrapArgs` would then bind). So far the isolation tests have only run in Docker on a Mac under emulation, with the `virt` machine.
-- **Memory budget**: every isolated VM adds a Node process (about 100MB RSS, 60MB of it Node itself; loading only the VFS modules of Gondolin saves 6MB) and two small `bwrap` processes. The VM budget in "Resources" counts only guest memory. `hostPid()` returns the outer `bwrap`, so accounting has to read the cgroup or the process tree.
+- **Turn it on in the `colossus` unit**: `pnpm -C server test:vm` passed there on 2026-09-30 with isolation on, and again with `HOBWORK_QEMU_SANDBOX=1` (KVM, `microvm`, `-cpu host`; QEMU needs nothing beyond `/dev/kvm`, and no seccomp kills showed up). Set `RuntimeDirectory=hobwork` and `HOBWORK_SANDBOX_ISOLATION=namespaces` in the unit and start the host; its start check reports what the unit's hardening blocks. `bench:sandbox` there, off against on: create to first command 712ms against 1013ms, tsc and vitest on mounted files 5 to 10% slower, commands on a running VM and egress unchanged.
+- **Memory budget**: every isolated VM adds a Node process (about 100MB RSS, 60MB of it Node itself; loading only the VFS modules of Gondolin saves 6MB) and two small `bwrap` processes. The VM budget in "Resources" counts only guest memory. `hostPid()` returns the outer `bwrap`, so accounting has to read the cgroup or the process tree. `bench:sandbox` measures host RSS the same way and reports 2MB per VM with isolation on.
 
 Open questions:
 
-- What does `hobwork.service` set for `SystemCallFilter`, `RestrictNamespaces`, `PrivateUsers` and `CapabilityBoundingSet`? `bwrap` needs `unshare`, `mount`, `pivot_root` and user namespaces, so a strict filter has to allow them. Are unprivileged user namespaces enabled there (`user.max_user_namespaces`)? The start check answers both.
-- Does `-sandbox on` with `spawn=deny` and `resourcecontrol=deny` hold with KVM, `microvm` and `-cpu host` on `colossus`, in and out of the namespace?
+- `hobwork.service` on `colossus` sets none of `SystemCallFilter`, `RestrictNamespaces`, `PrivateUsers` and `CapabilityBoundingSet` today, and unprivileged user namespaces are on (`user.max_user_namespaces` is 111565). Adding them later has to allow `unshare`, `mount`, `pivot_root` and user namespaces for `bwrap`.
 - Is a kernel bug reachable from an unprivileged user namespace an acceptable remaining risk? A uid switch does not remove it either, so accounts only add same-uid `ptrace` and signal separation and protection against a bug in `bwrap` itself.
 - Should `HOBWORK_QEMU_SANDBOX` default on for Linux, and should `qemu-system-$(uname -m)` follow the guest image manifest instead (Gondolin's own default picks by manifest arch)?
+
+## Merge over SSH times out under load
+
+`ssh.vm.test.ts` ("hobwork status, commit and merge work inside the VM") fails in full `test:vm` runs on `colossus` with `hobwork: The host could not be reached: read ETIMEDOUT` after about 17s, with isolation on or off, and passes alone. The broker's request to `hobwork.internal` loses its connection while the merge's pipeline VM runs.
 
 ## Warm VM pool
 

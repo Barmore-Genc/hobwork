@@ -156,7 +156,7 @@ export function createWorkspaceApi(options: {
       const agent = workspaces.sessionAgent(project, branch, request.headers.get(SESSION_HEADER) ?? '')
       if (!agent) {
         return Response.json(
-          { error: 'hobwork only works in commands started over SSH or with the bash tool, which set HOBWORK_SESSION' },
+          { error: 'hobwork only works in commands started over SSH or with the bash tool' },
           { status: 401 },
         )
       }

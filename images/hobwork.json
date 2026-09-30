@@ -16,11 +16,13 @@
       "bash",
       "ca-certificates",
       "curl",
+      "doas",
       "e2fsprogs",
       "e2fsprogs-extra",
       "git",
       "nodejs",
       "npm",
+      "su-exec",
       "tzdata"
     ],
     "initramfsPackages": [],
@@ -82,7 +84,14 @@
       "mkdir -p /opt/hobwork/platform/node_modules/@hobwork && mv /opt/hobwork/sdk /opt/hobwork/platform/node_modules/@hobwork/sdk && mv /opt/hobwork/theme /opt/hobwork/platform/node_modules/@hobwork/theme",
       "rm -rf /opt/hobwork/pnpm-store /root/.npm /root/.cache /root/.local /tmp/*",
       "ln -s /opt/hobwork/platform/node_modules /node_modules",
-      "mkdir -p /workspace"
+      "mkdir -p /workspace",
+      "adduser -D -u 1000 -h /home/agent -s /bin/bash agent",
+      "printf 'permit nopass agent as root cmd /usr/local/bin/hobwork-broker\\n' > /etc/doas.conf",
+      "chmod 4755 /usr/bin/doas"
     ]
-  }
+  },
+  "sandboxdPath": "./build/helpers/sandboxd",
+  "sandboxfsPath": "./build/helpers/sandboxfs",
+  "sandboxsshPath": "./build/helpers/sandboxssh",
+  "sandboxingressPath": "./build/helpers/sandboxingress"
 }

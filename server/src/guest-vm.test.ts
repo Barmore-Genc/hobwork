@@ -19,7 +19,11 @@ import type { Workspace } from './workspaces.ts'
 
 type FakeSandbox = Sandbox & {
   options: SandboxOptions
+  // Commands that run as the agent user, as the caller gave them.
   commands: { command: string; options: ExecOptions | SpawnOptions }[]
+  // Commands that run as root: the guest setup and the CLI install.
+  rootCommands: string[]
+  files: Record<string, string>
   stopped: boolean
   // Ends the process started last with spawn.
   exit?: (result: { exitCode: number; signal?: number }) => void
@@ -37,20 +41,29 @@ let committed: Record<string, string>
 const readBranchFile = async (_workspace: Workspace, path: string) => committed[path]
 const vmOptions = () => ({ image: '/image', createSandbox, readBranchFile })
 
+function unwrap(command: string): string | undefined {
+  const match = /^exec \/usr\/local\/bin\/hobwork-run \/bin\/sh -lc '(.*)'$/s.exec(command)
+  return match?.[1]?.replaceAll("'\\''", "'")
+}
+
 async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
   const sandbox: FakeSandbox = {
     id: String(sandboxes.length),
     exited: new Promise(() => {}),
     options,
     commands: [],
+    rootCommands: [],
+    files: {},
     stopped: false,
     exec(command, execOptions = {}) {
-      if (toolHost && command.startsWith(TOOL_COMMAND)) {
-        sandbox.commands.push({ command, options: execOptions })
-        const result = hostWorkspaceVm(toolHost, workspace()).exec(command, { cwd: '.', timeoutMs: 60_000, input: execOptions.input, onOutput: (stream, text) => execOptions.onOutput?.({ stream, text }) })
+      const user = unwrap(command)
+      if (user === undefined) sandbox.rootCommands.push(command)
+      else sandbox.commands.push({ command: user, options: execOptions })
+      if (toolHost && user?.startsWith(TOOL_COMMAND)) {
+        const result = hostWorkspaceVm(toolHost, workspace()).exec(user, { cwd: '.', timeoutMs: 60_000, input: execOptions.input, onOutput: (stream, text) => execOptions.onOutput?.({ stream, text }) })
         return { result: result.then((r) => ({ ...r, timedOut: false, killed: false })), kill: async () => {} }
       }
-      sandbox.commands.push({ command, options: execOptions })
+      command = user ?? command
       execOptions.onOutput?.({ stream: 'stdout', text: `ran ${command}\n` })
       execOptions.onOutput?.({ stream: 'stderr', text: 'warning\n' })
       const exitCode = command === 'false' ? 1 : 0
@@ -60,7 +73,7 @@ async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
       }
     },
     spawn(command, spawnOptions) {
-      sandbox.commands.push({ command, options: spawnOptions })
+      sandbox.commands.push({ command: unwrap(command)!, options: spawnOptions })
       const input: string[] = []
       const result = new Promise<{ exitCode: number; signal?: number }>((resolve) => {
         sandbox.exit = resolve
@@ -75,7 +88,9 @@ async function createSandbox(options: SandboxOptions): Promise<FakeSandbox> {
     },
     ingress: async () => '',
     readFile: async () => Buffer.from(''),
-    writeFile: async () => {},
+    writeFile: async (path, data) => {
+      sandbox.files[path] = String(data)
+    },
     hostPid: () => null,
     async stop() {
       sandbox.stopped = true
@@ -123,8 +138,10 @@ test('workspace VMs mount the checkout with node_modules on the VM disk', async 
   expect(vm.egress).toEqual(['registry.npmjs.org', 'api.example.com'])
   expect(sandbox?.options.env).toEqual({ CI: 'true', pnpm_config_minimum_release_age: '4320' })
   expect(sandbox?.options.mounts?.['/opt/hobwork/cli']).toMatchObject({ readonly: true })
-  // Only the CLI is installed: there are no extras.
-  expect(sandbox?.commands.map((c) => c.command)).toEqual([expect.stringContaining('/usr/local/bin/hobwork')])
+  // Only the guest setup and the CLI are installed: there are no extras.
+  expect(sandbox?.commands).toEqual([])
+  expect(sandbox?.rootCommands).toEqual([expect.stringContaining('hidepid=2'), expect.stringContaining('/usr/local/bin/hobwork ')])
+  expect(sandbox?.rootCommands[0]).toContain('kernel/yama/ptrace_scope')
 
   await vm.stop()
   expect(sandbox?.stopped).toBe(true)
@@ -150,23 +167,35 @@ test('exec maps cwd into the guest and returns streamed output', async () => {
   })
   expect(result).toEqual({ exitCode: 0, stdout: 'ran pnpm test\n', stderr: 'warning\n' })
   expect(chunks).toEqual(['stdout:ran pnpm test\n', 'stderr:warning\n'])
-  expect(sandboxes[0]?.commands[1]?.options).toMatchObject({ cwd: '/workspace/src/lib', timeoutMs: 1000 })
+  expect(sandboxes[0]?.commands[0]?.options).toMatchObject({ cwd: '/workspace/src/lib', timeoutMs: 1000 })
 
   await vm.exec('true', { cwd: '.', timeoutMs: 1000 })
-  expect(sandboxes[0]?.commands[2]?.options.cwd).toBe('/workspace')
+  expect(sandboxes[0]?.commands[1]?.options.cwd).toBe('/workspace')
   await expect(vm.exec('true', { cwd: '../etc', timeoutMs: 1000 })).rejects.toThrow('outside')
+})
+
+test('commands run as the agent user and cannot see the session token', async () => {
+  const vm = await workspaceVmBackend({ image: '/image', createSandbox })(workspace())
+  const [sandbox] = sandboxes
+  expect(sandbox?.files['/usr/local/bin/hobwork-run']).toContain('exec su-exec 1000:1000 "$@"')
+  expect(sandbox?.files['/usr/local/bin/hobwork-run']).toContain('unset HOBWORK_SESSION')
+  expect(sandbox?.files['/usr/local/bin/hobwork-broker']).toContain('/opt/hobwork/cli/broker.ts')
+  expect(sandbox?.rootCommands[0]).toContain('chmod 755 /usr/local/bin/hobwork-run /usr/local/bin/hobwork-broker')
+
+  await vm.exec("echo 'it'\\''s'; $(id)", { cwd: '.', timeoutMs: 1000, env: { HOBWORK_SESSION: 'token' } })
+  expect(sandbox?.commands[0]?.command).toBe("echo 'it'\\''s'; $(id)")
 })
 
 test('installs extras on start', async () => {
   committed['package.json'] = JSON.stringify({ dependencies: { react: '19.3.0', 'left-pad': '1.3.0' } })
   await workspaceVmBackend(vmOptions())(workspace())
-  expect(sandboxes[0]?.commands.slice(1).map((c) => [c.command, c.options.cwd])).toEqual([['pnpm install', '/workspace']])
+  expect(sandboxes[0]?.commands.map((c) => [c.command, c.options.cwd])).toEqual([['pnpm install', '/workspace']])
 })
 
 test('platform packages alone are not installed', async () => {
   committed['package.json'] = JSON.stringify({ dependencies: { react: '19.3.0', '@hobwork/sdk': '0.0.0' } })
   await workspaceVmBackend(vmOptions())(workspace())
-  expect(sandboxes[0]?.commands).toHaveLength(1)
+  expect(sandboxes[0]?.commands).toHaveLength(0)
 })
 
 test('spawned processes keep the VM busy and report signals as exit codes', async () => {
@@ -178,7 +207,7 @@ test('spawned processes keep the VM busy and report signals as exit codes', asyn
     pty: { rows: 24, cols: 80 },
     onData: (stream, data) => output.push(`${stream}:${data}`),
   })
-  expect(sandboxes[0]?.commands[1]?.options).toMatchObject({ cwd: '/workspace', env: { TERM: 'xterm' }, pty: { rows: 24, cols: 80 } })
+  expect(sandboxes[0]?.commands[0]?.options).toMatchObject({ cwd: '/workspace', env: { TERM: 'xterm' }, pty: { rows: 24, cols: 80 } })
   expect(vm.busy?.()).toBe(true)
   proc.write('echo hi\n')
   proc.end()

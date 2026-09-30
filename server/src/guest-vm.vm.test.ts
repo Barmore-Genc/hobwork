@@ -130,6 +130,54 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('workspace and pipeline VMs
     expect(await ok('diff', tools)).toBe('No changes')
   })
 
+  test('commands run unprivileged and cannot read session tokens, while the hobwork CLI still works', async () => {
+    const priv = { hob: p.hob, branch: 'privilege' }
+    await ok('create_branch', priv)
+    const script = [
+      'echo "uid=$(id -u)"',
+      'echo "env-token=$(env | grep -c HOBWORK_SESSION)"',
+      "echo \"proc-token=$(cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c '^HOBWORK_SESSION=')\"",
+      'echo "visible-processes=$(ls /proc | grep -c \'^[0-9]\')"',
+      'echo "run-dir=$(ls /run/hobwork 2>&1 | head -1)"',
+      'echo "ptrace-scope=$(cat /proc/sys/kernel/yama/ptrace_scope)"',
+      'echo "proc-mount=$(grep \' /proc \' /proc/mounts)"',
+      'echo "workspace-write=$(touch made-by-agent && echo ok)"',
+      'echo "owner=$(stat -c %U made-by-agent)"',
+      'echo "sudo=$(doas /bin/sh -c id 2>&1 | head -1)"',
+    ].join('\n')
+    const out = await ok('bash', { ...priv, command: script })
+    expect(out).toContain('uid=1000')
+    expect(out).toContain('env-token=0')
+    expect(out).toContain('proc-token=0')
+    expect(out).toMatch(/visible-processes=([1-9]|1\d)\n/)
+    expect(out).toMatch(/run-dir=ls: .*Permission denied/)
+    expect(out).toContain('ptrace-scope=1')
+    expect(out).toMatch(/proc-mount=.*hidepid=(2|invisible)/)
+    expect(out).toContain('workspace-write=ok')
+    expect(out).toContain('owner=agent')
+    expect(out).not.toContain('uid=0')
+    expect(out).toContain('sudo=doas: ')
+
+    const status = await ok('bash', { ...priv, command: 'hobwork status' })
+    expect(status, status).toMatch(/^exit code: 0/)
+    expect(status).toContain('privilege')
+
+    // A process that outlives its command has no session to act for.
+    await ok('bash', {
+      ...priv,
+      command: "nohup sh -c 'sleep 4; hobwork status > /tmp/late.out 2>&1' > /dev/null 2>&1 &",
+    })
+    const late = await ok('bash', { ...priv, command: 'sleep 8; cat /tmp/late.out' })
+    expect(late).toContain('only works in commands started over SSH or with the bash tool')
+    expect(late).not.toContain('privilege')
+
+    await ok('write_file', { ...priv, path: 'src/privilege.ts', content: 'export const privilege = 1\n' })
+    const commit = await ok('bash', { ...priv, command: 'hobwork commit "Add privilege"' })
+    expect(commit, commit).toMatch(/^exit code: 0/)
+    const merged = await ok('bash', { ...priv, command: 'hobwork merge "Add privilege"', timeout_seconds: 300 })
+    expect(merged, merged).toMatch(/Merged privilege into main/)
+  })
+
   test('egress follows the committed hobwork.json and the VM restarts when it changes', async () => {
     const status = 'curl -s -o /dev/null -w "%{http_code}" https://example.com/'
     expect(await ok('bash', { ...p, command: status })).toContain('403')

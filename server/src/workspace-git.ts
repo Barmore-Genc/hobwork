@@ -49,7 +49,7 @@ export function createWorkspaceGit(options: {
   return ({ project, branch }) =>
     async (request) => {
       const url = new URL(request.url)
-      if (!workspaces.sessionAgent(project, branch, request.headers.get(SESSION_HEADER) ?? '')) {
+      if (!workspaces.sessionAgent(project, branch, request.headers.get(SESSION_HEADER) ?? '', { tool: true })) {
         return plain(401, 'git only works from the tools Hobwork runs in the workspace')
       }
       const match = GIT_PATH.exec(url.pathname)

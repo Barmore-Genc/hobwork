@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { GuestVmOptions } from '../guest-vm.ts'
+import { asAgent, prepareGuest, type GuestVmOptions } from '../guest-vm.ts'
 import type { Sandbox } from '../sandbox/sandbox.ts'
 
 const GUEST_DIR = '/migrate'
@@ -30,7 +30,9 @@ export function migrationVmBackend(options: GuestVmOptions): RunMigrationVm {
       label: 'migrations',
     })
     try {
-      const result = await sandbox.exec(`node --disable-warning=ExperimentalWarning ${RUNNER_DIR}/migrate-main.ts`, { timeoutMs }).result
+      await prepareGuest(sandbox, 'migrations')
+      const command = asAgent(`node --disable-warning=ExperimentalWarning ${RUNNER_DIR}/migrate-main.ts`)
+      const result = await sandbox.exec(command, { timeoutMs }).result
       return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: result.timedOut }
     } finally {
       await sandbox.stop()

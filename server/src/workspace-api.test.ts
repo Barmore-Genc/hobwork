@@ -91,7 +91,7 @@ function workspaceFile(path: string, content: string): void {
 }
 
 test('needs the session of a running command', async () => {
-  expect(await hobwork(['status'], {})).toMatchObject({ code: 1, stderr: expect.stringContaining('HOBWORK_SESSION is not set') })
+  expect(await hobwork(['status'], {})).toMatchObject({ code: 1, stderr: expect.stringContaining('session helper') })
   const forged = await hobwork(['status'], { HOBWORK_SESSION: 'forged' })
   expect(forged).toMatchObject({ code: 1, stderr: expect.stringContaining('only works in commands started over SSH') })
   session.close()

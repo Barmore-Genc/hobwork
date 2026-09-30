@@ -1,16 +1,14 @@
 // The `hobwork` command in workspace VMs. The host mounts this directory into
 // every workspace VM; calls go to the VM's own handler at hobwork.internal,
-// which knows the hob and branch. HOBWORK_SESSION names the agent.
+// which knows the hob and branch. The session that names the agent is held by
+// a root helper in the VM (broker.ts), not passed to commands.
+import { spawn } from 'node:child_process'
 import { request } from 'node:http'
+import { createInterface } from 'node:readline'
 
 const BASE_URL = process.env.HOBWORK_INTERNAL_URL ?? 'http://hobwork.internal'
 const FOLLOW_WAIT_SECONDS = 25
-
-function sessionHeaders(): Record<string, string> {
-  const session = process.env.HOBWORK_SESSION
-  if (!session) throw new Error('HOBWORK_SESSION is not set. Run hobwork in an SSH session or with the bash tool.')
-  return { 'content-type': 'application/json', 'x-hobwork-session': session }
-}
+const BROKER = ['doas', '/usr/local/bin/hobwork-broker']
 
 const USAGE = `Usage: hobwork <command>
 
@@ -29,14 +27,11 @@ type CliResult = { output: string; ok: boolean; cursor?: number }
 
 class UsageError extends Error {}
 
+type Reply = { status: number; text: string }
+
 // node:http instead of fetch: merges can take longer than fetch's 5 minute
 // header timeout.
-function call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<CliResult> {
-  const session = process.env.HOBWORK_SESSION
-  if (!session) {
-    throw new Error('HOBWORK_SESSION is not set. Run hobwork in an SSH session or with the bash tool.')
-  }
-  const payload = body === undefined ? undefined : JSON.stringify(body)
+function direct(method: string, path: string, session: string, payload?: string): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const req = request(
       new URL(path, BASE_URL),
@@ -51,23 +46,50 @@ function call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Cli
         const chunks: Buffer[] = []
         res.on('data', (chunk: Buffer) => chunks.push(chunk))
         res.on('error', reject)
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8')
-          let parsed: unknown
-          try {
-            parsed = JSON.parse(text)
-          } catch {
-            return reject(new Error(`The host answered HTTP ${res.statusCode}: ${text.slice(0, 500)}`))
-          }
-          const { error } = parsed as { error?: string }
-          if (res.statusCode !== 200) return reject(new Error(error ?? `The host answered HTTP ${res.statusCode}`))
-          resolve(parsed as CliResult)
-        })
+        res.on('end', () => resolve({ status: res.statusCode ?? 502, text: Buffer.concat(chunks).toString('utf8') }))
       },
     )
     req.on('error', reject)
     req.end(payload)
   })
+}
+
+function viaBroker(method: string, path: string, payload?: string): Promise<Reply> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(BROKER[0]!, BROKER.slice(1), { stdio: ['pipe', 'pipe', 'inherit'] })
+    let reply: Reply | undefined
+    child.on('error', (err) => reject(new Error(`Could not start the session helper: ${err.message}`)))
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const message = JSON.parse(line) as { status: number; body: string }
+      reply = { status: message.status, text: message.body }
+    })
+    child.on('close', () => (reply ? resolve(reply) : reject(new Error('The session helper did not answer'))))
+    child.stdin.end(`${JSON.stringify({ id: 1, method, path, body: payload })}\n`)
+  })
+}
+
+// HOBWORK_SESSION is only set outside workspace VMs, where nothing else can read it.
+function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Reply> {
+  const payload = body === undefined ? undefined : JSON.stringify(body)
+  const session = process.env.HOBWORK_SESSION
+  return session ? direct(method, path, session, payload) : viaBroker(method, path, payload)
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+async function call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<CliResult> {
+  const { status, text } = await send(method, path, body)
+  const parsed = parseJson(text)
+  if (parsed === undefined) throw new Error(`The host answered HTTP ${status}: ${text.slice(0, 500)}`)
+  const { error } = parsed as { error?: string }
+  if (status !== 200) throw new Error(error ?? `The host answered HTTP ${status}`)
+  return parsed as CliResult
 }
 
 function count(args: string[], fallback: number): number {
@@ -91,12 +113,8 @@ function print(result: CliResult): void {
 
 // The branch DB answers like ctx.db does in a handler.
 async function sql(statement: string): Promise<void> {
-  const res = await fetch(new URL('/v1/db', BASE_URL), {
-    method: 'POST',
-    headers: sessionHeaders(),
-    body: JSON.stringify({ statements: [{ sql: statement }], transaction: false }),
-  })
-  const body = (await res.json().catch(() => undefined)) as
+  const res = await send('POST', '/v1/db', { statements: [{ sql: statement }], transaction: false })
+  const body = parseJson(res.text) as
     | { ok: true; results: { rows: unknown[]; changes: number }[] }
     | { ok: false; error: { message: string } }
     | { error?: string }
@@ -116,12 +134,8 @@ async function ha(args: string[]): Promise<void> {
   if (what === 'state' && arg) request = { action: 'getState', entityId: arg }
   else if (what === 'states') request = { action: 'getStates', filter: arg ? { domain: arg } : undefined }
   else throw new UsageError(what === 'state' ? 'Give an entity ID' : `Unknown ha command "${what ?? ''}"`)
-  const res = await fetch(new URL('/v1/ha', BASE_URL), {
-    method: 'POST',
-    headers: sessionHeaders(),
-    body: JSON.stringify(request),
-  })
-  const body = (await res.json().catch(() => undefined)) as
+  const res = await send('POST', '/v1/ha', request)
+  const body = parseJson(res.text) as
     | { ok: true; result: unknown }
     | { ok: false; error: { message: string } }
     | { error?: string }

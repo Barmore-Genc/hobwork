@@ -92,6 +92,10 @@ export type StartWorkspaceVm<Vm extends WorkspaceVm> = (workspace: Workspace) =>
 // Env var with the session token of the agent a command runs for. The `hobwork`
 // CLI in the VM sends it back, so its calls act as that agent.
 export const SESSION_ENV = 'HOBWORK_SESSION'
+// The host's own tool calls (file tools, git) run as the same unprivileged user
+// as agent commands, so their token is readable by them. It only works for
+// pushing to the workspace's branch.
+export const TOOL_SESSION_ENV = 'HOBWORK_TOOL_SESSION'
 export const SESSION_HEADER = 'x-hobwork-session'
 
 const NO_VMS =
@@ -544,7 +548,7 @@ export function createWorkspaceManager<Vm extends ExecWorkspaceVm>(
   function newSession(project: string, branch: string, agent: Agent, command = false): WorkspaceSession {
     const token = randomBytes(32).toString('base64url')
     sessions.set(token, { project, branch, agent, command })
-    return { env: { [SESSION_ENV]: token }, close: () => void sessions.delete(token) }
+    return { env: { [command ? SESSION_ENV : TOOL_SESSION_ENV]: token }, close: () => void sessions.delete(token) }
   }
 
   // Open while a command runs for `agent` in the workspace VM. The command can
@@ -554,9 +558,12 @@ export function createWorkspaceManager<Vm extends ExecWorkspaceVm>(
     return newSession(project, branch, agent, true)
   }
 
-  function sessionAgent(project: string, branch: string, token: string): Agent | undefined {
+  // Only sessions of commands act as the agent. `tool` also accepts the
+  // host's tool sessions, for routes that only push to the branch.
+  function sessionAgent(project: string, branch: string, token: string, { tool = false } = {}): Agent | undefined {
     const session = sessions.get(token)
-    return session && session.project === project && session.branch === branch ? session.agent : undefined
+    if (!session || session.project !== project || session.branch !== branch) return undefined
+    return session.command || tool ? session.agent : undefined
   }
 
   // VM handles do not survive a host restart.

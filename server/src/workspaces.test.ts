@@ -225,6 +225,43 @@ test('tracks whether the checkout has uncommitted changes', async () => {
   session.close()
 })
 
+test('tools the host runs get a token that only works for pushes', async () => {
+  const start = startHostWorkspaceVm(host)
+  const seen: { tool?: string; command?: string; asTool?: unknown; asCommand?: unknown }[] = []
+  let workspaces: ReturnType<typeof createWorkspaceManager>
+  workspaces = createWorkspaceManager(host, {
+    startVm: async (workspace) => {
+      const vm = await start(workspace)
+      return {
+        ...vm,
+        exec: (command, options) => {
+          const tool = options.env?.HOBWORK_TOOL_SESSION
+          seen.push({
+            tool,
+            command: options.env?.HOBWORK_SESSION,
+            asTool: workspaces.sessionAgent('filament', 'tokens', tool ?? '', { tool: true }),
+            asCommand: workspaces.sessionAgent('filament', 'tokens', tool ?? ''),
+          })
+          return vm.exec(command, options)
+        },
+      }
+    },
+  })
+  await createBranch(host, 'filament', 'tokens')
+  await workspaces.open('filament', 'tokens')
+  await workspaces.changes('filament', 'tokens')
+  expect(seen).toHaveLength(1)
+  expect(seen[0]).toMatchObject({ tool: expect.any(String), command: undefined, asTool: { name: 'Hobwork' }, asCommand: undefined })
+
+  const session = workspaces.openSession('filament', 'tokens', ensureAgent(host.db, 'Agent'))
+  const token = session.env.HOBWORK_SESSION!
+  expect(workspaces.sessionAgent('filament', 'tokens', token)).toMatchObject({ name: 'Agent' })
+  expect(workspaces.sessionAgent('filament', 'tokens', token, { tool: true })).toMatchObject({ name: 'Agent' })
+  expect(workspaces.sessionAgent('filament', 'other', token)).toBeUndefined()
+  session.close()
+  expect(workspaces.sessionAgent('filament', 'tokens', token)).toBeUndefined()
+})
+
 test('commits without a workspace do nothing and do not start a VM', async () => {
   const startVm = vi.fn(async (workspace: Workspace) => ({ workspace, stop: async () => {}, exec: noExec }))
   const workspaces = createWorkspaceManager(host, { startVm })

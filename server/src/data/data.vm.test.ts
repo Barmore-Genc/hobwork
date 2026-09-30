@@ -176,6 +176,15 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('project DBs, secrets and e
     expect(checks).toMatch(/tests\/hits.test.ts .*1 test/)
     const sql = await ok('bash', { ...p, command: 'hobwork sql "INSERT INTO hits (label) VALUES (\'branch\')" && hobwork sql "SELECT label FROM hits"' })
     expect(sql).toContain('{"label":"branch"}')
+    const client = await ok('bash', {
+      ...p,
+      // Node does not strip types under node_modules, so the client is copied out.
+      command:
+        'cp -r /opt/hobwork/platform/node_modules/@hobwork/sdk/src /tmp/sdk-src && ' +
+        `node --input-type=module -e "import { createDbClient, httpDbSender } from '/tmp/sdk-src/runner/db-client.ts'; ` +
+        `const db = createDbClient(httpDbSender('http://hobwork.internal')); console.log(JSON.stringify(await db.query('SELECT label FROM hits')))"`,
+    })
+    expect(client, client).toContain('[{"label":"branch"}]')
     const env = await ok('bash', { ...p, command: 'echo "$ECHO_KEY"' })
     expect(env).toMatch(/GONDOLIN_SECRET_/)
     expect(env).not.toContain(SECRET_VALUE)

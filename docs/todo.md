@@ -122,8 +122,8 @@ Apply for `com.apple.developer.usernotifications.filtering` for the notification
 ### Open
 
 - The ownership-proof push: an alert with `mutable-content` that the app's `willPresent` handles while registration runs in the foreground, or the extension if the person has left the app (shown as "Notifications from Hobwork are set up" without the entitlement), rather than a background push, which iOS can delay or drop. Not confirmed yet.
-- Check on a real iPhone and Mac: ownership-proof and renewal delivery, and whether the macOS notification service extension runs for remote pushes (one forum report says it does not). Only the socket paths have run on devices so far.
-- Whether the filtering entitlement exists on macOS.
+- Check on a real iPhone and Mac: ownership-proof and renewal delivery. Only the socket paths have run on devices so far.
+- Check early that the macOS notification service extension runs for remote pushes, since every relayed push needs it to decrypt. Apple documents the extension for macOS 10.14 and the filtering entitlement for macOS 11, but several developer forum threads from 2019 to 2025 report the extension never being called on macOS or killed for "sluggish startup", with no answer from Apple. If it does not run, the Mac app shows only the generic "Hobwork" alert for pushes and gets real content over its socket, which the always-running Mac app keeps open.
 - Draft the entitlement request for the account owner to submit.
 
 ## Shared UI components

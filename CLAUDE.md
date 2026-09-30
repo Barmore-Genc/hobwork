@@ -32,6 +32,7 @@ Only `server`, `web` and `packages/*` are pnpm workspace members (`pnpm-workspac
 - `pnpm typecheck`, `pnpm lint`, `pnpm test`: run across the workspace.
 - `images/build.sh`: build the guest image (needs Docker). Required for the VM commands below and for `bash` and `merge` in the host. Rebuild after changing `packages/sdk`, since the image contains it.
 - `pnpm -C server test:vm`: sandbox, workspace, pipeline, SSH and runtime VM tests that boot real VMs (skipped by `pnpm test`). The runtime test waits for a cron tick, so it takes about a minute. Some need egress to `example.com`, `registry.npmjs.org` and `postman-echo.com`.
+- VMs need hardware acceleration: KVM on Linux, HVF on macOS. Never run VMs or VM tests under QEMU emulation (TCG), in Docker or anywhere else: the suite takes hours. If the machine has no acceleration, for example Docker Desktop on a Mac, stop and ask the user.
 - `pnpm -C server bench:sandbox [vm|vfs]`: sandbox benchmarks.
 
 ## Connecting Claude Code to a local host

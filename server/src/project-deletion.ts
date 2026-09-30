@@ -49,8 +49,17 @@ export type TrashInfo = {
   nfcTags?: { id: string; createdAt: string }[]
   // Agent tokens and OAuth connections limited to a list of projects that included this one.
   access?: { tokens: number[]; grants: number[] }
-  // The project's own AI models and limits, as stored JSON.
-  ai?: { models: string | null; limits: string | null; updatedByUserId: number | null; updatedAt: string } | null
+  // The project's own AI models and limits, as stored. Entries from before the
+  // host picked models have `models` instead of `model` and `decisionModel`.
+  ai?: {
+    model?: string | null
+    decisionModel?: string | null
+    embeddingModel?: string | null
+    limits: string | null
+    updatedByUserId: number | null
+    updatedByAgentId?: number | null
+    updatedAt: string
+  } | null
 }
 
 export type TrashEntry = {
@@ -193,10 +202,16 @@ function restorableRows(
       grants: all('SELECT grant_id FROM oauth_grant_projects WHERE project_id = ? ORDER BY grant_id').map((row) => Number(row.grant_id)),
     },
     ai:
-      all('SELECT models, limits, updated_by_user_id, updated_at FROM project_ai_settings WHERE project_id = ?').map((row) => ({
-        models: row.models === null ? null : String(row.models),
+      all(
+        `SELECT model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at
+         FROM project_ai_settings WHERE project_id = ?`,
+      ).map((row) => ({
+        model: row.model === null ? null : String(row.model),
+        decisionModel: row.decision_model === null ? null : String(row.decision_model),
+        embeddingModel: row.embedding_model === null ? null : String(row.embedding_model),
         limits: row.limits === null ? null : String(row.limits),
         updatedByUserId: nullable(row.updated_by_user_id),
+        updatedByAgentId: nullable(row.updated_by_agent_id),
         updatedAt: String(row.updated_at),
       }))[0] ?? null,
   }
@@ -388,10 +403,22 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
       'INSERT OR IGNORE INTO oauth_grant_projects (grant_id, project_id) SELECT id, ? FROM oauth_grants WHERE id = ?',
     )
     for (const id of info.access?.grants ?? []) grantAccess.run(projectId, id)
-    if (info.ai) {
+    const ai = info.ai
+    if (ai && (ai.model != null || ai.decisionModel != null || ai.embeddingModel != null || ai.limits !== null)) {
       db.prepare(
-        'INSERT INTO project_ai_settings (project_id, models, limits, updated_by_user_id, updated_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(projectId, info.ai.models, info.ai.limits, existing('users', info.ai.updatedByUserId), info.ai.updatedAt)
+        `INSERT INTO project_ai_settings
+           (project_id, model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        projectId,
+        ai.model ?? null,
+        ai.decisionModel ?? null,
+        ai.embeddingModel ?? null,
+        ai.limits,
+        existing('users', ai.updatedByUserId),
+        existing('agents', ai.updatedByAgentId),
+        ai.updatedAt,
+      )
     }
     db.exec('COMMIT')
   } catch (err) {

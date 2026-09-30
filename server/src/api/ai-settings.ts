@@ -1,12 +1,17 @@
 import {
   AiSettingsError,
+  checkModels,
   DEFAULT_LIMITS,
+  DEFAULT_MODELS,
   hostAiSettings,
+  hostModels,
   parseLimits,
-  parseModels,
+  parseModelOverrides,
   projectAiSettings,
   saveHostAiSettings,
   saveProjectAiSettings,
+  applyOverrides,
+  type AiConfig,
 } from '../ai/settings.ts'
 import { projectUsage, usageByProject } from '../ai/usage.ts'
 import type { Host } from '../host.ts'
@@ -23,18 +28,19 @@ async function readBody(req: Parameters<ApiRoute['handle']>[0]['req']): Promise<
   return body as Record<string, unknown>
 }
 
-function settingsCall<T>(fn: () => T): T {
+async function settingsCall<T>(fn: () => T | Promise<T>): Promise<T> {
   try {
-    return fn()
+    return await fn()
   } catch (err) {
     if (err instanceof AiSettingsError) throw new HttpError(400, err.message)
     throw err
   }
 }
 
-// For users only: agents see the limits in get_hob but cannot raise them.
-export function aiSettingsRoutes(options: { host: Host; now?: () => number }): ApiRoute[] {
+// For users. Agents see the settings in get_hob and change only the models, over MCP.
+export function aiSettingsRoutes(options: { host: Host; ai?: AiConfig; now?: () => number }): ApiRoute[] {
   const { host } = options
+  const ai = options.ai ?? { models: DEFAULT_MODELS }
   const now = options.now ?? Date.now
 
   function projectId(name: string): number {
@@ -44,15 +50,22 @@ export function aiSettingsRoutes(options: { host: Host; now?: () => number }): A
   }
 
   function hostView() {
-    return { ...hostAiSettings(host.db), defaults: DEFAULT_LIMITS, usage: usageByProject(host.db, now()) }
+    return {
+      ...hostAiSettings(host.db),
+      models: hostModels(host.db, ai.models),
+      defaults: { models: ai.models, limits: DEFAULT_LIMITS },
+      usage: usageByProject(host.db, now()),
+    }
   }
 
   function projectView(id: number) {
     const hostSettings = hostAiSettings(host.db)
+    const hostChoice = applyOverrides(ai.models, hostSettings)
     const project = projectAiSettings(host.db, id)
     return {
-      host: { models: hostSettings.models, limits: hostSettings.limits },
+      host: { models: hostChoice, limits: hostSettings.limits },
       project,
+      models: applyOverrides(hostChoice, project),
       limits: project.limits ?? hostSettings.limits,
       usage: projectUsage(host.db, id, now()),
     }
@@ -65,8 +78,12 @@ export function aiSettingsRoutes(options: { host: Host; now?: () => number }): A
       pattern: HOST_PATH,
       handle: async ({ req, res, user }) => {
         const body = await readBody(req)
-        const settings = settingsCall(() => ({ models: parseModels(body.models ?? null), limits: parseLimits(body.limits) }))
-        saveHostAiSettings(host.db, settings, user.id)
+        const settings = await settingsCall(async () => {
+          const models = parseModelOverrides(body)
+          await checkModels(ai, models)
+          return { ...models, limits: parseLimits(body.limits) }
+        })
+        saveHostAiSettings(host.db, settings, { userId: user.id })
         json(res, 200, hostView())
       },
     },
@@ -77,11 +94,12 @@ export function aiSettingsRoutes(options: { host: Host; now?: () => number }): A
       handle: async ({ req, res, user, params }) => {
         const id = projectId(params[0]!)
         const body = await readBody(req)
-        const settings = settingsCall(() => ({
-          models: parseModels(body.models ?? null),
-          limits: body.limits === null || body.limits === undefined ? null : parseLimits(body.limits),
-        }))
-        saveProjectAiSettings(host.db, id, settings, user.id)
+        const settings = await settingsCall(async () => {
+          const models = parseModelOverrides(body)
+          await checkModels(ai, models)
+          return { ...models, limits: body.limits === null || body.limits === undefined ? null : parseLimits(body.limits) }
+        })
+        saveProjectAiSettings(host.db, id, settings, { userId: user.id })
         json(res, 200, projectView(id))
       },
     },

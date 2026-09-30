@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { count, inputClass, LIMIT_FIELDS, money, type LimitsDraft, type ModelsDraft } from './ai-drafts.ts'
+import type { AiModels } from '../api.ts'
+import { count, inputClass, LIMIT_FIELDS, money, type LimitsDraft, type ModelDraft, type ModelsDraft } from './ai-drafts.ts'
 
 function Choice({
   name,
@@ -20,47 +21,127 @@ function Choice({
   )
 }
 
-export function ModelsField({
+function ModelField({
   id,
+  legend,
+  help,
   draft,
   onChange,
-  anyLabel,
+  inheritLabel,
+  offLabel,
+  placeholder,
 }: {
   id: string
-  draft: ModelsDraft
-  onChange: (draft: ModelsDraft) => void
-  anyLabel: string
+  legend: string
+  help: string
+  draft: ModelDraft
+  onChange: (draft: ModelDraft) => void
+  inheritLabel: ReactNode
+  // Offered only when the field can be turned off.
+  offLabel?: ReactNode
+  placeholder: string
 }) {
+  const name = `${id}-${legend}`
   return (
     <fieldset>
-      <legend className="font-semibold">Models</legend>
+      <legend className="font-semibold">{legend}</legend>
+      <p className="mt-1 max-w-prose text-sm text-muted">{help}</p>
       <div className="mt-2 space-y-2">
-        <Choice name={`${id}-models`} checked={draft.any} onChange={() => onChange({ ...draft, any: true })}>
-          {anyLabel}
+        <Choice name={name} checked={draft.mode === 'inherit'} onChange={() => onChange({ ...draft, mode: 'inherit' })}>
+          {inheritLabel}
         </Choice>
-        <Choice name={`${id}-models`} checked={!draft.any} onChange={() => onChange({ ...draft, any: false })}>
-          Only these models
+        <Choice name={name} checked={draft.mode === 'set'} onChange={() => onChange({ ...draft, mode: 'set' })}>
+          Another model
         </Choice>
+        {offLabel && (
+          <Choice name={name} checked={draft.mode === 'off'} onChange={() => onChange({ ...draft, mode: 'off' })}>
+            {offLabel}
+          </Choice>
+        )}
       </div>
-      {!draft.any && (
+      {draft.mode === 'set' && (
         <div className="mt-3 sm:pl-7">
-          <textarea
-            id={`${id}-list`}
-            aria-label="Allowed models"
+          <input
+            aria-label={legend}
             value={draft.text}
             onChange={(e) => onChange({ ...draft, text: e.target.value })}
-            rows={4}
-            placeholder={'openai/gpt-5-mini\ngoogle/*'}
+            placeholder={placeholder}
             spellCheck={false}
-            className={`${inputClass} py-2 font-mono text-sm`}
+            autoCapitalize="off"
+            className={`${inputClass} font-mono text-sm`}
           />
           <p className="mt-1 text-sm text-muted">
-            One model per line, as OpenRouter names it. A * stands for anything, so google/* allows every Google model.
-            An empty list allows no model.
+            The model ID from its page on{' '}
+            <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer" className="underline hover:text-fg">
+              OpenRouter
+            </a>
+            .
           </p>
         </div>
       )}
     </fieldset>
+  )
+}
+
+const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono text-sm">{children}</span>
+
+export function ModelFields({
+  id,
+  draft,
+  onChange,
+  inherited,
+  inheritFrom,
+}: {
+  id: string
+  draft: ModelsDraft
+  onChange: (draft: ModelsDraft) => void
+  // What the inherit choice gives, and where it comes from.
+  inherited: AiModels
+  inheritFrom: string
+}) {
+  return (
+    <div className="space-y-6">
+      <ModelField
+        id={id}
+        legend="Model"
+        help="Hobs use this model for everything they ask AI to write or read."
+        draft={draft.model}
+        onChange={(model) => onChange({ ...draft, model })}
+        inheritLabel={
+          <>
+            {inheritFrom}: <Mono>{inherited.model}</Mono>
+          </>
+        }
+        placeholder="deepseek/deepseek-v4.1-flash"
+      />
+      <ModelField
+        id={id}
+        legend="Decision model"
+        help="Hobs use this model for yes-or-no questions and for picking one of a few options. Decision models answer these faster and cheaper than other models."
+        draft={draft.decisionModel}
+        onChange={(decisionModel) => onChange({ ...draft, decisionModel })}
+        inheritLabel={
+          <>
+            {inheritFrom}: {inherited.decisionModel ? <Mono>{inherited.decisionModel}</Mono> : 'none'}
+          </>
+        }
+        offLabel="None: the model above answers these too"
+        placeholder="typesafe/jev-1.13"
+      />
+      <ModelField
+        id={id}
+        legend="Embedding model"
+        help="Hobs use this model to turn text into vectors, to find similar items. Embeddings a hob stored before a change cannot be compared with new ones."
+        draft={draft.embeddingModel}
+        onChange={(embeddingModel) => onChange({ ...draft, embeddingModel })}
+        inheritLabel={
+          <>
+            {inheritFrom}: <Mono>{inherited.embeddingModel}</Mono>
+          </>
+        }
+        placeholder="openai/text-embedding-3-small"
+      />
+    </div>
   )
 }
 

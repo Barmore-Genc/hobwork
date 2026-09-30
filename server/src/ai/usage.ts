@@ -9,7 +9,7 @@ export const MONTH_MS = 30 * DAY_MS
 const KEEP_MS = 90 * DAY_MS
 
 export type AiSource = 'runtime' | 'preview' | 'workspace'
-export type RefusalKind = 'model' | 'rate' | 'spend'
+export type RefusalKind = 'rate' | 'spend'
 
 // `model` is the one that answered, which fallbacks can make another than the requested.
 export type Usage = { promptTokens?: number; completionTokens?: number; cost?: number; model?: string }

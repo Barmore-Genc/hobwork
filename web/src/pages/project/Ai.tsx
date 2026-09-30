@@ -5,7 +5,7 @@ import { Link } from '../../router.tsx'
 import { Button, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { count, describeLimits, draftLimits, draftModels, limitsDraft, modelsDraft, money } from '../ai-drafts.ts'
-import { LimitsFields, ModelsField, UsageTable } from '../ai.tsx'
+import { LimitsFields, ModelFields, UsageTable } from '../ai.tsx'
 import { ProjectLayout } from './ProjectLayout.tsx'
 
 function Usage({ usage }: { usage: ProjectAi['usage'] }) {
@@ -59,13 +59,12 @@ function Usage({ usage }: { usage: ProjectAi['usage'] }) {
 }
 
 function SettingsForm({ name, current, onSaved }: { name: string; current: ProjectAi; onSaved: () => void }) {
-  const [models, setModels] = useState(() => modelsDraft(current.project.models))
+  const [models, setModels] = useState(() => modelsDraft(current.project))
   const [own, setOwn] = useState(current.project.limits !== null)
   const [limits, setLimits] = useState(() => limitsDraft(current.limits))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const hostModels = current.host.models
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -73,8 +72,8 @@ function SettingsForm({ name, current, onSaved }: { name: string; current: Proje
     setError(null)
     setSaved(false)
     try {
-      const next = await api.saveProjectAi(name, { models: draftModels(models), limits: own ? draftLimits(limits) : null })
-      setModels(modelsDraft(next.project.models))
+      const next = await api.saveProjectAi(name, { ...draftModels(models), limits: own ? draftLimits(limits) : null })
+      setModels(modelsDraft(next.project))
       setLimits(limitsDraft(next.limits))
       setSaved(true)
       onSaved()
@@ -88,29 +87,17 @@ function SettingsForm({ name, current, onSaved }: { name: string; current: Proje
   return (
     <section aria-labelledby="ai-settings" className="mt-12">
       <h2 id="ai-settings" className="text-xl font-semibold">
-        What {name} may use
+        What {name} uses
       </h2>
       <p className="mt-2 max-w-prose text-muted">
         Applies to the running hob, its previews and agents trying it out.{' '}
         <Link to="/settings" className="underline hover:text-fg">
           Settings
         </Link>{' '}
-        has the limits for every hob.
+        has the models and limits for every hob.
       </p>
       <form onSubmit={save} className="mt-6 space-y-6 rounded-lg border border-border bg-surface p-5 sm:p-6">
-        <div>
-          <ModelsField
-            id="project-ai"
-            draft={models}
-            onChange={setModels}
-            anyLabel={hostModels === null ? 'Any model' : 'The models Settings allow'}
-          />
-          {hostModels !== null && (
-            <p className="mt-2 text-sm text-muted">
-              Settings allow {hostModels.length ? hostModels.join(', ') : 'no model'}. A model must be allowed in both places.
-            </p>
-          )}
-        </div>
+        <ModelFields id="project-ai" draft={models} onChange={setModels} inherited={current.host.models} inheritFrom="The model from Settings" />
         <fieldset>
           <legend className="font-semibold">Limits</legend>
           <div className="mt-2 space-y-2">
@@ -162,8 +149,8 @@ function ProjectAiContent({ name }: { name: string }) {
       {data && (
         <>
           <p className="mt-8 max-w-prose text-muted">
-            {name} calls AI models through OpenRouter. Hobwork counts every call and stops the ones these settings do not
-            allow.
+            {name} calls AI models through OpenRouter. Hobwork picks the model for every call, counts it and stops calls
+            past the limits.
           </p>
           <Usage usage={data.usage} />
           <SettingsForm name={name} current={data} onSaved={reload} />

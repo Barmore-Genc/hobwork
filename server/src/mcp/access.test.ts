@@ -6,7 +6,8 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import type { Access } from '../access.ts'
 import { createAgentToken } from '../agents.ts'
 import { createHomeAssistant } from '../homeassistant/client.ts'
-import { createProject } from '../projects.ts'
+import { projectAiSettings } from '../ai/settings.ts'
+import { createProject, requireProject } from '../projects.ts'
 import { createSecretStore, type SecretStore } from '../secrets.ts'
 import { findSshKey, generateEd25519KeyPair } from '../ssh/keys.ts'
 import { startTestMcp, textOf, type TestMcp } from './test-mcp.ts'
@@ -111,4 +112,39 @@ test('update_ha_services follows hob access', async () => {
   expect((await limited.call('update_ha_services', { hob: 'filament', add: ['light'] })).isError).toBeFalsy()
   const readOnly = await connect({ readOnly: true, projects: null })
   expect(await readOnly.tools()).not.toContain('update_ha_services')
+})
+
+test('hob access sets the models of its hobs, and only access to all hobs sets the host-wide ones', async () => {
+  const limited = await connect({ readOnly: false, projects: ['filament'] })
+  const set = JSON.parse(textOf(await limited.call('set_ai_model', { hob: 'filament', model: 'google/gemini-2.5-flash', decisionModel: false })))
+  expect(set).toEqual({
+    hob: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null },
+    uses: { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small' },
+  })
+  expect(JSON.parse(textOf(await limited.call('get_hob', { hob: 'filament' }))).ai).toMatchObject({
+    models: { model: 'google/gemini-2.5-flash', decisionModel: null },
+    ownModels: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null },
+  })
+  expect(projectAiSettings(mcp.host.db, requireProject(mcp.host, 'filament').id).updatedBy).toBe('agent-0')
+  expect((await limited.call('set_ai_model', { hob: 'alarms', model: 'x/y' })).isError).toBe(true)
+  const host = await limited.call('set_ai_model', { model: 'x/y' })
+  expect(host.isError).toBe(true)
+  expect(textOf(host)).toContain('Only connections with access to all hobs can change the host-wide models')
+
+  const full = await connect({ readOnly: false, projects: null })
+  const hostWide = JSON.parse(textOf(await full.call('set_ai_model', { decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' })))
+  expect(hostWide).toEqual({
+    host: { model: null, decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' },
+    uses: { model: 'deepseek/deepseek-v4.1-flash', decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' },
+  })
+  // Leaving a field out keeps it; null goes back to the level above.
+  await full.call('set_ai_model', { hob: 'filament', model: null })
+  expect(JSON.parse(textOf(await full.call('get_hob', { hob: 'filament' }))).ai.models).toEqual({
+    model: 'deepseek/deepseek-v4.1-flash',
+    decisionModel: null,
+    embeddingModel: 'qwen/qwen3-embedding-8b',
+  })
+
+  const readOnly = await connect({ readOnly: true, projects: null })
+  expect(await readOnly.tools()).not.toContain('set_ai_model')
 })

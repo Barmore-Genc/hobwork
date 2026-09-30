@@ -4,7 +4,7 @@ import * as z from 'zod'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import { allowsProject } from '../access.ts'
 import type { AuthenticatedAgent } from '../agents.ts'
-import { effectiveAiSettings } from '../ai/settings.ts'
+import { DEFAULT_MODELS, effectiveAiSettings, projectAiSettings, type AiConfig } from '../ai/settings.ts'
 import { projectUsage } from '../ai/usage.ts'
 import type { AppTarget } from '../apps/origins.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -22,6 +22,7 @@ import { relativePath } from '../committed-files.ts'
 import { branchExists, createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { limitTools } from './access.ts'
+import { registerAiTools } from './ai.ts'
 import { runBash } from './bash.ts'
 import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
@@ -46,6 +47,7 @@ export type McpContext = {
   secrets?: SecretStore
   storage?: StorageUsage
   devices?: Devices
+  ai?: AiConfig
   appOrigin?: (target: AppTarget) => string | undefined
 }
 
@@ -127,6 +129,7 @@ export function createMcpServer({
   secrets,
   storage,
   devices,
+  ai = { models: DEFAULT_MODELS },
   appOrigin,
 }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
@@ -186,10 +189,12 @@ export function createMcpServer({
   )
 
   function aiView(projectId: number) {
-    const { hostModels, projectModels, limits } = effectiveAiSettings(host.db, projectId)
+    const { models, limits } = effectiveAiSettings(host.db, projectId, ai.models)
+    const own = projectAiSettings(host.db, projectId)
     const { lastMinute, lastHour, day, month } = projectUsage(host.db, projectId, Date.now())
     return {
-      models: { host: hostModels, hob: projectModels },
+      models,
+      ownModels: { model: own.model, decisionModel: own.decisionModel, embeddingModel: own.embeddingModel },
       limits,
       usage: { requestsLastMinute: lastMinute, requestsLastHour: lastHour, last24Hours: day, last30Days: month },
     }
@@ -198,7 +203,7 @@ export function createMcpServer({
   server.registerTool(
     'get_hob',
     {
-      description: `Show a hob: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), hob DB size and slow query warnings, the disk space it uses in bytes (hob DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, the Home Assistant services its handlers may call (update_ha_services changes them), and its AI limits and spend: the OpenRouter models it may use (null: any), request and spend limits, and usage in US dollars. Only people change the AI limits, in the Hobwork web UI.`,
+      description: `Show a hob: its entry points and settings from hobwork.json on ${DEFAULT_BRANCH}, the URL of its dashboard, the hosts its handlers can reach, its secrets (names only), hob DB size and slow query warnings, the disk space it uses in bytes (hob DB, branch DB copies, workspace checkouts, repo, builds and log text; measured every few minutes), its branches with their preview URLs, the state of each branch workspace, the Home Assistant services its handlers may call (update_ha_services changes them), and its AI settings and spend: the OpenRouter models Hobwork uses for its requests (models; decisionModel null means check and pick run on model), the ones set for this hob alone (ownModels; null uses the host-wide one, set_ai_model changes them), request and spend limits, and usage in US dollars. Only people change the limits, in the Hobwork web UI.`,
       inputSchema: { hob },
       annotations: { readOnlyHint: true },
     },
@@ -494,6 +499,7 @@ export function createMcpServer({
   }
   registerRuntimeTools(server, { host, runtime, appOrigin })
   registerSecretTools(server, { host, secrets, agent, publicUrl })
+  registerAiTools(server, { host, agent, ai })
   registerSshKeyTools(server, { host, agent, ssh })
   if (devices) registerDeviceTools(server, devices)
 

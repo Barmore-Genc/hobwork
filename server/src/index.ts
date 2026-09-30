@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { openRouterCatalog } from './ai/catalog.ts'
 import { createAiGateway } from './ai/gateway.ts'
 import { createApp } from './app.ts'
 import { createAppOrigins } from './apps/origins.ts'
@@ -43,7 +44,8 @@ const secretKey = loadSecretKey(config.dataDir, config.secretKey)
 const secrets = createSecretStore(host, secretKey)
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
-const ai = createAiGateway(host)
+const aiConfig = { models: config.aiModels, catalog: openRouterCatalog() }
+const ai = createAiGateway(host, aiConfig)
 const devices = createDevices({
   host,
   allowlist: config.allowlist,
@@ -152,6 +154,7 @@ const server = createApp(host, {
   storage,
   backups,
   devices,
+  ai: aiConfig,
   sshPort: config.sshPort,
   web: {
     publicUrl: config.publicUrl,

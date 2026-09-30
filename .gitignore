@@ -25,3 +25,6 @@ xcuserdata/
 
 # Release packages
 /release/out/
+
+# Vendored Gondolin ships its compiled sources
+!/vendor/gondolin/dist/

@@ -37,6 +37,42 @@ test("throws a HomeAssistantError with Home Assistant's code and message", async
   expect(err).toMatchObject({ name: 'HomeAssistantError', code: 'service_not_found', message: 'Action light.explode not found' })
 })
 
+test('retries reads after a timeout, and service calls only when asked', async () => {
+  const timeout: HaResponse = { ok: false, error: { code: 'timeout', message: 'slow' } }
+  const ok: HaResponse = { ok: true, result: [KITCHEN] }
+  const answers: HaResponse[] = []
+  const requests: unknown[] = []
+  const ha = createHaClient(
+    async (request) => {
+      requests.push(request)
+      return answers.shift() ?? ok
+    },
+    { retryDelayMs: 1 },
+  )
+
+  answers.push(timeout, timeout)
+  expect(await ha.getStates(undefined, { timeoutMs: 30_000 })).toEqual([KITCHEN])
+  expect(requests).toEqual(Array(3).fill({ action: 'getStates', timeoutMs: 30_000 }))
+
+  answers.push(timeout, timeout, timeout)
+  await expect(ha.getState('light.kitchen')).rejects.toMatchObject({ code: 'timeout' })
+
+  requests.length = 0
+  answers.push(timeout)
+  await expect(ha.callService('light', 'toggle')).rejects.toMatchObject({ code: 'timeout' })
+  expect(requests).toHaveLength(1)
+
+  requests.length = 0
+  answers.push(timeout)
+  await ha.callService('recorder', 'get_statistics', {}, undefined, { returnResponse: true, retries: 2 })
+  expect(requests).toHaveLength(2)
+
+  requests.length = 0
+  answers.push({ ok: false, error: { code: 'service_not_found', message: 'nope' } })
+  await expect(ha.callService('recorder', 'nope', {}, undefined, { retries: 2 })).rejects.toMatchObject({ code: 'service_not_found' })
+  expect(requests).toHaveLength(1)
+})
+
 test('instanceof works across copies of the SDK', async () => {
   // The runner and the handler bundle each load their own copy of the class.
   const copy = (await import(/* @vite-ignore */ `${new URL('../src/runner/ha-client.ts', import.meta.url).href}?copy`)) as typeof import('../src/runner/ha-client.ts')

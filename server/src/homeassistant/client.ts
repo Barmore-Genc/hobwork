@@ -182,11 +182,11 @@ export type HomeAssistant = {
     service: string,
     data?: Record<string, unknown>,
     target?: HaServiceTarget,
-    options?: { returnResponse?: boolean },
+    options?: { returnResponse?: boolean; timeoutMs?: number },
   ): Promise<CallServiceResult>
-  getState(entityId: string): Promise<HaState | undefined>
-  getStates(): Promise<HaState[]>
-  fireEvent(eventType: string, data?: Record<string, unknown>): Promise<{ context: HaContext }>
+  getState(entityId: string, options?: { timeoutMs?: number }): Promise<HaState | undefined>
+  getStates(options?: { timeoutMs?: number }): Promise<HaState[]>
+  fireEvent(eventType: string, data?: Record<string, unknown>, options?: { timeoutMs?: number }): Promise<{ context: HaContext }>
   listDevices(): Promise<HaDevice[]>
   listEntities(): Promise<HaEntityRegistryEntry[]>
   listAreas(): Promise<HaArea[]>
@@ -585,21 +585,27 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     waitUntilConnected,
     request,
     async callService(domain, service, data, target, opts = {}) {
-      return request<CallServiceResult>({
-        type: 'call_service',
-        domain,
-        service,
-        ...(data ? { service_data: data } : {}),
-        ...(target ? { target } : {}),
-        ...(opts.returnResponse ? { return_response: true } : {}),
-      })
+      return request<CallServiceResult>(
+        {
+          type: 'call_service',
+          domain,
+          service,
+          ...(data ? { service_data: data } : {}),
+          ...(target ? { target } : {}),
+          ...(opts.returnResponse ? { return_response: true } : {}),
+        },
+        { timeoutMs: opts.timeoutMs },
+      )
     },
-    async getState(entityId) {
-      return (await request<HaState[]>({ type: 'get_states' })).find((s) => s.entity_id === entityId)
+    async getState(entityId, opts) {
+      return (await request<HaState[]>({ type: 'get_states' }, opts)).find((s) => s.entity_id === entityId)
     },
-    getStates: () => request<HaState[]>({ type: 'get_states' }),
-    fireEvent: (eventType, data) =>
-      request<{ context: HaContext }>({ type: 'fire_event', event_type: eventType, ...(data ? { event_data: data } : {}) }),
+    getStates: (opts) => request<HaState[]>({ type: 'get_states' }, opts),
+    fireEvent: (eventType, data, opts) =>
+      request<{ context: HaContext }>(
+        { type: 'fire_event', event_type: eventType, ...(data ? { event_data: data } : {}) },
+        opts,
+      ),
     listDevices: () => request<HaDevice[]>({ type: 'config/device_registry/list' }),
     listEntities: () => request<HaEntityRegistryEntry[]>({ type: 'config/entity_registry/list' }),
     listAreas: () => request<HaArea[]>({ type: 'config/area_registry/list' }),

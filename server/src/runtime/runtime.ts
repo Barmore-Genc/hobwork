@@ -63,6 +63,9 @@ const HOST_RUNNER_DIR = resolve(import.meta.dirname, '../../../packages/sdk/src/
 
 const DEFAULT_INVOCATION_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_READY_TIMEOUT_MS = 60 * 1000
+// Triggers subscribed while the host is still connecting to Home Assistant,
+// right after it starts, go live within seconds. Only a longer wait is worth a warning.
+const DEFAULT_PENDING_TRIGGER_GRACE_MS = 60 * 1000
 // Code that gets into a VM through one invocation must not see invocations
 // hours later, so a VM is replaced this long after it started however busy it
 // is. A cold start costs about a second.
@@ -100,6 +103,7 @@ export type RuntimeOptions = {
   buildRetention?: Pick<BuildCleanupOptions, 'keepVersions' | 'minAgeMs'>
   invocationTimeoutMs?: number
   readyTimeoutMs?: number
+  pendingTriggerGraceMs?: number
   maxLifetimeMs?: number
   memory?: string
 }
@@ -179,6 +183,8 @@ function isPreview(branch: string | undefined): branch is string {
 export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   const invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS
   const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
+  const pendingTriggerGraceMs = options.pendingTriggerGraceMs ?? DEFAULT_PENDING_TRIGGER_GRACE_MS
+  const pendingTriggerTimers = new Set<NodeJS.Timeout>()
   const maxLifetimeMs = options.maxLifetimeMs ?? DEFAULT_MAX_LIFETIME_MS
   const policy = options.autoRevert ?? DEFAULT_AUTO_REVERT_POLICY
   const builder = createBuilder(host, options.startBuildVm)
@@ -275,13 +281,34 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     }
     if (!options.triggers) return
     const results = await options.triggers.syncProjectTriggers(project, deployed.config.triggers)
+    const pending: string[] = []
     for (const result of results) {
       if (result.status === 'failed') {
         event(project, 'error', 'trigger', `Trigger "${result.name}" could not be subscribed: ${result.error}`)
       } else if (result.status === 'pending') {
-        event(project, 'warn', 'trigger', `Trigger "${result.name}" is subscribed once Home Assistant is connected`)
+        pending.push(result.name)
+        event(project, 'info', 'trigger', `Trigger "${result.name}" is subscribed once Home Assistant is connected`)
       }
     }
+    if (pending.length > 0) warnIfStillPending(project, pending)
+  }
+
+  function warnIfStillPending(project: string, names: string[]) {
+    const timer = setTimeout(() => {
+      pendingTriggerTimers.delete(timer)
+      if (options.homeAssistant?.status === 'connected') return
+      const active = new Set(options.triggers?.active(project))
+      for (const name of names.filter((n) => active.has(n))) {
+        event(
+          project,
+          'warn',
+          'trigger',
+          `Trigger "${name}" is not active: Home Assistant has not connected for ${Math.round(pendingTriggerGraceMs / 1000)}s. It fires once Home Assistant connects`,
+        )
+      }
+    }, pendingTriggerGraceMs)
+    timer.unref()
+    pendingTriggerTimers.add(timer)
   }
 
   function outputLogger(project: string, branch: string | undefined, tail: string[]) {
@@ -923,6 +950,8 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     },
     async stop(): Promise<void> {
       clearInterval(pruneTimer)
+      for (const timer of pendingTriggerTimers) clearTimeout(timer)
+      pendingTriggerTimers.clear()
       scheduler.stop()
       await Promise.all(
         [...projects.values()].flatMap((s) => (s.instance ? [retire(s.project, s.instance, 'host shutting down')] : [])),

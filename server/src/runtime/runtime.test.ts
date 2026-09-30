@@ -14,7 +14,7 @@ import type { DeviceConnection } from '../devices/registry.ts'
 import { createPairingCode, exchangePairingCode, recordHello } from '../devices/store.ts'
 import { pkce } from '../devices/test-devices.ts'
 import { setHaServices } from '../homeassistant/services.ts'
-import { createHomeAssistant } from '../homeassistant/client.ts'
+import { createHomeAssistant, type HomeAssistant } from '../homeassistant/client.ts'
 import { startFakeHomeAssistant } from '../homeassistant/fake-ha.ts'
 import { git } from '../git.ts'
 import { repoPath } from '../host.ts'
@@ -452,6 +452,38 @@ test('deploy syncs Home Assistant triggers and logs the ones that fail', async (
   expect(event).toMatchObject({ level: 'error', message: 'Trigger "button" could not be subscribed: Unknown device' })
   const outcome = await runtime.invoke('filament', { kind: 'trigger', name: 'button', manual: false, payload: { trigger: {} } })
   expect(outcome.ok).toBe(true)
+})
+
+test('warns about triggers only while Home Assistant stays disconnected', async () => {
+  const ha = { status: 'connecting' } as HomeAssistant
+  start({
+    homeAssistant: ha,
+    pendingTriggerGraceMs: 100,
+    triggers: {
+      syncProjectTriggers: async () => [{ name: 'button', status: 'pending' }],
+      removeProject: async () => [],
+      active: () => ['button'],
+    },
+  })
+  const button = { homeassistant: { trigger: 'state', entity_id: 'binary_sensor.button' }, handler: 'src/tick.ts' }
+  await deploy(projectFiles({ hobwork: { ...HOBWORK_JSON, triggers: { button } } }))
+  const triggerLines = () => queryLogs(host, { project: 'filament', limit: 50 }).filter((l) => l.event === 'trigger')
+  expect(triggerLines()[0]).toMatchObject({
+    level: 'info',
+    message: 'Trigger "button" is subscribed once Home Assistant is connected',
+  })
+  await vi.waitFor(() => expect(triggerLines()).toHaveLength(2))
+  expect(triggerLines()[1]).toMatchObject({
+    level: 'warn',
+    message: expect.stringContaining('Trigger "button" is not active: Home Assistant has not connected'),
+  })
+
+  Object.assign(ha, { status: 'connected' })
+  await deploy(
+    projectFiles({ hobwork: { ...HOBWORK_JSON, triggers: { button } }, handlers: { 'src/extra.ts': 'export {}\n' } }),
+  )
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  expect(triggerLines().filter((l) => l.level === 'warn')).toHaveLength(1)
 })
 
 test('trigger registry messages go to the project log', () => {

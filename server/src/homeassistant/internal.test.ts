@@ -187,6 +187,13 @@ test('times out as 504', async () => {
   expect(res.body.error?.code).toBe('timeout')
 })
 
+test('waits as long as the call asks', async () => {
+  fake.silent.add('call_service')
+  const res = await call({ action: 'callService', domain: 'light', service: 'turn_on', timeoutMs: 50 })
+  expect(res.status).toBe(504)
+  expect(res.body.error?.message).toBe('Home Assistant did not answer "call_service" within 50ms')
+})
+
 test('refuses malformed requests', async () => {
   for (const request of [
     { action: 'callService', domain: 'light', service: 'turn on' },
@@ -194,6 +201,8 @@ test('refuses malformed requests', async () => {
     { action: 'getState', entityId: 'kitchen' },
     { action: 'getStates', filter: { entityIds: 'light.hall' } },
     { action: 'fireEvent', eventType: '' },
+    { action: 'getStates', timeoutMs: 60_001 },
+    { action: 'getStates', timeoutMs: '5000' },
     { action: 'restart' },
   ]) {
     const res = await call(request)

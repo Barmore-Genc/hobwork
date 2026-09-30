@@ -99,6 +99,7 @@ export type HaRequest = (
 ) & {
   // Set by the runner inside an invocation, so the call is logged with it.
   invocation?: number
+  timeoutMs?: number
 }
 
 export type HaResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }

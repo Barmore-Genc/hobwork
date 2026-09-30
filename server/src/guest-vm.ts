@@ -102,12 +102,18 @@ export function asAgent(command: string): string {
   return `exec ${RUN_COMMAND} /bin/sh -lc ${shellQuote(command)}`
 }
 
-export async function prepareGuest(sandbox: Sandbox, label: string, scripts: Record<string, string> = {}): Promise<void> {
+// `setup` runs as root after the common setup, in the same shell.
+export async function prepareGuest(
+  sandbox: Sandbox,
+  label: string,
+  scripts: Record<string, string> = {},
+  setup = '',
+): Promise<void> {
   const all = { [RUN_COMMAND]: RUN_SCRIPT, ...scripts }
   try {
     for (const [path, content] of Object.entries(all)) await sandbox.writeFile(path, content)
-    const setup = await sandbox.exec(`${GUEST_SETUP}chmod 755 ${Object.keys(all).join(' ')}\n`).result
-    if (setup.exitCode !== 0) throw new Error(`Could not set up the guest user in ${label}: ${setup.stderr}`)
+    const result = await sandbox.exec(`${GUEST_SETUP}chmod 755 ${Object.keys(all).join(' ')}\n${setup}`).result
+    if (result.exitCode !== 0) throw new Error(`Could not set up the guest user in ${label}: ${result.stderr}`)
   } catch (err) {
     await sandbox.stop()
     throw err

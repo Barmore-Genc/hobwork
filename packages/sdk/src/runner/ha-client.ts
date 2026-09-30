@@ -1,6 +1,6 @@
-import { HA_MAX_RETRIES, type HaServiceResult, type HaState, type HomeAssistant } from '../homeassistant.ts'
+import type { HaServiceResult, HaState, HomeAssistant } from '../homeassistant.ts'
 import { internalPost } from './internal-fetch.ts'
-import type { HaRequest, HaResponse } from './protocol.ts'
+import { HA_MAX_RETRIES, type HaRequest, type HaResponse } from './protocol.ts'
 
 // The runner and the handler bundle each have their own copy of this class, so
 // instanceof checks a brand instead of the prototype chain.

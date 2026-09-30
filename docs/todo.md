@@ -17,7 +17,6 @@ Sections are in the order to work on them.
 
 ### Guest privilege
 
-- **Runtime VMs**: workspace, pipeline and migration VMs run hob code as the unprivileged `agent` user; runtime VMs still run handlers as root. Run the runner as `agent` after it has read and deleted its token file.
 - **Upstream `sandboxfs`**: the image patches Gondolin's `sandboxfs` (`allow_other`, files owned by uid 1000) and builds Gondolin's guest helpers from source with Zig. Ask upstream for these as options so the patch can go.
 
 ### Sandbox account

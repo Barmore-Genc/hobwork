@@ -80,8 +80,12 @@ export function fakeRuntimeSandboxes(): FakeRuntimeSandboxes {
         throw new Error('fake sandbox does not run interactive processes')
       },
       exec(command, execOptions = {}) {
-        const match = /^node (\/\S+)\/main\.ts$/.exec(command)
-        if (!match) throw new Error(`fake sandbox only runs the runner, got: ${command}`)
+        const match = /\bnode (\/\S+)\/main\.ts\b/.exec(command)
+        // Anything else is the guest setup (users, /proc), which has no host equivalent.
+        if (!match) {
+          const done: ExecResult = { exitCode: 0, timedOut: false, killed: false, stdout: '', stderr: '' }
+          return { result: Promise.resolve(done), async kill() {} }
+        }
         const guestPort = Number(execOptions.env?.HOBWORK_RUNNER_PORT)
         const result = (async (): Promise<ExecResult> => {
           const port = await freePort()

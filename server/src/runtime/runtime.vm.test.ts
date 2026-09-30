@@ -312,4 +312,87 @@ export default (async (ctx) => ({ pinged: await ctx.request.text() })) satisfies
     expect(list).toContain('webhook "ping" branch preview-ui ok')
     expect(list).toContain('route "GET /greeting" branch preview-ui ok')
   })
+
+  test('handlers run as the agent user and cannot read the runner token', async () => {
+    const b = { hob: 'filament', branch: 'privilege' }
+    await ok('create_branch', b)
+    await ok('write_file', {
+      ...b,
+      path: 'src/privilege.ts',
+      content: `import { execFileSync } from 'node:child_process'
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import type { Handler } from '@hobwork/sdk'
+
+function attempt(action: () => unknown): string {
+  try {
+    action()
+    return 'ok'
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code ?? 'failed'
+  }
+}
+
+function read(path: string): string {
+  try {
+    return readFileSync(path, 'latin1')
+  } catch {
+    return ''
+  }
+}
+
+// The runner token is 64 hex characters. Nothing this user can read may hold one.
+const hexToken = /(^|[^0-9a-f])[0-9a-f]{64}([^0-9a-f]|$)/
+
+export default (() => {
+  const pids = readdirSync('/proc').filter((name) => /^\\d+$/.test(name))
+  const procFiles = pids.flatMap((pid) => ['environ', 'cmdline'].map((file) => read(\`/proc/\${pid}/\${file}\`)))
+  const tmpFiles = readdirSync('/tmp').map((name) => read(\`/tmp/\${name}\`))
+  const procMount = read('/proc/mounts').split('\\n').find((line) => line.split(' ')[1] === '/proc') ?? ''
+  return {
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+    home: homedir(),
+    tokenFile: existsSync('/tmp/hobwork-runner-token'),
+    tokenSeen: [...procFiles, ...tmpFiles, ...Object.values(process.env)].some((text) => hexToken.test(text ?? '')),
+    visibleProcesses: pids.length,
+    ptraceScope: read('/proc/sys/kernel/yama/ptrace_scope').trim(),
+    hidepid: /hidepid=(2|invisible)/.test(procMount),
+    runDir: attempt(() => readdirSync('/run/hobwork')),
+    writeEtc: attempt(() => writeFileSync('/etc/privilege-test', 'x')),
+    writeTmp: attempt(() => writeFileSync('/tmp/privilege-test', 'x')),
+    doas: attempt(() => execFileSync('doas', ['/bin/true'], { stdio: 'pipe' })),
+    // The channels to Gondolin's guest daemons, which run commands as root.
+    ports: readdirSync('/dev')
+      .filter((name) => name.startsWith('vport'))
+      .map((name) => attempt(() => closeSync(openSync(\`/dev/\${name}\`, 'r+')))),
+  }
+}) satisfies Handler
+`,
+    })
+    const config = JSON.parse(await ok('read_file', { ...b, path: 'hobwork.json' }))
+    config.routes['GET /privilege'] = { handler: 'src/privilege.ts' }
+    await ok('write_file', { ...b, path: 'hobwork.json', content: JSON.stringify(config, null, 2) })
+    await ok('commit', { ...b, message: 'Report privileges' })
+
+    const out = await ok('invoke', { ...b, kind: 'route', name: 'GET /privilege' })
+    const report = JSON.parse(/(\{"uid".*\})/.exec(out)?.[1] ?? 'null')
+    expect(report, out).toMatchObject({
+      uid: 1000,
+      gid: 1000,
+      home: '/home/agent',
+      tokenFile: false,
+      tokenSeen: false,
+      ptraceScope: '1',
+      hidepid: true,
+      runDir: 'EACCES',
+      writeEtc: 'EACCES',
+      writeTmp: 'ok',
+    })
+    expect(report.doas).not.toBe('ok')
+    expect(report.ports.length).toBeGreaterThan(0)
+    for (const port of report.ports) expect(port).toBe('EACCES')
+    // Only the runner and what it started, none of root's processes.
+    expect(report.visibleProcesses).toBeLessThan(5)
+  })
 })

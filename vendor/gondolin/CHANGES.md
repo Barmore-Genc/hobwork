@@ -7,3 +7,4 @@ This is `@earendil-works/gondolin` 0.12.0 as published on npm (Apache-2.0, see `
 - Streaming answers: a `Response` from `onRequest` is streamed to the guest instead of buffered (`dist/src/qemu/http.js`).
 - `VM.exited` (`dist/src/vm/core.*`): resolves when the VM process ends.
 - `sandboxfs` (`dist/guest/src/sandboxfs/main.zig`): mounts with FUSE's `allow_other` and reports uid and gid 1000 (Hobwork's guest user) for every file.
+- TCP keepalive (`dist/src/qemu/network-stack.js`): the network stack ACKs keepalive probes. Guest connections that stay idle while the host works on an answer, like a merge over the `hobwork` CLI, no longer fail with `read ETIMEDOUT`.

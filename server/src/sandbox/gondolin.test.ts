@@ -303,6 +303,21 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     await other.stop()
   })
 
+  // Node's HTTP agent turns on TCP keepalive with 1s probes, so a guest
+  // connection that gets no ACK for them times out after about 11s.
+  test('a slow internal answer survives TCP keepalive probes', { timeout: 90_000 }, async () => {
+    const slow = await start({
+      internal: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25_000))
+        return new Response('late')
+      },
+    })
+    const result = await slow.exec(
+      `node -e "require('node:http').get('http://hobwork.internal/', (r) => r.pipe(process.stdout)).on('error', (e) => console.log(e.message))"`,
+    ).result
+    expect(result.stdout).toBe('late')
+  })
+
   test('extra dependencies install onto the VM disk on top of the platform set', async () => {
     const project = tempDir()
     writeFileSync(join(project, 'package.json'), JSON.stringify({

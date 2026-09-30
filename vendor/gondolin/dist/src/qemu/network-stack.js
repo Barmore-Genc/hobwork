@@ -544,6 +544,12 @@ export class NetworkStack extends EventEmitter {
         if (shouldDrainOutbound) {
             this.drainOutboundTcp(key, session);
         }
+        // A keepalive probe carries the last acked sequence number and at most
+        // one byte. Unanswered, the guest drops the connection with ETIMEDOUT.
+        if (payload.length <= 1 && !FIN && ((seq + 1) >>> 0) === (session.myAck >>> 0)) {
+            this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+            return;
+        }
         if (payload.length > 0) {
             // Basic TCP reassembly / retransmit handling:
             // - only accept in-order bytes starting at `session.myAck`

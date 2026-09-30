@@ -63,10 +63,6 @@ Open questions:
 - Is a kernel bug reachable from an unprivileged user namespace an acceptable remaining risk? A uid switch does not remove it either, so accounts only add same-uid `ptrace` and signal separation and protection against a bug in `bwrap` itself.
 - Should `HOBWORK_QEMU_SANDBOX` default on for Linux, and should `qemu-system-$(uname -m)` follow the guest image manifest instead (Gondolin's own default picks by manifest arch)?
 
-## Merge over SSH times out under load
-
-`ssh.vm.test.ts` ("hobwork status, commit and merge work inside the VM") fails in full `test:vm` runs on `colossus` with `hobwork: The host could not be reached: read ETIMEDOUT` after about 17s, with isolation on or off, and passes alone. The broker's request to `hobwork.internal` loses its connection while the merge's pipeline VM runs.
-
 ## Warm VM pool
 
 Keep one booted spare VM per kind (runtime, workspace, pipeline) so a cold start takes an exec instead of a boot. Boot is about 0.7s on `colossus` and 0.5s on the Mac; a running VM answers a command in a few ms. Each spare costs about 175MB of host RSS. The spare has to be configured for the hob after boot (mounts, env, egress allowlist, secrets), so the `Sandbox` interface needs a way to apply these to a running VM, or the pool holds VMs per hob that is likely to start soon.

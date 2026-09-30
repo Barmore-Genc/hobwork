@@ -1,4 +1,4 @@
-import type { HaServiceResult, HaState, HomeAssistant } from '../homeassistant.ts'
+import { HA_MAX_RETRIES, type HaServiceResult, type HaState, type HomeAssistant } from '../homeassistant.ts'
 import { internalPost } from './internal-fetch.ts'
 import type { HaRequest, HaResponse } from './protocol.ts'
 
@@ -27,20 +27,44 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 export type HaSend = (request: DistributiveOmit<HaRequest, 'invocation'>) => Promise<HaResponse>
 
-export function createHaClient(send: HaSend): HomeAssistant {
-  async function call<T>(request: DistributiveOmit<HaRequest, 'invocation'>): Promise<T> {
-    const response = await send(request)
-    if (!response.ok) throw new HomeAssistantError(response.error.code, response.error.message)
-    return response.result as T
+const READ_RETRIES = 2
+const RETRYABLE = new Set(['timeout', 'connection_lost', 'not_connected', 'host_error'])
+
+export function createHaClient(send: HaSend, { retryDelayMs = 500 } = {}): HomeAssistant {
+  async function call<T>(request: DistributiveOmit<HaRequest, 'invocation'>, retries = 0): Promise<T> {
+    retries = Math.min(Math.max(0, Math.floor(retries)), HA_MAX_RETRIES)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await send(request)
+        if (!response.ok) throw new HomeAssistantError(response.error.code, response.error.message)
+        return response.result as T
+      } catch (err) {
+        if (attempt >= retries || !(err instanceof HomeAssistantError) || !RETRYABLE.has(err.code)) throw err
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * 2 ** attempt))
+      }
+    }
   }
 
   return {
     callService: (domain, service, data, target, options) =>
-      call<HaServiceResult>({ action: 'callService', domain, service, data, target, returnResponse: options?.returnResponse }),
-    getState: async (entityId) => (await call<HaState | null>({ action: 'getState', entityId })) ?? undefined,
-    getStates: (filter) => call<HaState[]>({ action: 'getStates', filter }),
-    fireEvent: async (eventType, data) => {
-      await call({ action: 'fireEvent', eventType, data })
+      call<HaServiceResult>(
+        {
+          action: 'callService',
+          domain,
+          service,
+          data,
+          target,
+          returnResponse: options?.returnResponse,
+          timeoutMs: options?.timeoutMs,
+        },
+        options?.retries,
+      ),
+    getState: async (entityId, options) =>
+      (await call<HaState | null>({ action: 'getState', entityId, timeoutMs: options?.timeoutMs }, READ_RETRIES)) ??
+      undefined,
+    getStates: (filter, options) => call<HaState[]>({ action: 'getStates', filter, timeoutMs: options?.timeoutMs }, READ_RETRIES),
+    fireEvent: async (eventType, data, options) => {
+      await call({ action: 'fireEvent', eventType, data, timeoutMs: options?.timeoutMs })
     },
   }
 }

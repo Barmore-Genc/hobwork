@@ -1,3 +1,4 @@
+import { HA_MAX_TIMEOUT_MS } from '../../../packages/sdk/src/homeassistant.ts'
 import type { HaRequest, HaResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import { truncateMiddle } from '../mcp/output.ts'
 import { HomeAssistantError, type HaState, type HomeAssistant } from './client.ts'
@@ -58,6 +59,14 @@ function name(value: unknown, what: string): string {
   return value
 }
 
+function timeout(value: unknown): { timeoutMs?: number } {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > HA_MAX_TIMEOUT_MS) {
+    throw new BadRequest(`timeoutMs must be a whole number of milliseconds from 1 to ${HA_MAX_TIMEOUT_MS}, got ${JSON.stringify(value)}`)
+  }
+  return { timeoutMs: value }
+}
+
 function json(value: unknown): string {
   return truncateMiddle(JSON.stringify(value), MAX_LOGGED_JSON)
 }
@@ -94,6 +103,7 @@ function filterStates(states: HaState[], filter: Record<string, unknown> | undef
 
 async function run(request: HaRequest, options: HaEndpointOptions & { ha: HomeAssistant }): Promise<unknown> {
   const { ha, access } = options
+  const opts = timeout(request.timeoutMs)
   switch (request.action) {
     case 'callService':
     case 'fireEvent':
@@ -125,7 +135,7 @@ async function run(request: HaRequest, options: HaEndpointOptions & { ha: HomeAs
             `This hob may not fire the Home Assistant event ${request.eventType}. ${WHERE_TO_CHANGE}`,
           )
         }
-        return ha.fireEvent(request.eventType, optionalObject(request.data, 'data'))
+        return ha.fireEvent(request.eventType, optionalObject(request.data, 'data'), opts)
       }
       const domain = name(request.domain, 'domain')
       const service = name(request.service, 'service')
@@ -146,15 +156,15 @@ async function run(request: HaRequest, options: HaEndpointOptions & { ha: HomeAs
         service,
         optionalObject(request.data, 'data'),
         optionalObject(request.target, 'target'),
-        { returnResponse: request.returnResponse === true },
+        { returnResponse: request.returnResponse === true, ...opts },
       )
     case 'getState':
       if (typeof request.entityId !== 'string' || !ENTITY_ID.test(request.entityId)) {
         throw new BadRequest(`entityId must look like "light.kitchen", got ${JSON.stringify(request.entityId)}`)
       }
-      return (await ha.getState(request.entityId)) ?? null
+      return (await ha.getState(request.entityId, opts)) ?? null
     case 'getStates':
-      return filterStates(await ha.getStates(), optionalObject(request.filter, 'filter'))
+      return filterStates(await ha.getStates(opts), optionalObject(request.filter, 'filter'))
     default:
       throw new BadRequest(`Unknown action ${JSON.stringify((request as { action?: unknown }).action)}`)
   }

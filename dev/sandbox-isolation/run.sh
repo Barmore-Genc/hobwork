@@ -14,13 +14,17 @@ if [ ! -f "$image/manifest.json" ]; then
   echo "no guest image at $image, run images/build.sh or set HOBWORK_IMAGE_DIR" >&2
   exit 1
 fi
+if [ ! -c /dev/kvm ]; then
+  echo "no /dev/kvm: VMs under QEMU emulation (TCG) take hours, run this on a Linux host with KVM" >&2
+  exit 1
+fi
 docker build -q -t hobwork-sandbox-isolation "$here" >/dev/null
 tty=-i
 if [ -t 0 ]; then tty=-it; fi
 # --privileged lets the unprivileged user in the container create user
 # namespaces and mount /proc in them, which Docker's default seccomp profile
 # and masked /proc paths prevent.
-exec docker run --rm $tty --privileged \
+exec docker run --rm $tty --privileged --device /dev/kvm \
   -v "$root:/src:ro" \
   -v "$image:/image:ro" \
   -v hobwork-sandbox-isolation-pnpm:/home/node/.pnpm-store \

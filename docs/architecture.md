@@ -529,6 +529,34 @@ The host ships as a tarball built by `.github/workflows/release.yml`. Pull reque
   The systemd unit runs `/usr/bin/node server/src/index.ts` with `WorkingDirectory=/opt/hobwork/current` and the `HOBWORK_*` settings in its environment. Host CLIs run the same way, e.g. `cd /opt/hobwork/current && HOBWORK_DATA_DIR=/var/lib/hobwork node server/src/cli/create-token.ts <name>` (the release has no pnpm). Rolling back is pointing `current` at the previous release. Host DB migrations are forward-only, so an older release then runs against a DB that newer migrations may have changed.
 - **Private repo**: downloading a release needs a GitHub token with read access to the repo's contents, e.g. `gh release download v1.2.0 -R Barmore-Genc/hobwork` on a machine that is signed in to `gh`, then copying the files over.
 
+### Upgrade notes
+
+Changes that need action from people or agents when a host is upgraded across them. Newest first.
+
+**Security hardening (2026-09-29)**
+
+For the person running the host:
+
+- **Webhook URLs moved.** Webhooks are served at `<hob app origin>/_hobwork/hooks/<name>/<token>` (for a branch preview, `<label>--<hob>.<apps host>/_hobwork/hooks/...`). The old `/hooks/...` on the Hobwork address answers 410 and runs nothing. Tokens are unchanged: in every service that calls a webhook (Home Assistant, GitHub and others), change the host and path and keep the token.
+- **Secrets are sent in fewer places.** Hobwork fills a secret in only over https, and only into the `Authorization` header or a header listed on the secret. A hob that sends a key in another header (for example `X-Api-Key`) gets a 403 and a `secret` line in its log until someone adds that header to the secret on the Secrets page (or with `secret update --header` on the host, which replaces the list). Secrets in query strings or bodies were never filled in.
+- **Home Assistant services and events need a list.** A hob calls no HA service and fires no event unless its list on the hob's Home Assistant page names it. On the first start after the upgrade, each hob gets the domains and event types its deployed code names as string literals, plus those seen in its log. A hob that names them in variables gets a warning in its log, and someone has to add them by hand. `hassio`, `homeassistant`, `shell_command`, `recorder.purge` and HA's own event types stay blocked.
+- **Reverse proxy.** The host answers only its public host and app hosts, and 421 for any other `Host`. The proxy must forward the original `Host` header. `/api/health` answers for any host.
+- **Configuration checks at start.** The host refuses to start with an `http` public or apps URL that is not loopback, and when the public host is the apps host or below it.
+- **Sign-in.** Once a user has signed in through an identity provider, only that `(issuer, subject)` signs in as them from that provider. A new subject with the same email from the same provider is refused.
+- **Git pushes.** Pushes to the host's git repos are checked with `receive.fsckObjects`, so a push with malformed objects is refused.
+- **Guest image.** The image is built with an unprivileged `agent` user and a patched `sandboxfs` (see Guest image under [Components](#components)). The release tarball contains a matching image; a host that builds its own must rebuild it with `images/build.sh`.
+
+For hobs and the agents working on them:
+
+- **Lockfile.** Merges and builds install with `--frozen-lockfile --ignore-pnpmfile`. A hob without a committed, up-to-date `pnpm-lock.yaml` fails its pipeline until an agent runs `pnpm install` in the workspace and commits the lockfile. A restore of an old version with extra packages and no lockfile fails to build.
+- **New releases and install scripts.** Package versions published in the last 3 days are not installed. Dependencies run install scripts only when `pnpm-workspace.yaml` lists them under `allowBuilds`. The pipeline refuses a hob with a `.pnpmfile.cjs` or `.pnpmfile.mjs`, or with settings in `pnpm-workspace.yaml` or `.npmrc` that lower the release age, allow all builds, change the registry or add a pnpmfile.
+- **Egress applies after commit.** A workspace VM reads `egress` from the committed `hobwork.json`, so a new host is reachable from the next `bash` command after the change is committed.
+- **Hob UIs.** App origins send a strict Content-Security-Policy: no inline scripts, no scripts from other origins. A UI that loads a CDN script or uses inline scripts breaks until its `hobwork.json` lists the sources under `csp`. Requests from other hobs' apps are refused unless `crossAppRequests` names them.
+- **AI.** The OpenRouter gateway forwards only the paths the SDK uses (completions, messages, responses, embeddings, and model, key and generation lookups), only over https on port 443. Other paths get 403 `hobwork_path_not_allowed`. Answers without a cost are estimated from tokens and count against spend limits.
+- **Runtime VMs.** A runtime VM is replaced after an hour and after an invocation times out. Handler responses are limited to 24MB.
+- **Read-only access.** Read-only credentials read committed files only and cannot see uncommitted diffs.
+- **Existing hobs' `AGENTS.md`.** New hobs get the updated template. Existing hobs keep their own `AGENTS.md`; the MCP server instructions tell agents about the lockfile, egress, CSP and webhook changes.
+
 ## Secrets and network
 
 - **Library and assignments**: there is one library of secrets. A secret has a name for people (`Spoolman API key`, unique ignoring case, at most 80 characters), a value, the hosts it may be sent to, and optionally the names of headers besides `Authorization` it may be sent in (`headers`, JSON in the `secrets` table from migration 0031, lowercased, at most 10, no connection headers like `host`). Only people set headers, like hosts; agents see them in `list_secrets`. Existing secrets have none, so hobs that put a secret in another header (for example `X-Api-Key`) fail with the 403 above until someone adds the header; secrets in a URL or body were never filled in. A hob gets a secret only when it is assigned to it, and each assignment picks the env name the hob sees (`SPOOLMAN_TOKEN` in one hob, `API_KEY` in another). A hob has at most one assignment per secret and one secret per env name. Env names are env var style and must not replace variables the guest relies on (`PATH`, `NODE_OPTIONS`, `HOBWORK_*` and similar). Host patterns follow Gondolin: `api.example.com` or `*.example.com`. `*` alone and `hobwork.internal` are refused.

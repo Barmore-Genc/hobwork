@@ -63,10 +63,12 @@ Rules:
 - Debug from logs and invocation records. Do not guess.
 - When a hob uses Home Assistant, read data Home Assistant already has (states, history, device details) from it instead of copying it into the hob DB. Store a copy only when the user asks for one or the feature cannot work without it.
 - A hob calls no Home Assistant service and fires no event until its list names it. Before a handler calls a service or fires an event, add its domain, service or "event:<type>" with update_ha_services and tell the user. get_hob shows the list.
-- A hob calls no Home Assistant service and fires no event until its list names it. Before a handler calls a service or fires an event, add its domain, service or "event:<type>" with update_ha_services and tell the user. get_hob shows the list.
 - Only people can delete, rename or restore a hob, in the Hobwork web UI. There are no tools for it.
 - Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>. Put it in the Authorization header, or in a header the secret lists (list_secrets shows headers); Hobwork fills it in nowhere else, and only over https. If the API needs another header, ask the user to add it to the secret in Hobwork.
-- Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job.`
+- Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job. Commit pnpm-lock.yaml with it: merging installs with --frozen-lockfile. Versions published in the last 3 days are not installed, and packages run install scripts only when pnpm-workspace.yaml lists them under allowBuilds.
+- Changes to egress in hobwork.json apply in the workspace from the next bash command after you commit them.
+- Hob UIs run under a strict Content-Security-Policy (no inline scripts, no scripts from other origins) and refuse requests from other hobs' apps. hobwork.json can add sources with csp and allow other hobs with crossAppRequests.
+- Webhooks are called at <hob app address>/_hobwork/hooks/<name>/<token>. rotate_webhook_token shows the URL.`
 
 const MAX_READ_LINES = 2000
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120

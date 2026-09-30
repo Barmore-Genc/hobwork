@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { GIT_PATH, mentionsReceivePack, startGitBackend } from './git-http.ts'
 import type { Host } from './host.ts'
 import { SESSION_HEADER, type ExecWorkspaceVm, type WorkspaceManager } from './workspaces.ts'
@@ -7,21 +8,37 @@ export const WORKSPACE_GIT_PREFIX = '/git/'
 
 const ZERO_ID = '0'.repeat(40)
 const COMMAND = /^([0-9a-f]{40}) ([0-9a-f]{40}) (\S+)$/
+// A workspace pushes one ref, so this only has to leave room for shallow lines.
+const MAX_PUSH_COMMANDS_BYTES = 1024 * 1024
 
 function plain(status: number, message: string): Response {
   return new Response(`${message}\n`, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } })
 }
 
+// Pushes stream into git: a pack can be larger than what Gondolin buffers
+// (64MB), and git's receive.maxInputSize limits it as it arrives. Gets the
+// request head only.
+export function streamsWorkspaceGitBody(request: Request): boolean {
+  const url = new URL(request.url)
+  return (
+    request.method === 'POST' &&
+    url.pathname.startsWith(WORKSPACE_GIT_PREFIX) &&
+    mentionsReceivePack(url.pathname, url.search.replace(/^\?/, ''))
+  )
+}
+
 // A push request starts with pkt-lines, one ref update each, up to a flush
-// packet. The pack follows. Returns what is wrong with the request, if anything.
-function checkPushCommands(body: Buffer, allowedRef: string): string | undefined {
+// packet. The pack follows. Returns what is wrong with the request, if
+// anything, or undefined when more of the body is needed to tell.
+export function checkPushCommands(body: Buffer, allowedRef: string): { problem?: string } | undefined {
   let position = 0
   for (;;) {
-    const length = /^[0-9a-f]{4}$/.test(body.subarray(position, position + 4).toString('latin1'))
-      ? Number.parseInt(body.subarray(position, position + 4).toString('latin1'), 16)
-      : -1
-    if (length === 0) return undefined
-    if (length < 4 || position + length > body.length) return 'Malformed push request'
+    if (position + 4 > body.length) return undefined
+    const prefix = body.subarray(position, position + 4).toString('latin1')
+    const length = /^[0-9a-f]{4}$/.test(prefix) ? Number.parseInt(prefix, 16) : -1
+    if (length === 0) return {}
+    if (length < 4) return { problem: 'Malformed push request' }
+    if (position + length > body.length) return undefined
     const line = body
       .subarray(position + 4, position + length)
       .toString('latin1')
@@ -30,10 +47,40 @@ function checkPushCommands(body: Buffer, allowedRef: string): string | undefined
     position += length
     if (line?.startsWith('shallow ')) continue
     const command = COMMAND.exec(line ?? '')
-    if (!command) return 'Unsupported push request'
+    if (!command) return { problem: 'Unsupported push request' }
     const [, , to = '', ref = ''] = command
-    if (ref !== allowedRef) return `This workspace can only push to ${allowedRef}`
-    if (to === ZERO_ID) return `${allowedRef} cannot be deleted by a push`
+    if (ref !== allowedRef) return { problem: `This workspace can only push to ${allowedRef}` }
+    if (to === ZERO_ID) return { problem: `${allowedRef} cannot be deleted by a push` }
+  }
+}
+
+// Reads the body until its push commands can be checked. Returns what it read.
+async function readPushCommands(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  allowedRef: string,
+): Promise<{ problem: string } | { read: Buffer }> {
+  let read: Buffer = Buffer.alloc(0)
+  for (;;) {
+    const checked = checkPushCommands(read, allowedRef)
+    if (checked) return checked.problem ? { problem: checked.problem } : { read }
+    if (read.length > MAX_PUSH_COMMANDS_BYTES) return { problem: 'Malformed push request' }
+    const { done, value } = await reader.read()
+    if (done) return { problem: 'Malformed push request' }
+    read = Buffer.concat([read, value])
+  }
+}
+
+async function* bodyChunks(first: Buffer, reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<Uint8Array> {
+  try {
+    if (first.length) yield first
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      yield value
+    }
+  } finally {
+    // When git stops reading early, Gondolin drops the rest of the upload.
+    await reader.cancel().catch(() => {})
   }
 }
 
@@ -59,11 +106,18 @@ export function createWorkspaceGit(options: {
       const query = url.search.replace(/^\?/, '')
       const push = mentionsReceivePack(rest, query)
 
-      const body = request.method === 'POST' ? Buffer.from(await request.arrayBuffer()) : Buffer.alloc(0)
+      const reader = request.method === 'POST' ? request.body?.getReader() : undefined
+      let read: Buffer = Buffer.alloc(0)
       if (push && request.method === 'POST') {
-        if (request.headers.get('content-encoding')) return plain(400, 'Unsupported push request')
-        const problem = checkPushCommands(body, `refs/heads/${branch}`)
-        if (problem) return plain(403, problem)
+        if (!reader) return plain(403, 'Malformed push request')
+        const refuse = async (message: string) => {
+          await reader.cancel().catch(() => {})
+          return plain(403, message)
+        }
+        if (request.headers.get('content-encoding')) return refuse('Unsupported push request')
+        const commands = await readPushCommands(reader, `refs/heads/${branch}`)
+        if ('problem' in commands) return refuse(commands.problem)
+        read = commands.read
       }
 
       const header = (name: string) => request.headers.get(name) ?? ''
@@ -73,7 +127,8 @@ export function createWorkspaceGit(options: {
         query,
         method: request.method,
         contentType: header('content-type'),
-        contentLength: request.method === 'POST' ? String(body.length) : '',
+        // Chunked bodies have none, and git then reads to the end.
+        contentLength: request.method === 'POST' ? header('content-length') : '',
         gitProtocol: header('git-protocol'),
         contentEncoding: header('content-encoding'),
         remoteUser: `workspace ${project}/${branch}`,
@@ -81,7 +136,14 @@ export function createWorkspaceGit(options: {
         push,
       })
       backend.stdin.on('error', () => {})
-      backend.stdin.end(body)
+      if (reader) {
+        // Gondolin stops reading the guest's body once the response is
+        // returned, so the whole body goes to git first. When the body stops
+        // early, git fails the request itself.
+        await pipeline(Readable.from(bodyChunks(read, reader)), backend.stdin).catch(() => {})
+      } else {
+        backend.stdin.end()
+      }
       try {
         const { status, headers, body: output } = await backend.response
         return new Response(Readable.toWeb(output) as ReadableStream, { status, headers })

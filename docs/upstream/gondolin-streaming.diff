@@ -1,0 +1,1432 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 105a7c2..6e3b882 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,9 @@ All notable changes to Gondolin are documented here.
+ 
+ ## Unreleased
+ 
++- Add `httpHooks.streamRequestBody` to stream request bodies (including chunked ones) into `onRequest` and upstream without buffering or `maxHttpBodyBytes`, per request.
++- Stream `Response`s returned by `onRequest` to the guest instead of buffering them, so they are no longer capped by `maxHttpResponseBodyBytes`. Responses without a `Content-Length` are now sent chunked to HTTP/1.1 clients.
++
+ ## 0.12.0
+ 
+ - Add `VM.getHostPid()` to allow callers to collect host-side process metrics of the VM runner. #114
+diff --git a/docs/network.md b/docs/network.md
+index 45af835..a7d531f 100644
+--- a/docs/network.md
++++ b/docs/network.md
+@@ -330,7 +330,10 @@ enforces size limits such as:
+ - Limits for header parsing and internal queues
+ 
+ If you plan to transfer large payloads, design around these limits (e.g. avoid
+-large downloads through response hooks).
++large downloads through response hooks). `httpHooks.streamRequestBody` lifts the
++request body limit for the requests it opts in, which are then streamed instead
++of buffered. Responses that `onRequest` returns are streamed and have no size
++limit.
+ 
+ ## Known Limitations
+ 
+diff --git a/docs/sdk-network.md b/docs/sdk-network.md
+index 378db3e..e2d2565 100644
+--- a/docs/sdk-network.md
++++ b/docs/sdk-network.md
+@@ -45,6 +45,11 @@ Egress hook behavior:
+     - return `undefined` to keep it unchanged
+     - return a `Request` to continue with rewrites, or a `Response` to short-circuit
+     - request bodies are one-shot streams; if you read the body and still forward unchanged, use `request.clone()`
++    - a returned `Response` is streamed to the guest (with its `Content-Length` if it declares one, else chunked), so it can be a server-sent event stream or larger than `maxHttpResponseBodyBytes`
++- `streamRequestBody(request)` opts a request into streaming its body; `request` has the head only (`body` is `null`)
++    - return `true` to stream: the body reaches `onRequest` and the upstream fetch as a stream, with backpressure to the guest, for `Content-Length` and `Transfer-Encoding: chunked` bodies alike, and `maxHttpBodyBytes` does not apply
++    - otherwise the body is buffered as before (chunked bodies always, `Content-Length` bodies when they arrive with the head) and `maxHttpBodyBytes` applies
++    - a request that opts in has no size limit, so only opt in where the hook or the upstream bounds what it reads, for example uploads to one host
+ - `onResponse(response, request)` receives WHATWG `Response` + final `Request`
+     - return `undefined` to keep it unchanged
+     - return a `Response` to rewrite
+diff --git a/host/src/http/hooks.ts b/host/src/http/hooks.ts
+index 88dd0c1..caae3fd 100644
+--- a/host/src/http/hooks.ts
++++ b/host/src/http/hooks.ts
+@@ -63,6 +63,8 @@ export type CreateHttpHooksOptions = {
+   blockInternalRanges?: boolean;
+   /** custom request policy callback */
+   isRequestAllowed?: HttpHooks["isRequestAllowed"];
++  /** request body streaming opt-in */
++  streamRequestBody?: HttpHooks["streamRequestBody"];
+   /** custom ip policy callback */
+   isIpAllowed?: HttpHooks["isIpAllowed"];
+ 
+@@ -349,6 +351,7 @@ export function createHttpHooks(
+     },
+     onRequest,
+     onResponse: options.onResponse,
++    streamRequestBody: options.streamRequestBody,
+   };
+ 
+   return { httpHooks, env, allowedHosts, secretManager };
+diff --git a/host/src/internal/http-conversion.ts b/host/src/internal/http-conversion.ts
+index 09f2402..bb06458 100644
+--- a/host/src/internal/http-conversion.ts
++++ b/host/src/internal/http-conversion.ts
+@@ -198,12 +198,9 @@ export async function webRequestToInternalHttpRequest(
+   };
+ }
+ 
+-export async function webResponseToInternalHttpResponse(
+-  value: ResponseLike,
+-  options: {
+-    maxBodyBytes: number | null;
+-  },
+-): Promise<InternalHttpResponse> {
++export function webResponseHeadToInternalHttpResponse(
++  value: Pick<ResponseLike, "status" | "statusText" | "headers">,
++): Omit<InternalHttpResponse, "body"> {
+   const headers = responseHeadersToRecord(new Headers(value.headers));
+ 
+   const raw = value.headers as { getSetCookie?: () => unknown };
+@@ -218,6 +215,24 @@ export async function webResponseToInternalHttpResponse(
+     }
+   }
+ 
++  return {
++    status: value.status,
++    statusText:
++      typeof value.statusText === "string" && value.statusText.length > 0
++        ? value.statusText
++        : "OK",
++    headers,
++  };
++}
++
++export async function webResponseToInternalHttpResponse(
++  value: ResponseLike,
++  options: {
++    maxBodyBytes: number | null;
++  },
++): Promise<InternalHttpResponse> {
++  const head = webResponseHeadToInternalHttpResponse(value);
++
+   const body = Buffer.from(
+     await readBodyLikeWithLimit(value, {
+       maxBodyBytes: options.maxBodyBytes,
+@@ -236,15 +251,7 @@ export async function webResponseToInternalHttpResponse(
+     }),
+   );
+ 
+-  return {
+-    status: value.status,
+-    statusText:
+-      typeof value.statusText === "string" && value.statusText.length > 0
+-        ? value.statusText
+-        : "OK",
+-    headers,
+-    body,
+-  };
++  return { ...head, body };
+ }
+ 
+ function requestHeadersToRecord(headers: Headers): Record<string, string> {
+diff --git a/host/src/qemu/contracts.ts b/host/src/qemu/contracts.ts
+index f2fdbca..4fa2a14 100644
+--- a/host/src/qemu/contracts.ts
++++ b/host/src/qemu/contracts.ts
+@@ -67,6 +67,15 @@ export type HttpHooks = {
+   /** request hook (may rewrite request or short-circuit with response) */
+   onRequest?: HttpOnRequestHook;
+ 
++  /**
++   * per-request opt-in to stream the request body (request body is always `null`)
++   *
++   * When this returns `true`, the body reaches `onRequest` and the upstream
++   * fetch as a stream with backpressure to the guest, including chunked
++   * bodies, and `maxHttpBodyBytes` does not apply to it.
++   */
++  streamRequestBody?: (request: Request) => Promise<boolean> | boolean;
++
+   /** response rewrite hook */
+   onResponse?: (
+     response: Response,
+diff --git a/host/src/qemu/http.ts b/host/src/qemu/http.ts
+index 550960f..03f84ea 100644
+--- a/host/src/qemu/http.ts
++++ b/host/src/qemu/http.ts
+@@ -44,6 +44,7 @@ import {
+ import type { HttpRequestData, LookupEntry } from "../http/utils.ts";
+ import {
+   webRequestToInternalHttpRequest,
++  webResponseHeadToInternalHttpResponse,
+   webResponseToInternalHttpResponse,
+   internalHttpRequestToWebRequest,
+   internalHttpResponseToWebResponse,
+@@ -63,6 +64,7 @@ const HTTP_STREAMING_RX_PAUSE_LOW_WATER_BYTES = 256 * 1024;
+ // Chunked framing (chunk-size lines + trailers) can add overhead on top of the decoded body.
+ // Keep this bounded separately from maxHttpBodyBytes.
+ const MAX_HTTP_CHUNKED_OVERHEAD_BYTES = 256 * 1024;
++const MAX_HTTP_CHUNK_SIZE_LINE_BYTES = 1024;
+ 
+ /**
+  * WebSocket upgrade headers that the WHATWG Fetch spec's forbidden
+@@ -81,6 +83,84 @@ const WEBSOCKET_UPGRADE_HEADER_NAMES = [
+ 
+ type FetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
+ 
++function invalidChunkedBodyError(): HttpRequestBlockedError {
++  return new HttpRequestBlockedError(
++    "invalid chunked request body",
++    400,
++    "Bad Request",
++  );
++}
++
++/**
++ * Incremental `Transfer-Encoding: chunked` decoder for streamed request bodies.
++ * Unlike `decodeChunkedBodyFromReceiveBuffer` it never holds more than one
++ * framing line in memory.
++ */
++export class ChunkedBodyDecoder {
++  private state: "size" | "data" | "data-crlf" | "trailer" = "size";
++  private line = "";
++  private chunkRemaining = 0;
++  private trailerBytes = 0;
++  /** whether the last-chunk and trailer section were consumed */
++  done = false;
++
++  /** decodes `data`, returning body bytes and bytes after the body end */
++  push(data: Buffer): { body: Buffer[]; extra: Buffer } {
++    const body: Buffer[] = [];
++    let offset = 0;
++
++    while (offset < data.length && !this.done) {
++      if (this.state === "data") {
++        const take = Math.min(this.chunkRemaining, data.length - offset);
++        body.push(data.subarray(offset, offset + take));
++        this.chunkRemaining -= take;
++        offset += take;
++        if (this.chunkRemaining === 0) this.state = "data-crlf";
++        continue;
++      }
++
++      const lf = data.indexOf(0x0a, offset);
++      const end = lf === -1 ? data.length : lf + 1;
++      this.line += data.toString("latin1", offset, end);
++      if (this.state === "trailer") this.trailerBytes += end - offset;
++      offset = end;
++
++      if (
++        this.line.length > MAX_HTTP_CHUNK_SIZE_LINE_BYTES + 2 ||
++        this.trailerBytes > MAX_HTTP_HEADER_BYTES
++      ) {
++        throw invalidChunkedBodyError();
++      }
++      if (lf === -1) break;
++      if (!this.line.endsWith("\r\n")) throw invalidChunkedBodyError();
++
++      const line = this.line.slice(0, -2);
++      this.line = "";
++
++      if (this.state === "data-crlf") {
++        if (line !== "") throw invalidChunkedBodyError();
++        this.state = "size";
++      } else if (this.state === "size") {
++        const sizeText = line.split(";")[0]!.trim();
++        if (!/^[0-9a-fA-F]{1,13}$/.test(sizeText)) {
++          throw invalidChunkedBodyError();
++        }
++        const size = parseInt(sizeText, 16);
++        if (size === 0) {
++          this.state = "trailer";
++        } else {
++          this.chunkRemaining = size;
++          this.state = "data";
++        }
++      } else if (line === "") {
++        this.done = true;
++      }
++    }
++
++    return { body, extra: data.subarray(offset) };
++  }
++}
++
+ export type HttpSession = {
+   buffer: HttpReceiveBuffer;
+   processing: boolean;
+@@ -105,12 +185,16 @@ export type HttpSession = {
+ 
+     bodyMode: "none" | "content-length" | "chunked";
+     contentLength: number;
++    /** whether `httpHooks.streamRequestBody` opted this request into streaming */
++    streamBody: boolean;
+   };
+ 
+-  /** active streaming request body state (Content-Length only) */
++  /** active streaming request body state */
+   streamingBody?: {
+-    /** bytes remaining in the declared Content-Length body in `bytes` */
++    /** bytes remaining in the declared Content-Length body in `bytes` (chunked: unused) */
+     remaining: number;
++    /** incremental decoder for chunked bodies (`null` for Content-Length) */
++    chunked: ChunkedBodyDecoder | null;
+     /** upstream body stream controller */
+     controller: ReadableStreamDefaultController<Uint8Array> | null;
+     /** whether the body stream is complete or canceled */
+@@ -322,6 +406,14 @@ function cleanupStreamingBodyState(
+   updateQemuRxPauseState(backend);
+ }
+ 
++function isStreamingBodyComplete(
++  streamState: NonNullable<HttpSession["streamingBody"]>,
++): boolean {
++  return streamState.chunked
++    ? streamState.chunked.done
++    : streamState.remaining === 0;
++}
++
+ export async function handleHttpDataWithWriter(
+   backend: QemuNetworkBackend,
+   key: string,
+@@ -371,20 +463,42 @@ export async function handleHttpDataWithWriter(
+       return;
+     }
+ 
+-    const take = Math.min(streamState.remaining, data.length);
+-    const extra = data.length - take;
+-
+-    if (take > 0) {
+-      streamState.remaining -= take;
+-
+-      if (!streamState.dropRemainingBody) {
+-        streamState.pending.push(data.subarray(0, take));
+-        streamState.pendingBytes += take;
+-        streamState.drain();
++    let body: Buffer[];
++    let extra: number;
++    if (streamState.chunked) {
++      try {
++        const decoded = streamState.chunked.push(data);
++        body = decoded.body;
++        extra = decoded.extra.length;
++      } catch (err) {
++        // The response may already be in flight, so the guest cannot get an
++        // error status anymore.
++        cleanupStreamingBodyState(
++          backend,
++          httpSession,
++          err instanceof Error ? err : new Error(String(err)),
++        );
++        httpSession.closed = true;
++        backend.abortTcpSession(key, session, "http-invalid-chunked-body");
++        return;
+       }
++    } else {
++      const take = Math.min(streamState.remaining, data.length);
++      streamState.remaining -= take;
++      body = take > 0 ? [data.subarray(0, take)] : [];
++      extra = data.length - take;
+     }
+ 
+-    if (streamState.remaining === 0) {
++    if (!streamState.dropRemainingBody) {
++      for (const chunk of body) {
++        if (chunk.length === 0) continue;
++        streamState.pending.push(chunk);
++        streamState.pendingBytes += chunk.length;
++      }
++      if (streamState.pendingBytes > 0) streamState.drain();
++    }
++
++    if (isStreamingBodyComplete(streamState)) {
+       streamState.done = true;
+       if (!streamState.dropRemainingBody) {
+         streamState.closeAfterPending = true;
+@@ -565,7 +679,20 @@ export async function handleHttpDataWithWriter(
+ 
+       const maxBodyBytes = backend.http.maxHttpBodyBytes;
+ 
++      let streamBody = false;
++      const streamRequestBody = backend.options.httpHooks?.streamRequestBody;
++      if (bodyMode !== "none" && streamRequestBody) {
++        // Same re-entrancy guard as the policy precheck below.
++        httpSession.processing = true;
++        streamBody =
++          (await streamRequestBody(
++            internalHttpRequestToWebRequest({ ...requestBase, body: null }),
++          )) === true;
++        httpSession.processing = false;
++      }
++
+       if (
++        !streamBody &&
+         bodyMode === "content-length" &&
+         Number.isFinite(maxBodyBytes) &&
+         contentLength > maxBodyBytes
+@@ -601,6 +728,7 @@ export async function handleHttpDataWithWriter(
+         policyPrechecked,
+         bodyMode,
+         contentLength,
++        streamBody,
+       };
+     }
+ 
+@@ -678,8 +806,27 @@ export async function handleHttpDataWithWriter(
+       httpSession.buffer.length - state.bodyOffset,
+     );
+ 
++    if (state.bodyMode === "chunked" && state.streamBody) {
++      maybeSend100ContinueFromHead(
++        httpSession,
++        state,
++        bufferedBodyBytes,
++        options.write,
++      );
++      await startStreamingRequestBody(
++        backend,
++        key,
++        session,
++        httpSession,
++        state,
++        options,
++        httpVersion,
++      );
++      return;
++    }
++
+     if (state.bodyMode === "chunked") {
+-      // Currently chunked request bodies are always buffered.
++      // Chunked request bodies are buffered unless streamRequestBody opted in.
+       const maxBuffered =
+         state.bodyOffset +
+         state.maxBodyBytes +
+@@ -782,7 +929,10 @@ export async function handleHttpDataWithWriter(
+       );
+     }
+ 
+-    if (contentLength > 0 && bufferedBodyBytes < contentLength) {
++    if (
++      contentLength > 0 &&
++      (bufferedBodyBytes < contentLength || state.streamBody)
++    ) {
+       // If the client uses Expect: 100-continue and no body bytes have arrived yet,
+       // send the interim response first and wait for more data.
+       const expect = state.headers["expect"]?.toLowerCase() ?? "";
+@@ -796,181 +946,15 @@ export async function handleHttpDataWithWriter(
+         return;
+       }
+ 
+-      // Start streaming the request body to the upstream fetch.
+-      const streamState: NonNullable<HttpSession["streamingBody"]> = {
+-        remaining: contentLength,
+-        controller: null,
+-        done: false,
+-        dropRemainingBody: false,
+-        pipelineBytes: 0,
+-        pending: [],
+-        pendingBytes: 0,
+-        closeAfterPending: false,
+-        drain: () => {
+-          const c = streamState.controller;
+-          if (!c) return;
+-
+-          try {
+-            while (streamState.pending.length > 0) {
+-              const desired =
+-                typeof c.desiredSize === "number" ? c.desiredSize : 0;
+-              if (desired <= 0) break;
+-
+-              const head = streamState.pending[0]!;
+-              if (head.length <= desired) {
+-                // Dequeue BEFORE enqueue: c.enqueue() can synchronously
+-                // trigger the pull() callback which re-enters drain().
+-                // If we enqueue first, the re-entrant drain() sees the
+-                // same head in pending and double-deducts pendingBytes.
+-                streamState.pending.shift();
+-                streamState.pendingBytes -= head.length;
+-                c.enqueue(head);
+-              } else {
+-                const remainder = head.subarray(desired);
+-                streamState.pending[0] = remainder;
+-                streamState.pendingBytes -= desired;
+-                c.enqueue(head.subarray(0, desired));
+-              }
+-            }
+-
+-            if (
+-              streamState.closeAfterPending &&
+-              streamState.pendingBytes === 0
+-            ) {
+-              streamState.closeAfterPending = false;
+-              c.close();
+-            }
+-          } catch {
+-            // The upstream fetch may have canceled/closed the request body stream early.
+-            streamState.done = streamState.remaining === 0;
+-            streamState.dropRemainingBody = streamState.remaining > 0;
+-            streamState.controller = null;
+-            streamState.pending.length = 0;
+-            streamState.pendingBytes = 0;
+-            streamState.closeAfterPending = false;
+-          } finally {
+-            updateQemuRxPauseState(backend);
+-          }
+-        },
+-      };
+-
+-      const bodyStream = new ReadableStream<Uint8Array>(
+-        {
+-          start: (c) => {
+-            streamState.controller = c;
+-            streamState.drain();
+-          },
+-          pull: (c) => {
+-            streamState.controller = c;
+-            streamState.drain();
+-          },
+-          cancel: () => {
+-            streamState.done = streamState.remaining === 0;
+-            streamState.dropRemainingBody = streamState.remaining > 0;
+-            streamState.controller = null;
+-            streamState.pending.length = 0;
+-            streamState.pendingBytes = 0;
+-            streamState.closeAfterPending = false;
+-            updateQemuRxPauseState(backend);
+-          },
+-        },
+-        {
+-          highWaterMark: HTTP_STREAMING_REQUEST_BODY_HIGH_WATER_BYTES,
+-          size: (chunk: Uint8Array) => chunk.byteLength,
+-        },
++      await startStreamingRequestBody(
++        backend,
++        key,
++        session,
++        httpSession,
++        state,
++        options,
++        httpVersion,
+       );
+-
+-      httpSession.streamingBody = streamState;
+-
+-      // Extract any already-buffered body bytes and clear the receive buffer.
+-      const initialBody = httpSession.buffer.suffix(state.bodyOffset);
+-      httpSession.buffer.resetTo(Buffer.alloc(0));
+-
+-      // Kick off the upstream fetch.
+-      httpSession.processing = true;
+-      let releaseHttpConcurrency: (() => void) | null = null;
+-
+-      // Normalize framing headers for streaming requests.
+-      const streamingRequest: InternalHttpRequest = {
+-        method: state.requestBase.method,
+-        url: state.requestBase.url,
+-        headers: Object.fromEntries(
+-          Object.entries(state.requestBase.headers).map(([key, value]) => [
+-            key.toLowerCase(),
+-            value,
+-          ]),
+-        ),
+-        body: null,
+-      };
+-
+-      const expectedLength = contentLength.toString();
+-      delete streamingRequest.headers["transfer-encoding"];
+-      streamingRequest.headers["content-length"] = expectedLength;
+-
+-      const safeWrite = (chunk: Buffer) => {
+-        if (httpSession.closed) return;
+-        options.write(chunk);
+-      };
+-
+-      (async () => {
+-        try {
+-          releaseHttpConcurrency = await backend.http.httpConcurrency.acquire();
+-          await fetchHookRequestAndRespond(backend, {
+-            request: streamingRequest,
+-            httpVersion,
+-            write: safeWrite,
+-            waitForWritable: options.waitForWritable,
+-            policyCheckedFirstHop: state.policyPrechecked,
+-            initialBodyStream: bodyStream as any,
+-            initialBodyStreamHasBody: true,
+-            httpSession,
+-          });
+-        } catch (err) {
+-          const error = err instanceof Error ? err : new Error(String(err));
+-
+-          cleanupStreamingBodyState(backend, httpSession, error);
+-
+-          if (isGuestClosedError(error)) {
+-            // Guest-side disconnect/cancel is expected and should not be surfaced
+-            // as an operational bridge error.
+-          } else if (error instanceof HttpRequestBlockedError) {
+-            if (backend.options.debug) {
+-              backend.emitDebug(`http blocked ${error.message}`);
+-            }
+-            respondWithError(
+-              safeWrite,
+-              error.status,
+-              error.statusText,
+-              httpVersion,
+-            );
+-          } else {
+-            backend.emit("error", error);
+-            respondWithError(safeWrite, 502, "Bad Gateway", httpVersion);
+-          }
+-        } finally {
+-          releaseHttpConcurrency?.();
+-          cleanupStreamingBodyState(backend, httpSession);
+-          resetTaintState(backend, httpSession);
+-          httpSession.processing = false;
+-          if (!httpSession.closed) {
+-            httpSession.closed = true;
+-            options.finish();
+-            backend.flush();
+-          }
+-        }
+-      })();
+-
+-      // Feed initial bytes into the stream.
+-      if (initialBody.length > 0) {
+-        await handleHttpDataWithWriter(
+-          backend,
+-          key,
+-          session,
+-          initialBody,
+-          options,
+-        );
+-      }
+-
+       return;
+     }
+ 
+@@ -1094,6 +1078,194 @@ export async function handleHttpDataWithWriter(
+   }
+ }
+ 
++/** streams the request body to `onRequest` and the upstream fetch */
++async function startStreamingRequestBody(
++  backend: QemuNetworkBackend,
++  key: string,
++  session: TcpSession,
++  httpSession: HttpSession,
++  state: NonNullable<HttpSession["head"]>,
++  options: {
++    scheme: "http" | "https";
++    write: (chunk: Buffer) => void;
++    finish: () => void;
++    waitForWritable?: () => Promise<void>;
++  },
++  httpVersion: "HTTP/1.0" | "HTTP/1.1",
++): Promise<void> {
++  const contentLength = state.contentLength;
++  const chunked =
++    state.bodyMode === "chunked" ? new ChunkedBodyDecoder() : null;
++
++  const streamState: NonNullable<HttpSession["streamingBody"]> = {
++    remaining: contentLength,
++    chunked,
++    controller: null,
++    done: false,
++    dropRemainingBody: false,
++    pipelineBytes: 0,
++    pending: [],
++    pendingBytes: 0,
++    closeAfterPending: false,
++    drain: () => {
++      const c = streamState.controller;
++      if (!c) return;
++
++      try {
++        while (streamState.pending.length > 0) {
++          const desired = typeof c.desiredSize === "number" ? c.desiredSize : 0;
++          if (desired <= 0) break;
++
++          const head = streamState.pending[0]!;
++          if (head.length <= desired) {
++            // Dequeue BEFORE enqueue: c.enqueue() can synchronously
++            // trigger the pull() callback which re-enters drain().
++            // If we enqueue first, the re-entrant drain() sees the
++            // same head in pending and double-deducts pendingBytes.
++            streamState.pending.shift();
++            streamState.pendingBytes -= head.length;
++            c.enqueue(head);
++          } else {
++            const remainder = head.subarray(desired);
++            streamState.pending[0] = remainder;
++            streamState.pendingBytes -= desired;
++            c.enqueue(head.subarray(0, desired));
++          }
++        }
++
++        if (streamState.closeAfterPending && streamState.pendingBytes === 0) {
++          streamState.closeAfterPending = false;
++          c.close();
++        }
++      } catch {
++        // The upstream fetch may have canceled/closed the request body stream early.
++        streamState.done = isStreamingBodyComplete(streamState);
++        streamState.dropRemainingBody = !streamState.done;
++        streamState.controller = null;
++        streamState.pending.length = 0;
++        streamState.pendingBytes = 0;
++        streamState.closeAfterPending = false;
++      } finally {
++        updateQemuRxPauseState(backend);
++      }
++    },
++  };
++
++  const bodyStream = new ReadableStream<Uint8Array>(
++    {
++      start: (c) => {
++        streamState.controller = c;
++        streamState.drain();
++      },
++      pull: (c) => {
++        streamState.controller = c;
++        streamState.drain();
++      },
++      cancel: () => {
++        streamState.done = isStreamingBodyComplete(streamState);
++        streamState.dropRemainingBody = !streamState.done;
++        streamState.controller = null;
++        streamState.pending.length = 0;
++        streamState.pendingBytes = 0;
++        streamState.closeAfterPending = false;
++        updateQemuRxPauseState(backend);
++      },
++    },
++    {
++      highWaterMark: HTTP_STREAMING_REQUEST_BODY_HIGH_WATER_BYTES,
++      size: (chunk: Uint8Array) => chunk.byteLength,
++    },
++  );
++
++  httpSession.streamingBody = streamState;
++
++  // Extract any already-buffered body bytes and clear the receive buffer.
++  const initialBody = httpSession.buffer.suffix(state.bodyOffset);
++  httpSession.buffer.resetTo(Buffer.alloc(0));
++
++  // Kick off the upstream fetch.
++  httpSession.processing = true;
++  let releaseHttpConcurrency: (() => void) | null = null;
++
++  // Normalize framing headers for streaming requests.
++  const streamingRequest: InternalHttpRequest = {
++    method: state.requestBase.method,
++    url: state.requestBase.url,
++    headers: Object.fromEntries(
++      Object.entries(state.requestBase.headers).map(([key, value]) => [
++        key.toLowerCase(),
++        value,
++      ]),
++    ),
++    body: null,
++  };
++
++  delete streamingRequest.headers["transfer-encoding"];
++  if (chunked) {
++    delete streamingRequest.headers["content-length"];
++  } else {
++    streamingRequest.headers["content-length"] = contentLength.toString();
++  }
++
++  const safeWrite = (chunk: Buffer) => {
++    if (httpSession.closed) return;
++    options.write(chunk);
++  };
++
++  (async () => {
++    try {
++      releaseHttpConcurrency = await backend.http.httpConcurrency.acquire();
++      await fetchHookRequestAndRespond(backend, {
++        request: streamingRequest,
++        httpVersion,
++        write: safeWrite,
++        waitForWritable: options.waitForWritable,
++        policyCheckedFirstHop: state.policyPrechecked,
++        initialBodyStream: bodyStream as any,
++        initialBodyStreamHasBody: true,
++        httpSession,
++      });
++    } catch (err) {
++      const error = err instanceof Error ? err : new Error(String(err));
++
++      cleanupStreamingBodyState(backend, httpSession, error);
++
++      if (isGuestClosedError(error)) {
++        // Guest-side disconnect/cancel is expected and should not be surfaced
++        // as an operational bridge error.
++      } else if (error instanceof HttpRequestBlockedError) {
++        if (backend.options.debug) {
++          backend.emitDebug(`http blocked ${error.message}`);
++        }
++        respondWithError(
++          safeWrite,
++          error.status,
++          error.statusText,
++          httpVersion,
++        );
++      } else {
++        backend.emit("error", error);
++        respondWithError(safeWrite, 502, "Bad Gateway", httpVersion);
++      }
++    } finally {
++      releaseHttpConcurrency?.();
++      cleanupStreamingBodyState(backend, httpSession);
++      resetTaintState(backend, httpSession);
++      httpSession.processing = false;
++      if (!httpSession.closed) {
++        httpSession.closed = true;
++        options.finish();
++        backend.flush();
++      }
++    }
++  })();
++
++  // Feed initial bytes into the stream.
++  if (initialBody.length > 0) {
++    await handleHttpDataWithWriter(backend, key, session, initialBody, options);
++  }
++}
++
+ function parseHttpHead(buffer: Buffer): {
+   method: string;
+   target: string;
+@@ -1296,11 +1468,13 @@ export async function fetchHookRequestAndRespond(
+     });
+ 
+     if (requestHooked.shortCircuitResponse) {
+-      const normalized = normalizeHookResponseForGuest(
++      await sendHookResponse(
+         requestHooked.shortCircuitResponse,
+         pendingRequest.method,
++        httpVersion,
++        write,
++        waitForWritable,
+       );
+-      sendHttpResponse(write, normalized, httpVersion);
+       return;
+     }
+ 
+@@ -1726,11 +1900,12 @@ async function handleWebSocketUpgrade(
+   });
+ 
+   if (requestHooked.shortCircuitResponse) {
+-    const normalized = normalizeHookResponseForGuest(
++    await sendHookResponse(
+       requestHooked.shortCircuitResponse,
+       baseRequest.method,
++      httpVersion,
++      options.write,
+     );
+-    sendHttpResponse(options.write, normalized, httpVersion);
+     return false;
+   }
+ 
+@@ -2155,7 +2330,7 @@ type RequestHookOutcome =
+     }
+   | {
+       kind: "short-circuit";
+-      response: InternalHttpResponse;
++      response: Response;
+     };
+ 
+ type RequestBodyPlan =
+@@ -2194,20 +2369,14 @@ function assertRequestHookRequest(value: unknown): asserts value is Request {
+   }
+ }
+ 
+-async function normalizeRequestHookOutcome(
++function normalizeRequestHookOutcome(
+   result: unknown,
+   fallbackRequest: Request,
+-  maxResponseBodyBytes: number,
+-): Promise<RequestHookOutcome> {
++): RequestHookOutcome {
+   const next = result ?? fallbackRequest;
+ 
+   if (isRequestHookResponse(next)) {
+-    return {
+-      kind: "short-circuit",
+-      response: await webResponseToInternalHttpResponse(next, {
+-        maxBodyBytes: maxResponseBodyBytes,
+-      }),
+-    };
++    return { kind: "short-circuit", response: next };
+   }
+ 
+   assertRequestHookRequest(next);
+@@ -2272,7 +2441,7 @@ async function applyRequestHooks(
+ ): Promise<{
+   request: InternalHttpRequest;
+   bodyStream: WebReadableStream<Uint8Array> | null;
+-  shortCircuitResponse: InternalHttpResponse | null;
++  shortCircuitResponse: Response | null;
+ }> {
+   const cloned: InternalHttpRequest = {
+     method: request.method,
+@@ -2293,10 +2462,9 @@ async function applyRequestHooks(
+     bodyStream: options.bodyStream,
+   });
+ 
+-  const hookResult = await normalizeRequestHookOutcome(
++  const hookResult = normalizeRequestHookOutcome(
+     await backend.options.httpHooks.onRequest(hookRequest),
+     hookRequest,
+-    backend.http.maxHttpResponseBodyBytes,
+   );
+ 
+   if (hookResult.kind === "short-circuit") {
+@@ -2375,6 +2543,90 @@ async function applyResponseHooks(
+   });
+ }
+ 
++/**
++ * Sends a response returned by `onRequest` to the guest. Its body is streamed
++ * like an upstream response: with its Content-Length when it declares one,
++ * else chunked (HTTP/1.1) or until close (HTTP/1.0).
++ */
++async function sendHookResponse(
++  response: Response,
++  requestMethod: string,
++  httpVersion: "HTTP/1.0" | "HTTP/1.1",
++  write: (chunk: Buffer) => void,
++  waitForWritable?: () => Promise<void>,
++): Promise<void> {
++  const head = webResponseHeadToInternalHttpResponse(response);
++  const status = head.status;
++  const isHead = requestMethod.toUpperCase() === "HEAD";
++  const nullBodyStatus = status === 204 || status === 205 || status === 304;
++
++  const headers: InternalHttpResponseHeaders = { ...head.headers };
++  headers["connection"] = "close";
++  delete headers["transfer-encoding"];
++
++  const body = response.body as WebReadableStream<Uint8Array> | null;
++  if (isHead || nullBodyStatus || !body) {
++    if (body) {
++      await cancelBodyStream(body);
++    }
++    if (nullBodyStatus) {
++      delete headers["content-encoding"];
++      headers["content-length"] = "0";
++    } else if (!isHead || !headers["content-length"]) {
++      headers["content-length"] = "0";
++    }
++    sendHttpResponseHead(
++      write,
++      { status, statusText: head.statusText, headers },
++      httpVersion,
++    );
++    return;
++  }
++
++  const declaredLength = headers["content-length"];
++  const parsedLength =
++    typeof declaredLength === "string"
++      ? parseContentLength(declaredLength)
++      : null;
++
++  try {
++    if (parsedLength !== null) {
++      headers["content-length"] = parsedLength.toString();
++      sendHttpResponseHead(
++        write,
++        { status, statusText: head.statusText, headers },
++        httpVersion,
++      );
++      const sent = await sendStreamBody(body, write, waitForWritable);
++      if (sent !== parsedLength) {
++        throw new Error(
++          `onRequest response body has ${sent} bytes but content-length ${parsedLength}`,
++        );
++      }
++    } else if (httpVersion === "HTTP/1.1") {
++      delete headers["content-length"];
++      headers["transfer-encoding"] = "chunked";
++      sendHttpResponseHead(
++        write,
++        { status, statusText: head.statusText, headers },
++        httpVersion,
++      );
++      await sendChunkedBody(body, write, waitForWritable);
++    } else {
++      delete headers["content-length"];
++      sendHttpResponseHead(
++        write,
++        { status, statusText: head.statusText, headers },
++        httpVersion,
++      );
++      await sendStreamBody(body, write, waitForWritable);
++    }
++  } catch (err) {
++    await cancelBodyStream(body);
++    throw err;
++  }
++}
++
+ function normalizeHookResponseForGuest(
+   response: InternalHttpResponse,
+   requestMethod: string,
+diff --git a/host/test/http-streaming-bodies.test.ts b/host/test/http-streaming-bodies.test.ts
+new file mode 100644
+index 0000000..d56e9ee
+--- /dev/null
++++ b/host/test/http-streaming-bodies.test.ts
+@@ -0,0 +1,355 @@
++import assert from "node:assert/strict";
++import crypto from "node:crypto";
++import os from "node:os";
++import path from "node:path";
++import test from "node:test";
++
++import { QemuNetworkBackend } from "../src/qemu/net.ts";
++import * as qemuHttp from "../src/qemu/http.ts";
++import { HttpReceiveBuffer } from "../src/http/utils.ts";
++
++function makeBackend(
++  options?: Partial<ConstructorParameters<typeof QemuNetworkBackend>[0]>,
++) {
++  return new QemuNetworkBackend({
++    socketPath: path.join(
++      os.tmpdir(),
++      `gondolin-net-test-${process.pid}-${crypto.randomUUID()}.sock`,
++    ),
++    ...options,
++  });
++}
++
++function makeGuest(backend: QemuNetworkBackend) {
++  const writes: Buffer[] = [];
++  let resolveFinished: () => void = () => {};
++  const finished = new Promise<void>((resolve) => {
++    resolveFinished = resolve;
++  });
++  const session: any = { http: undefined };
++  const writer = {
++    scheme: "http" as const,
++    write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
++    finish: () => resolveFinished(),
++    waitForWritable: () => Promise.resolve(),
++  };
++  return {
++    writes,
++    finished,
++    session,
++    send: (data: string | Buffer) =>
++      qemuHttp.handleHttpDataWithWriter(
++        backend,
++        "key",
++        session,
++        Buffer.isBuffer(data) ? data : Buffer.from(data, "latin1"),
++        writer,
++      ),
++    raw: () => Buffer.concat(writes).toString("latin1"),
++  };
++}
++
++function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
++  return Promise.race([
++    promise,
++    new Promise<never>((_, reject) =>
++      setTimeout(() => reject(new Error(message)), 3_000),
++    ),
++  ]);
++}
++
++function chunkedBody(parts: string[]): string {
++  return (
++    parts.map((part) => `${part.length.toString(16)}\r\n${part}\r\n`).join("") +
++    "0\r\n\r\n"
++  );
++}
++
++test("ChunkedBodyDecoder decodes input split at every byte", () => {
++  const framed =
++    "5;ext=1\r\nhello\r\n1\r\n \r\n5\r\nworld\r\n0\r\nx-trailer: 1\r\n\r\nNEXT";
++  const decoder = new qemuHttp.ChunkedBodyDecoder();
++  const body: Buffer[] = [];
++  let extra = Buffer.alloc(0);
++  for (let i = 0; i < framed.length; i += 1) {
++    const result = decoder.push(Buffer.from(framed[i]!, "latin1"));
++    body.push(...result.body);
++    extra = Buffer.concat([extra, result.extra]);
++  }
++  assert.equal(decoder.done, true);
++  assert.equal(Buffer.concat(body).toString(), "hello world");
++  assert.equal(extra.toString(), "NEXT");
++});
++
++test("ChunkedBodyDecoder rejects malformed framing", () => {
++  for (const framed of [
++    "zz\r\nhello\r\n",
++    "5\r\nhelloXX\r\n",
++    "5\nhello\r\n",
++    `${"1".repeat(2000)}\r\n`,
++    "fffffffffffffff\r\n",
++  ]) {
++    const decoder = new qemuHttp.ChunkedBodyDecoder();
++    assert.throws(() => decoder.push(Buffer.from(framed)), /chunked/, framed);
++  }
++});
++
++test("streamRequestBody streams Content-Length bodies over maxHttpBodyBytes into onRequest", async () => {
++  const seen: Array<{ url: string; body: unknown }> = [];
++  const backend = makeBackend({
++    maxHttpBodyBytes: 16,
++    fetch: async () => {
++      throw new Error("unexpected upstream fetch");
++    },
++    httpHooks: {
++      streamRequestBody: (request) => {
++        seen.push({ url: request.url, body: request.body });
++        return true;
++      },
++      onRequest: async (request) => {
++        const text = await new Response(request.body).text();
++        return new Response(`got ${text.length}`, { status: 200 });
++      },
++    },
++  });
++  const guest = makeGuest(backend);
++  const body = "x".repeat(100_000);
++
++  await guest.send(
++    "POST /upload HTTP/1.1\r\nHost: example.com\r\n" +
++      `Content-Length: ${body.length}\r\n\r\n${body.slice(0, 10)}`,
++  );
++  for (let i = 10; i < body.length; i += 4096) {
++    await guest.send(body.slice(i, i + 4096));
++  }
++  await withTimeout(guest.finished, "request did not finish");
++
++  assert.deepEqual(seen, [{ url: "http://example.com/upload", body: null }]);
++  assert.match(guest.raw(), /^HTTP\/1\.1 200 /);
++  assert.match(guest.raw(), /got 100000/);
++});
++
++test("maxHttpBodyBytes still applies when streamRequestBody declines", async () => {
++  let onRequestCalls = 0;
++  const backend = makeBackend({
++    maxHttpBodyBytes: 16,
++    httpHooks: {
++      streamRequestBody: () => false,
++      onRequest: () => {
++        onRequestCalls += 1;
++        return new Response("unexpected");
++      },
++    },
++  });
++  const guest = makeGuest(backend);
++
++  await guest.send(
++    "POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 100\r\n\r\n",
++  );
++  await withTimeout(guest.finished, "request did not finish");
++
++  assert.match(guest.raw(), /^HTTP\/1\.1 413 /);
++  assert.equal(onRequestCalls, 0);
++});
++
++test("streamRequestBody is not asked for requests without a body", async () => {
++  let asked = 0;
++  const backend = makeBackend({
++    httpHooks: {
++      streamRequestBody: () => {
++        asked += 1;
++        return true;
++      },
++      onRequest: () => new Response("ok"),
++    },
++  });
++  const guest = makeGuest(backend);
++
++  await guest.send("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
++  await withTimeout(guest.finished, "request did not finish");
++
++  assert.equal(asked, 0);
++  assert.match(guest.raw(), /^HTTP\/1\.1 200 /);
++});
++
++test("streamRequestBody streams chunked bodies into onRequest", async () => {
++  let headers: Record<string, string> = {};
++  const backend = makeBackend({
++    maxHttpBodyBytes: 16,
++    httpHooks: {
++      streamRequestBody: () => true,
++      onRequest: async (request) => {
++        request.headers.forEach((value, key) => {
++          headers[key] = value;
++        });
++        const text = await new Response(request.body).text();
++        return new Response(text.toUpperCase());
++      },
++    },
++  });
++  const guest = makeGuest(backend);
++  const parts = Array.from({ length: 50 }, (_, i) => `part${i}-`.repeat(10));
++  const framed = chunkedBody(parts);
++
++  await guest.send(
++    "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n",
++  );
++  for (let i = 0; i < framed.length; i += 7) {
++    await guest.send(framed.slice(i, i + 7));
++  }
++  await withTimeout(guest.finished, "request did not finish");
++
++  assert.equal(headers["transfer-encoding"], undefined);
++  assert.equal(headers["content-length"], undefined);
++  const raw = guest.raw();
++  assert.match(raw, /^HTTP\/1\.1 200 /);
++  assert.ok(raw.includes(parts.join("").toUpperCase()));
++});
++
++test("streamRequestBody forwards streamed chunked bodies upstream", async () => {
++  let upstreamBody = "";
++  const backend = makeBackend({
++    maxHttpBodyBytes: 16,
++    fetch: async (_url, init) => {
++      upstreamBody = await new Response(init?.body as any).text();
++      return new Response("ok", { headers: { "content-length": "2" } });
++    },
++    httpHooks: {
++      streamRequestBody: () => true,
++      isIpAllowed: () => true,
++    },
++    dnsLookup: (_hostname, _options, cb) =>
++      cb(null, [{ address: "203.0.113.1", family: 4 }]),
++  });
++  const guest = makeGuest(backend);
++  const framed = chunkedBody(["hello ", "streamed ", "world"]);
++
++  await guest.send(
++    "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n" +
++      framed.slice(0, 5),
++  );
++  await guest.send(framed.slice(5));
++  await withTimeout(guest.finished, "request did not finish");
++
++  assert.equal(upstreamBody, "hello streamed world");
++  assert.match(guest.raw(), /^HTTP\/1\.1 200 /);
++});
++
++test("streamed chunked body with invalid framing aborts the connection", async () => {
++  let hookError: unknown = null;
++  const backend = makeBackend({
++    httpHooks: {
++      streamRequestBody: () => true,
++      onRequest: async (request) => {
++        try {
++          await new Response(request.body).arrayBuffer();
++        } catch (err) {
++          hookError = err;
++        }
++        return new Response("done");
++      },
++    },
++  });
++  const aborted: string[] = [];
++  backend.abortTcpSession = (_key, _session, reason) => {
++    aborted.push(reason);
++  };
++  const guest = makeGuest(backend);
++
++  await guest.send(
++    "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel",
++  );
++  await guest.send("lo\r\nnot-hex\r\n");
++  await new Promise((resolve) => setTimeout(resolve, 20));
++
++  assert.deepEqual(aborted, ["http-invalid-chunked-body"]);
++  assert.ok(hookError);
++});
++
++test("onRequest responses stream to the guest before their body ends", async () => {
++  let release: () => void = () => {};
++  const released = new Promise<void>((resolve) => {
++    release = resolve;
++  });
++  const backend = makeBackend({
++    maxHttpResponseBodyBytes: 4,
++    httpHooks: {
++      onRequest: () =>
++        new Response(
++          new ReadableStream({
++            async start(controller) {
++              controller.enqueue(new TextEncoder().encode("first,"));
++              await released;
++              controller.enqueue(new TextEncoder().encode("second"));
++              controller.close();
++            },
++          }),
++          { headers: { "content-type": "text/event-stream" } },
++        ),
++    },
++  });
++  const guest = makeGuest(backend);
++
++  const sending = guest.send(
++    "GET /events HTTP/1.1\r\nHost: example.com\r\n\r\n",
++  );
++  await new Promise((resolve) => setTimeout(resolve, 20));
++
++  assert.match(guest.raw(), /transfer-encoding: chunked/i);
++  assert.ok(guest.raw().includes("first,"));
++  assert.ok(!guest.raw().includes("second"));
++
++  release();
++  await withTimeout(sending, "request did not finish");
++  assert.ok(guest.raw().endsWith("6\r\nsecond\r\n0\r\n\r\n"));
++});
++
++test("onRequest responses keep a declared Content-Length", async () => {
++  const backend = makeBackend({
++    httpHooks: {
++      onRequest: () =>
++        new Response("hello", { headers: { "content-length": "5" } }),
++    },
++  });
++  const guest = makeGuest(backend);
++
++  await guest.send("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
++  await withTimeout(guest.finished, "request did not finish");
++
++  const raw = guest.raw();
++  assert.match(raw, /content-length: 5\r\n/i);
++  assert.doesNotMatch(raw, /transfer-encoding/i);
++  assert.ok(raw.endsWith("\r\n\r\nhello"));
++});
++
++test("onRequest responses to HTTP/1.0 clients are sent until close", async () => {
++  const writes: Buffer[] = [];
++  const backend = makeBackend({
++    httpHooks: {
++      onRequest: () => new Response("hello"),
++    },
++  });
++
++  await qemuHttp.fetchHookRequestAndRespond(backend, {
++    request: {
++      method: "GET",
++      url: "http://example.com/",
++      headers: { host: "example.com" },
++      body: null,
++    },
++    httpVersion: "HTTP/1.0",
++    write: (chunk) => writes.push(Buffer.from(chunk)),
++    httpSession: {
++      buffer: new HttpReceiveBuffer(),
++      processing: false,
++      closed: false,
++      upstreamTainted: false,
++      upstreamOriginKey: null,
++    },
++  });
++
++  const raw = Buffer.concat(writes).toString("latin1");
++  assert.match(raw, /^HTTP\/1\.0 200 /);
++  assert.doesNotMatch(raw, /transfer-encoding|content-length/i);
++  assert.ok(raw.endsWith("\r\n\r\nhello"));
++});
+diff --git a/host/test/qemu-net.test.ts b/host/test/qemu-net.test.ts
+index 1f1078c..4238849 100644
+--- a/host/test/qemu-net.test.ts
++++ b/host/test/qemu-net.test.ts
+@@ -45,6 +45,33 @@ function makeBackend(
+   });
+ }
+ 
++function decodeChunked(raw: string): string {
++  let out = "";
++  let offset = 0;
++  while (true) {
++    const lineEnd = raw.indexOf("\r\n", offset);
++    assert.notEqual(lineEnd, -1, "incomplete chunked body");
++    const size = parseInt(raw.slice(offset, lineEnd), 16);
++    if (size === 0) return out;
++    out += raw.slice(lineEnd + 2, lineEnd + 2 + size);
++    offset = lineEnd + 2 + size + 2;
++  }
++}
++
++/** splits a raw HTTP/1.1 response into its lowercased head and decoded body */
++function parseRawResponse(raw: string): { head: string; body: string } {
++  const headerEnd = raw.indexOf("\r\n\r\n");
++  assert.notEqual(headerEnd, -1);
++  const head = raw.slice(0, headerEnd).toLowerCase();
++  const body = raw.slice(headerEnd + 4);
++  return {
++    head,
++    body: /\r\ntransfer-encoding: chunked(\r\n|$)/.test(head)
++      ? decodeChunked(body)
++      : body,
++  };
++}
++
+ function dnsLookupStub(addresses: Array<{ address: string; family: 4 | 6 }>) {
+   return (
+     _hostname: string,
+@@ -1183,11 +1210,9 @@ test("qemu-net: onRequest can short-circuit with synthetic responses", async ()
+   assert.equal(fetchCalls, 0);
+   assert.equal(responseHookCalls, 0);
+ 
+-  const raw = Buffer.concat(writes).toString("utf8");
+-  const headerEnd = raw.indexOf("\r\n\r\n");
+-  assert.notEqual(headerEnd, -1);
+-  const head = raw.slice(0, headerEnd).toLowerCase();
+-  const body = raw.slice(headerEnd + 4);
++  const { head, body } = parseRawResponse(
++    Buffer.concat(writes).toString("utf8"),
++  );
+ 
+   assert.match(head, /^http\/1\.1 201 /);
+   assert.ok(head.includes("x-source: hook"));
+@@ -1246,9 +1271,9 @@ test("qemu-net: onRequest short-circuit skips request and ip policy checks", asy
+   assert.equal(finished, true);
+   assert.equal(fetchCalls, 0);
+ 
+-  const raw = Buffer.concat(writes).toString("utf8");
+-  const head = raw.slice(0, raw.indexOf("\r\n\r\n")).toLowerCase();
+-  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
++  const { head, body } = parseRawResponse(
++    Buffer.concat(writes).toString("utf8"),
++  );
+ 
+   assert.match(head, /^http\/1\.1 202 /);
+   assert.match(head, /x-source: hook/);
+@@ -1285,10 +1310,12 @@ test("qemu-net: onRequest accepts undici.Response", async () => {
+     writes.push(Buffer.from(chunk));
+   });
+ 
+-  const raw = Buffer.concat(writes).toString("utf8");
+-  assert.match(raw.toLowerCase(), /^http\/1\.1 201 /);
+-  assert.match(raw.toLowerCase(), /x-source: undici/);
+-  assert.ok(raw.endsWith("synthetic"));
++  const { head, body } = parseRawResponse(
++    Buffer.concat(writes).toString("utf8"),
++  );
++  assert.match(head, /^http\/1\.1 201 /);
++  assert.match(head, /x-source: undici/);
++  assert.equal(body, "synthetic");
+ });
+ 
+ test("qemu-net: onRequest accepts undici.Request", async () => {
+@@ -1943,11 +1970,9 @@ test("qemu-net: onRequest can short-circuit buffered requests", async () => {
+   assert.equal(finished, true);
+   assert.equal(fetchCalls, 0);
+ 
+-  const raw = Buffer.concat(writes).toString("utf8");
+-  const headerEnd = raw.indexOf("\r\n\r\n");
+-  assert.notEqual(headerEnd, -1);
+-  const head = raw.slice(0, headerEnd).toLowerCase();
+-  const body = raw.slice(headerEnd + 4);
++  const { head, body } = parseRawResponse(
++    Buffer.concat(writes).toString("utf8"),
++  );
+ 
+   assert.match(head, /^http\/1\.1 209 /);
+   assert.ok(head.includes("x-body-hook: 1"));

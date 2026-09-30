@@ -11,10 +11,6 @@ The principle for the larger items: the host never reads, writes or runs git on 
 
 Sections are in the order to work on them.
 
-### Nothing on the host touches guest-writable files
-
-- **Large workspace pushes**: a push over Gondolin's 64MB request body limit fails from the VM.
-
 ### Guest privilege
 
 - **Upstream `sandboxfs`**: the image patches Gondolin's `sandboxfs` (`allow_other`, files owned by uid 1000) and builds Gondolin's guest helpers from source with Zig. Ask upstream for these as options so the patch can go.
@@ -50,6 +46,7 @@ Gondolin changes. Phases 1 to 3 need none if we accept a wrapper and one deep im
 - `vfs.external` (or a `virtioFsSocketPath` the server does not listen on): `SandboxServer` does not open the fs bridge, and the mount list still reaches the guest. Today `VirtioBridge.connect()` unlinks and listens on that path, which would replace the worker's socket. The wrapper instead rewrites the `virtiofs0` chardev path in the QEMU shim (the host's own fs bridge listens on an unused path and never gets a connection) and passes empty `MemoryProvider`s for the mounts, so the guest gets the right `sandboxfs.bind=` list.
 - Export `MountRouterProvider` and a `serveVfs({ mounts, socketPath })` helper for the worker. Without them the worker imports `dist/src/vfs/mounts.js` and `virtio-protocol.js` by file path (works because the version is pinned) and needs `cbor2` as a direct dependency. The MITM CA mount (`/etc/gondolin/mitm`, certificate only) has to be recreated in the worker.
 - Socket file mode and dir options, so an account variant does not depend on `chmod` timing.
+- `httpHooks.streamRequestBody` and streamed `onRequest` answers (`docs/upstream/gondolin-streaming.md`). Hobwork carries them as a `pnpm patch` of 0.12.0 for workspace pushes over 64MB. Once upstream has them, drop `patches/`, `patchedDependencies` and the `patches` entry in `release/package.sh`.
 
 Details of the namespace variant:
 
@@ -109,7 +106,7 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 
 ## OpenRouter
 
-- Streaming responses from the OpenRouter helper. The AI gateway gets answers to the guest only when they are complete, since Gondolin buffers answers from its `onRequest` hook; streaming needs Gondolin to pass a response body stream through.
+- Streaming responses from the OpenRouter helper. Gondolin now streams answers from its `onRequest` hook (patched), but the AI gateway reads the whole answer before returning it, to count usage. It has to pass the stream on through a transform that watches for the last server-sent event with `usage`, and record the cost when the stream ends (or is canceled, with the estimate from what was seen).
 - A spend limit across all hobs, next to the per-hob ones.
 - Spend limits can be passed by one request, since cost is known only afterwards. Estimating a request's cost from `max_tokens` and the model's prices before sending it would close that gap.
 - Tell people when a hob reaches a limit (a notification to their devices), not only in the hob log.

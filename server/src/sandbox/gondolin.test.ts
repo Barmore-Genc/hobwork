@@ -260,6 +260,42 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     await guarded.stop()
   })
 
+  test('internal handlers take streamed bodies over 64MB when they opt in, and stream answers', { timeout: 180_000 }, async () => {
+    const size = 80 * 1024 * 1024
+    const received: { path: string, bytes: number }[] = []
+    const streaming = await start({
+      streamInternal: (request) => new URL(request.url).pathname.startsWith('/upload/'),
+      internal: async (request) => {
+        const url = new URL(request.url)
+        if (url.pathname === '/download') {
+          let sent = 0
+          return new Response(new ReadableStream({
+            pull(controller) {
+              if (sent >= size) return controller.close()
+              sent += 1024 * 1024
+              controller.enqueue(new Uint8Array(1024 * 1024))
+            },
+          }))
+        }
+        let bytes = 0
+        for await (const chunk of request.body ?? []) bytes += chunk.length
+        received.push({ path: url.pathname, bytes })
+        return new Response(String(bytes))
+      },
+    })
+    const run = async (command: string) => (await streaming.exec(command).result).stdout
+    await run(`head -c ${size} /dev/zero > /tmp/big`)
+    expect(await run('curl -sS --data-binary @/tmp/big http://hobwork.internal/upload/length')).toBe(String(size))
+    expect(await run('curl -sS -X POST -T - http://hobwork.internal/upload/chunked < /tmp/big')).toBe(String(size))
+    expect(await run('curl -sS -o /dev/null -w "%{size_download}" http://hobwork.internal/download')).toBe(String(size))
+    expect(await run('curl -sS -o /dev/null -w "%{http_code}" --data-binary @/tmp/big http://hobwork.internal/other')).toBe('413')
+    expect(received).toEqual([
+      { path: '/upload/length', bytes: size },
+      { path: '/upload/chunked', bytes: size },
+    ])
+    await streaming.stop()
+  })
+
   test('each sandbox gets its own internal handler', async () => {
     const other = await start({ internal: () => new Response('other') })
     const result = await other.exec('curl -sS http://hobwork.internal/').result

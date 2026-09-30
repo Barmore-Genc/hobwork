@@ -7,6 +7,8 @@ mac_destination := "platform=macOS,arch=" + `uname -m`
 # account of the team is signed in to Xcode. Push and the app group need the team's profile,
 # so that build gets neither.
 mac_local_signing := "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS=Hobwork/Hobwork-macOS-Local.entitlements"
+# Development profiles for macOS list the Mac, so the first team build registers it.
+mac_team_signing := "-allowProvisioningUpdates -allowProvisioningDeviceRegistration"
 
 _default:
     @just --list
@@ -141,7 +143,7 @@ smoke host name="": generate
 # Build the macOS app, signed with team 63QQLP356Q or with `sign="local"` for this Mac only
 build-mac sign="team": generate
     xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
-        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} build
+        {{ if sign == "local" { mac_local_signing } else { mac_team_signing } }} build
 
 # Build and open the macOS app, e.g. `just run-mac local`
 run-mac sign="team": (build-mac sign)
@@ -156,14 +158,14 @@ run-mac sign="team": (build-mac sign)
 # Run the unit tests on this Mac
 test-mac sign="team": generate
     xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
-        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} \
+        {{ if sign == "local" { mac_local_signing } else { mac_team_signing } }} \
         -only-testing:HobworkTests test
 
 # The device protocol against a running host from the macOS app, as `test-host`
 test-host-mac host cookie sign="team": generate
     TEST_RUNNER_HOBWORK_TEST_HOST='{{host}}' TEST_RUNNER_HOBWORK_TEST_COOKIE='{{cookie}}' \
         xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \
-        {{ if sign == "local" { mac_local_signing } else { "-allowProvisioningUpdates" } }} \
+        {{ if sign == "local" { mac_local_signing } else { mac_team_signing } }} \
         -only-testing:HobworkTests/HostIntegrationTests test
 
 # Erase the app and its data from a simulator

@@ -10,7 +10,6 @@ import { createProjectData } from './data/project-data.ts'
 import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
 import { branchFileReader } from './files.ts'
-import { createApns, loadApnsKey } from './devices/apns.ts'
 import { createDevices } from './devices/devices.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
@@ -44,11 +43,8 @@ const secrets = createSecretStore(host, secretKey)
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
 const ai = createAiGateway(host)
-const apns = config.apns && createApns({ key: loadApnsKey(config.apns.keyFile), keyId: config.apns.keyId, teamId: config.apns.teamId })
-if (!apns) console.warn('HOBWORK_APNS_KEY_FILE is not set, so notifications only reach devices while the Hobwork app is connected.')
 const devices = createDevices({
   host,
-  apns,
   allowlist: config.allowlist,
   publicUrl: config.publicUrl,
   triggers: async (project) => (await runtime.config(project)).config.triggers,

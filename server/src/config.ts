@@ -1,7 +1,6 @@
 import { resolve } from 'node:path'
 import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
-import type { ApnsConfig } from './devices/apns.ts'
 import { loadVmBudget, type VmBudget } from './sandbox/budget.ts'
 
 export type HomeAssistantConnection = {
@@ -46,8 +45,6 @@ export type Config = {
   secretKey?: string
   // Undefined when backups are off.
   backup?: BackupConfig
-  // Undefined when push notifications are off.
-  apns?: ApnsConfig
   // Team ID and bundle ID of the app that may open NFC tag URLs (universal links).
   appleAppId: string
   // Reverse proxies whose X-Forwarded-For header names the client.
@@ -149,14 +146,6 @@ function loadOidc(env: NodeJS.ProcessEnv): OidcConfig | undefined {
   }
 }
 
-function loadApns(env: NodeJS.ProcessEnv): ApnsConfig | undefined {
-  const names = ['HOBWORK_APNS_KEY_FILE', 'HOBWORK_APNS_KEY_ID', 'HOBWORK_APNS_TEAM_ID'] as const
-  const [keyFile, keyId, teamId] = names.map((name) => env[name])
-  if (!keyFile && !keyId && !teamId) return undefined
-  if (!keyFile || !keyId || !teamId) throw new Error(`${names.join(', ')} must be set together`)
-  return { keyFile: resolve(keyFile), keyId, teamId }
-}
-
 export const DEFAULT_APPLE_APP_ID = '63QQLP356Q.dev.bgenc.hobwork'
 
 function loadAppleAppId(env: NodeJS.ProcessEnv): string {
@@ -214,7 +203,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sshPort: env.HOBWORK_SSH_PORT === 'off' ? undefined : loadPort('HOBWORK_SSH_PORT', env.HOBWORK_SSH_PORT, 2222),
     ...(env.HOBWORK_SECRET_KEY ? { secretKey: env.HOBWORK_SECRET_KEY } : {}),
     backup: loadBackupConfig(env),
-    apns: loadApns(env),
     appleAppId: loadAppleAppId(env),
     trustedProxies: parseTrustedProxies(env.HOBWORK_TRUSTED_PROXIES),
   }

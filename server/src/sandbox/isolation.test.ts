@@ -187,7 +187,8 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1' && process.env.HOBWORK_SANDB
     expect(qemu).toBeDefined()
     const view = namespaceView(qemu!)
     expect(view.ownNamespaces).toBe(true)
-    expect(view.env).toEqual(['PATH', 'PWD'])
+    // qemu-sandboxed.sh, a shell, adds SHLVL when HOBWORK_QEMU_SANDBOX=1.
+    expect(view.env.filter((name) => name !== 'SHLVL')).toEqual(['PATH', 'PWD'])
     expect(existsSync(join(view.root, data))).toBe(false)
     expect(existsSync(join(view.root, files))).toBe(false)
     expect(existsSync(join(view.root, process.cwd(), 'package.json'))).toBe(false)

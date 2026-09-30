@@ -1,15 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
-import {
-  createHttpHooks,
-  createShadowPathPredicate,
-  ReadonlyProvider,
-  RealFSProvider,
-  SandboxVfsProvider,
-  ShadowProvider,
-  VM,
-} from '@earendil-works/gondolin'
+import { createHttpHooks, MemoryProvider, VM } from '@earendil-works/gondolin'
 import type { VirtualProvider } from '@earendil-works/gondolin'
 import {
   GUEST_GID,
@@ -29,8 +21,9 @@ import {
 import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 import { hostMatches } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
+import { checkIsolation, createVmDir, isolationMode, prepareQemu, startVfsWorker, type VfsWorker, type VmDir } from './isolation.ts'
+import { relativePaths, toProviders } from './mounts.ts'
 import { qemuPath } from './qemu.ts'
-import { mountQuota } from './quota.ts'
 import { systemEnv } from './system-env.ts'
 
 const KILL_GRACE_MS = 2000
@@ -111,25 +104,74 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
     }
   }
 
-  const vm = await VM.create({
-    sandbox: { imagePath: options.image, append: KERNEL_APPEND, qemuPath: qemuPath() },
-    memory: options.memory ?? '1G',
-    cpus: options.cpus ?? 2,
-    rootfs: { mode: 'cow', size: options.diskSize },
-    env: { ...systemEnv(), ...options.env, ...hooks.env },
-    httpHooks: hooks.httpHooks,
-    vfs: { mounts: toProviders(options.mounts ?? {}) },
-    sessionLabel: options.label,
-  })
+  checkIsolation()
+  const mounts = options.mounts ?? {}
+  const isolated = isolationMode() === 'namespaces' ? await startIsolated(mounts) : undefined
+  let vm: VM
+  try {
+    vm = await VM.create({
+      sandbox: {
+        imagePath: options.image,
+        append: KERNEL_APPEND,
+        qemuPath: qemuPath(),
+        ...(isolated && prepareQemu(isolated.dir, options.image)),
+      },
+      memory: options.memory ?? '1G',
+      cpus: options.cpus ?? 2,
+      rootfs: { mode: 'cow', size: options.diskSize },
+      env: { ...systemEnv(), ...options.env, ...hooks.env },
+      httpHooks: hooks.httpHooks,
+      vfs: { mounts: isolated ? placeholders(mounts) : toProviders(mounts) },
+      sessionLabel: options.label,
+    })
+  } catch (err) {
+    isolated?.close()
+    throw err
+  }
+  try {
+    await isolated?.worker.ready
+  } catch (err) {
+    await vm.close()
+    isolated?.close()
+    throw err
+  }
   // VM.create boots lazily on first use. Booting here surfaces boot errors to the caller.
   try {
     await vm.start()
-    await bindVmDiskDirs(vm, options.mounts ?? {})
+    await bindVmDiskDirs(vm, mounts)
   } catch (err) {
     await vm.close()
+    isolated?.close()
     throw err
   }
-  return new GondolinSandbox(vm)
+  return new GondolinSandbox(vm, isolated)
+}
+
+type Isolated = { dir: VmDir, worker: VfsWorker, close(): void }
+
+async function startIsolated(mounts: Record<string, Mount>): Promise<Isolated> {
+  const dir = createVmDir()
+  try {
+    const { mitmCaCertificate } = await import('./gondolin-internals.ts')
+    const worker = startVfsWorker(dir, mounts, await mitmCaCertificate())
+    return {
+      dir,
+      worker,
+      close: () => {
+        worker.stop()
+        dir.remove()
+      },
+    }
+  } catch (err) {
+    dir.remove()
+    throw err
+  }
+}
+
+// The VFS worker serves the mounts. Gondolin still needs a provider per guest
+// path to pass the mount list to the guest.
+function placeholders(mounts: Record<string, Mount>): Record<string, VirtualProvider> {
+  return Object.fromEntries(Object.keys(mounts).map((guestPath) => [guestPath, new MemoryProvider()]))
 }
 
 // A guest that retries a refused request in a loop would otherwise fill the hob log.
@@ -206,29 +248,6 @@ const KERNEL_APPEND = process.platform === 'linux' && process.arch === 'x64'
     ].join(' ')
   : undefined
 
-function toProviders(mounts: Record<string, Mount>): Record<string, VirtualProvider> {
-  return Object.fromEntries(Object.entries(mounts).map(([guestPath, mount]) => [guestPath, toProvider(mount)]))
-}
-
-function relativePaths(paths: string[] | undefined): string[] {
-  return (paths ?? []).map((p) => p.replace(/^\/+|\/+$/g, ''))
-}
-
-function toProvider(mount: Mount): VirtualProvider {
-  let provider: VirtualProvider = new RealFSProvider(mount.hostPath)
-  if (mount.maxBytes !== undefined) provider = new SandboxVfsProvider(provider, mountQuota(mount.hostPath, mount.maxBytes))
-  if (mount.readonly) provider = new ReadonlyProvider(provider)
-  const hidden = [...relativePaths(mount.hide), ...relativePaths(mount.vmDisk)]
-  if (hidden.length) {
-    // Outside the readonly wrapper so the guest can still create the vmDisk mount points.
-    provider = new ShadowProvider(provider, {
-      shouldShadow: createShadowPathPredicate(hidden.map((p) => `/${p}`)),
-      writeMode: 'tmpfs',
-    })
-  }
-  return provider
-}
-
 async function bindVmDiskDirs(vm: VM, mounts: Record<string, Mount>): Promise<void> {
   const targets = Object.entries(mounts).flatMap(([guestPath, mount]) =>
     relativePaths(mount.vmDisk).map((p) => `${guestPath.replace(/\/+$/, '')}/${p}`))
@@ -248,19 +267,41 @@ done
   if (result.exitCode !== 0) throw new Error(`could not set up VM disk directories: ${result.stderr}`)
 }
 
+type GuestFiles = {
+  readGuestFile(path: string): Promise<Buffer>
+  writeGuestFile(path: string, data: Buffer | Uint8Array | string): Promise<void>
+  once(event: 'exit', listener: () => void): unknown
+}
+
 class GondolinSandbox implements Sandbox {
   readonly id: string
   readonly exited: Promise<void>
   #vm: VM
+  #server: GuestFiles | undefined
+  #isolated: Isolated | undefined
+  #stopping = false
   #ingressUrl: Promise<string> | undefined
 
-  constructor(vm: VM) {
+  constructor(vm: VM, isolated: Isolated | undefined) {
     this.#vm = vm
+    this.#isolated = isolated
     this.id = vm.id
+    this.#server = (vm as unknown as { server?: GuestFiles }).server
     // Gondolin's VM has no exit event of its own, but the server it owns emits
     // one when QEMU ends (Gondolin never restarts it, autoRestart is off).
-    const server = (vm as unknown as { server?: { once(event: 'exit', listener: () => void): unknown } }).server
-    this.exited = new Promise((resolve) => server?.once('exit', () => resolve()))
+    this.exited = new Promise((resolve) => this.#server?.once('exit', () => resolve()))
+    if (isolated) {
+      void this.exited.then(() => {
+        this.#stopping = true
+        isolated.close()
+      })
+      // The guest's mounts fail without it, so the VM is of no use.
+      void isolated.worker.exited.then(() => {
+        if (this.#stopping) return
+        console.warn(`The VFS worker of VM ${this.id} exited. Stopping the VM.`)
+        void this.stop()
+      })
+    }
   }
 
   exec(command: string, options: ExecOptions = {}): SandboxProcess {
@@ -361,11 +402,15 @@ class GondolinSandbox implements Sandbox {
     })
   }
 
+  // With isolation the host's VFS only has placeholders, and Gondolin would
+  // read and write mounted paths there instead of asking the guest.
   async readFile(path: string): Promise<Buffer> {
+    if (this.#isolated && this.#server) return this.#server.readGuestFile(path)
     return this.#vm.fs.readFile(path)
   }
 
   async writeFile(path: string, data: string | Uint8Array): Promise<void> {
+    if (this.#isolated && this.#server) return this.#server.writeGuestFile(path, data)
     await this.#vm.fs.writeFile(path, data)
   }
 
@@ -374,7 +419,9 @@ class GondolinSandbox implements Sandbox {
   }
 
   async stop(): Promise<void> {
+    this.#stopping = true
     await this.#vm.close()
+    this.#isolated?.close()
   }
 }
 

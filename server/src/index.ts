@@ -26,6 +26,7 @@ import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { createVmScheduler } from './sandbox/scheduler.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
+import { checkIsolation } from './sandbox/isolation.ts'
 import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
 import { createStorageUsage } from './storage.ts'
@@ -56,6 +57,7 @@ const homeAssistant = createHomeAssistant({
     listProjects(host).map((p) => p.name).filter((name) => triggers.active(name).length > 0)),
 })
 
+checkIsolation()
 const image = imageDir()
 const vmScheduler = createVmScheduler({
   ...config.vmBudget,

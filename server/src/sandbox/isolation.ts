@@ -226,7 +226,7 @@ export function qemuBwrapArgs(options: { dir: string, image: string, kvm?: boole
 export function workerBwrapArgs(options: { fs: string, mounts: Mount[], node: string }): string[] {
   const prefix = dirname(dirname(options.node))
   const nodeBind = prefix === '/' || prefix === '/usr' || prefix.startsWith('/usr/') ? [] : ['--ro-bind', prefix, prefix]
-  const release = ['server/package.json', 'server/node_modules', 'node_modules'].map((p) => join(RELEASE_ROOT, p))
+  const release = ['server/package.json', 'server/node_modules', 'node_modules', 'vendor/gondolin'].map((p) => join(RELEASE_ROOT, p))
   const mounts = [...options.mounts].sort((a, b) => resolve(a.hostPath).length - resolve(b.hostPath).length)
   return [
     ...COMMON,

@@ -35,7 +35,7 @@ HOBWORK_IMAGE_ARCH=x86_64 images/build.sh
 docker run --rm --platform linux/amd64 -v "$PWD:/repo" -w /repo node:26 \
   sh -euc 'npm i -g pnpm@12.5.1 && pnpm install --frozen-lockfile'
 
-rsync -a --exclude .git --exclude data ./ colossus:hobwork-bench/
+rsync -a --exclude .git --exclude /data ./ colossus:hobwork-bench/
 ```
 
 Do this from a scratch copy of the repo, not the working checkout, because it replaces the Mac `node_modules`. Then run on colossus with the host's Node:

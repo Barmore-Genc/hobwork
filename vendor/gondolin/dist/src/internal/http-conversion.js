@@ -115,7 +115,7 @@ export async function webRequestToInternalHttpRequest(value, options) {
         body,
     };
 }
-export async function webResponseToInternalHttpResponse(value, options) {
+export function webResponseHeadToInternalHttpResponse(value) {
     const headers = responseHeadersToRecord(new Headers(value.headers));
     const raw = value.headers;
     if (typeof raw.getSetCookie === "function") {
@@ -128,19 +128,22 @@ export async function webResponseToInternalHttpResponse(value, options) {
                 headers["set-cookie"] = cookies;
         }
     }
-    const body = Buffer.from(await readBodyLikeWithLimit(value, {
-        maxBodyBytes: options.maxBodyBytes,
-        overflowError: () => new HttpRequestBlockedError(`response body exceeds ${options.maxBodyBytes} bytes`, 502, "Bad Gateway"),
-        invalidError: () => new HttpRequestBlockedError("invalid response body", 502, "Bad Gateway"),
-    }));
     return {
         status: value.status,
         statusText: typeof value.statusText === "string" && value.statusText.length > 0
             ? value.statusText
             : "OK",
         headers,
-        body,
     };
+}
+export async function webResponseToInternalHttpResponse(value, options) {
+    const head = webResponseHeadToInternalHttpResponse(value);
+    const body = Buffer.from(await readBodyLikeWithLimit(value, {
+        maxBodyBytes: options.maxBodyBytes,
+        overflowError: () => new HttpRequestBlockedError(`response body exceeds ${options.maxBodyBytes} bytes`, 502, "Bad Gateway"),
+        invalidError: () => new HttpRequestBlockedError("invalid response body", 502, "Bad Gateway"),
+    }));
+    return { ...head, body };
 }
 function requestHeadersToRecord(headers) {
     const record = {};

@@ -3,8 +3,8 @@
 export const INTERNAL_HOST = 'hobwork.internal'
 
 // The unprivileged user that runs hob code in guests. The image creates it
-// with this ID, and its patched sandboxfs (images/sandboxfs.patch) shows every
-// mounted file as owned by it.
+// with this ID, and the vendored Gondolin's sandboxfs shows every mounted file
+// as owned by it.
 export const GUEST_UID = 1000
 export const GUEST_GID = 1000
 

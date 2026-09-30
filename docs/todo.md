@@ -11,10 +11,6 @@ The principle for the larger items: the host never reads, writes or runs git on 
 
 Sections are in the order to work on them.
 
-### Guest privilege
-
-- **Upstream `sandboxfs`**: the image patches Gondolin's `sandboxfs` (`allow_other`, files owned by uid 1000) and builds Gondolin's guest helpers from source with Zig. Make these options in our Gondolin patch or fork so the image patch can go.
-
 ### Sandbox account
 
 Gondolin's VFS provider runs in the host's Node process and QEMU is its child, both as the `hobwork` user that owns the data dir and `secret.key`. A VFS race or a QEMU escape is then a full compromise. Goal: neither can reach the data dir, `secret.key`, other hobs' files or the host process, on Linux production. macOS dev keeps the in-process sandbox.
@@ -40,7 +36,7 @@ Design:
   - *File ownership for either.* The worker's uid must be stable because workspaces persist between VM runs, so `DynamicUser` (uid released on stop) fits QEMU but not the worker. Use a pool of static accounts (`systemd-sysusers`, for example 64 named `hobwork-sb-N`, hob to slot in the host DB, sharing when hobs outnumber slots) and POSIX default ACLs so `hobwork` and the slot's account can both read and write new files. The mount dirs (`workspaces/`, `builds/`) must leave the `700` data dir, for example `/var/lib/hobwork-vm/<hob>/` with `/var/lib/hobwork-vm` at `711`. Existing workspaces and builds move once on upgrade (builds can be dropped, they are rebuilt on demand).
 - **Order against "Nothing on the host touches guest-writable files".** That section moves file tools, git and migrations into the VM, so the host stops reading workspace files. Doing it first makes the account variant simpler, since the host then needs no access to the workspace dir. The namespace variant does not depend on it.
 
-Gondolin changes. Phases 1 to 3 work without any, through `server/src/sandbox/qemu-namespaced.sh` and the deep imports in `server/src/sandbox/gondolin-internals.ts`. These changes, in our Gondolin patch or a fork, would replace them:
+Gondolin changes. Phases 1 to 3 work without any, through `server/src/sandbox/qemu-namespaced.sh` and the deep imports in `server/src/sandbox/gondolin-internals.ts`. These changes to the vendored Gondolin (`vendor/gondolin`) would replace them:
 
 - `sandbox.qemuArgs` (prepended arguments) and a `spawnQemu(path, args, options)` hook, so the host can add `-sandbox` and start QEMU in a namespace without a shell shim.
 - `vfs.external` (or a `virtioFsSocketPath` the server does not listen on): `SandboxServer` does not open the fs bridge, and the mount list still reaches the guest. Today `VirtioBridge.connect()` unlinks and listens on that path, which would replace the worker's socket. The shim instead rewrites the `virtiofs0` chardev path (the host's own fs bridge listens on an unused path outside QEMU's namespace) and the host passes empty `MemoryProvider`s for the mounts, so the guest gets the right `sandboxfs.bind=` list.
@@ -60,7 +56,6 @@ Left before turning isolation on (`HOBWORK_SANDBOX_ISOLATION=namespaces`, off by
 
 - **Run it on `colossus`**: bubblewrap 0.13.0 is installed. Set `RuntimeDirectory=hobwork` and `HOBWORK_SANDBOX_ISOLATION=namespaces` in the unit, start the host (the start check reports what is missing), then run `HOBWORK_SANDBOX_ISOLATION=namespaces pnpm -C server test:vm` (it includes `isolation.test.ts`), again with `HOBWORK_QEMU_SANDBOX=1`, and `bench:sandbox` with isolation off and on. Only a KVM host shows whether QEMU under `bwrap` needs more than `/dev/kvm` for `-accel kvm`, `microvm` and `-cpu host` (for example `/sys/devices/system/cpu` read-only, which `qemuBwrapArgs` would then bind). So far the isolation tests have only run in Docker on a Mac under emulation, with the `virt` machine.
 - **Memory budget**: every isolated VM adds a Node process (about 100MB RSS, 60MB of it Node itself; loading only the VFS modules of Gondolin saves 6MB) and two small `bwrap` processes. The VM budget in "Resources" counts only guest memory. `hostPid()` returns the outer `bwrap`, so accounting has to read the cgroup or the process tree.
-- **QEMU outside `/usr`**: QEMU's namespace binds only `/usr` and the library directories, so a QEMU installed elsewhere (Nix, `/opt`) does not start. Bind the directory of `qemu-system-*` found on `PATH` if a host needs it.
 
 Open questions:
 
@@ -68,10 +63,6 @@ Open questions:
 - Does `-sandbox on` with `spawn=deny` and `resourcecontrol=deny` hold with KVM, `microvm` and `-cpu host` on `colossus`, in and out of the namespace?
 - Is a kernel bug reachable from an unprivileged user namespace an acceptable remaining risk? A uid switch does not remove it either, so accounts only add same-uid `ptrace` and signal separation and protection against a bug in `bwrap` itself.
 - Should `HOBWORK_QEMU_SANDBOX` default on for Linux, and should `qemu-system-$(uname -m)` follow the guest image manifest instead (Gondolin's own default picks by manifest arch)?
-
-### Smaller items
-
-- `GondolinSandbox.exited` listens on the VM's private `server` for its exit; add a public exit event to our Gondolin patch (with the other Gondolin changes under Sandbox account).
 
 ## Warm VM pool
 

@@ -4,6 +4,24 @@ import type { InternalHttpRequest } from "../internal/http-types.js";
 import { HttpReceiveBuffer, MAX_HTTP_HEADER_BYTES } from "../http/utils.js";
 export { MAX_HTTP_HEADER_BYTES };
 export declare const MAX_HTTP_PIPELINE_BYTES: number;
+/**
+ * Incremental `Transfer-Encoding: chunked` decoder for streamed request bodies.
+ * Unlike `decodeChunkedBodyFromReceiveBuffer` it never holds more than one
+ * framing line in memory.
+ */
+export declare class ChunkedBodyDecoder {
+    private state;
+    private line;
+    private chunkRemaining;
+    private trailerBytes;
+    /** whether the last-chunk and trailer section were consumed */
+    done: boolean;
+    /** decodes `data`, returning body bytes and bytes after the body end */
+    push(data: Buffer): {
+        body: Buffer[];
+        extra: Buffer;
+    };
+}
 export type HttpSession = {
     buffer: HttpReceiveBuffer;
     processing: boolean;
@@ -25,11 +43,15 @@ export type HttpSession = {
         policyPrechecked: boolean;
         bodyMode: "none" | "content-length" | "chunked";
         contentLength: number;
+        /** whether `httpHooks.streamRequestBody` opted this request into streaming */
+        streamBody: boolean;
     };
-    /** active streaming request body state (Content-Length only) */
+    /** active streaming request body state */
     streamingBody?: {
-        /** bytes remaining in the declared Content-Length body in `bytes` */
+        /** bytes remaining in the declared Content-Length body in `bytes` (chunked: unused) */
         remaining: number;
+        /** incremental decoder for chunked bodies (`null` for Content-Length) */
+        chunked: ChunkedBodyDecoder | null;
         /** upstream body stream controller */
         controller: ReadableStreamDefaultController<Uint8Array> | null;
         /** whether the body stream is complete or canceled */

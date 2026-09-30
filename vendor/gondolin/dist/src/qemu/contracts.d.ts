@@ -30,6 +30,14 @@ export type HttpHooks = {
     isIpAllowed?: (info: HttpIpAllowInfo) => Promise<boolean> | boolean;
     /** request hook (may rewrite request or short-circuit with response) */
     onRequest?: HttpOnRequestHook;
+    /**
+     * per-request opt-in to stream the request body (request body is always `null`)
+     *
+     * When this returns `true`, the body reaches `onRequest` and the upstream
+     * fetch as a stream with backpressure to the guest, including chunked
+     * bodies, and `maxHttpBodyBytes` does not apply to it.
+     */
+    streamRequestBody?: (request: Request) => Promise<boolean> | boolean;
     /** response rewrite hook */
     onResponse?: (response: Response, request: Request) => Promise<Response | void> | Response | void;
 };

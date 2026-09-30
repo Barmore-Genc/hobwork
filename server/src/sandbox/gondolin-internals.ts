@@ -6,8 +6,8 @@ import type { VirtualProvider } from '@earendil-works/gondolin'
 // Gondolin does not export its mount router, frame codec or MITM CA loader
 // (`exports` allows only the package root), and the VFS worker needs them to
 // serve the fs socket outside Gondolin's own server. They are imported by
-// file path, which only holds for the pinned version. Upstream asks are in
-// docs/todo.md (Sandbox account).
+// file path, which only holds for the vendored version. The Gondolin changes
+// that would replace this are in docs/todo.md (Sandbox account).
 const PINNED = '0.12.0'
 
 const packageJson = createRequire(import.meta.url).resolve('@earendil-works/gondolin/package.json')

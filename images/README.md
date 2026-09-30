@@ -4,7 +4,7 @@
 
 The image has an unprivileged `agent` user (uid and gid 1000). The host runs hob code as that user (`server/src/guest-vm.ts`), and `/etc/doas.conf` lets it run only `/usr/local/bin/hobwork-broker` as root without a password. The host writes that script at VM start. It is the helper that holds session tokens for the `hobwork` CLI. See "Guest privilege" in `docs/architecture.md`.
 
-Gondolin's `sandboxfs` mounts the VM's host directories without FUSE's `allow_other`, so only root could use them, and reports the host's user as file owner. `sandboxfs.patch` (applied to Gondolin's guest sources) adds `allow_other` and reports uid and gid 1000 for every file. `build.sh` builds all four guest helpers from those sources with a pinned Zig release (0.16.0, checked by SHA-256) and `hobwork.json` points to them (`sandboxdPath` and the others). After upgrading Gondolin, check that the patch still applies.
+The guest helpers come from the vendored Gondolin (`vendor/gondolin/dist/guest`), whose `sandboxfs` mounts the VM's host directories with FUSE's `allow_other` and reports uid and gid 1000 for every file, so the `agent` user can use them. `build.sh` builds all four helpers from those sources with a pinned Zig release (0.16.0, checked by SHA-256) and `hobwork.json` points to them (`sandboxdPath` and the others). The image builder is the vendored Gondolin's too.
 
 ## Building
 
@@ -12,7 +12,7 @@ Gondolin's `sandboxfs` mounts the VM's host directories without FUSE's `allow_ot
 images/build.sh
 ```
 
-This needs only Docker (and network access to `ziglang.org` for the Zig download). It builds for the machine's architecture in a privileged `node:24-alpine` container (the build chroots into the rootfs and mounts `/proc` there) with the Gondolin version pinned in `server/package.json`, and writes the image to `images/build/<arch>/`. The host finds it there, or at `HOBWORK_IMAGE_DIR`.
+This needs only Docker (and network access to `ziglang.org` for the Zig download). It builds for the machine's architecture in a privileged `node:24-alpine` container (the build chroots into the rootfs and mounts `/proc` there) with the vendored Gondolin, and writes the image to `images/build/<arch>/`. The host finds it there, or at `HOBWORK_IMAGE_DIR`.
 
 Rebuild after changing `hobwork.json`, the platform set or `packages/sdk`. The container mounts the whole repo because of `packages/sdk`.
 

@@ -270,7 +270,6 @@ done
 type GuestFiles = {
   readGuestFile(path: string): Promise<Buffer>
   writeGuestFile(path: string, data: Buffer | Uint8Array | string): Promise<void>
-  once(event: 'exit', listener: () => void): unknown
 }
 
 class GondolinSandbox implements Sandbox {
@@ -287,9 +286,7 @@ class GondolinSandbox implements Sandbox {
     this.#isolated = isolated
     this.id = vm.id
     this.#server = (vm as unknown as { server?: GuestFiles }).server
-    // Gondolin's VM has no exit event of its own, but the server it owns emits
-    // one when QEMU ends (Gondolin never restarts it, autoRestart is off).
-    this.exited = new Promise((resolve) => this.#server?.once('exit', () => resolve()))
+    this.exited = vm.exited
     if (isolated) {
       void this.exited.then(() => {
         this.#stopping = true

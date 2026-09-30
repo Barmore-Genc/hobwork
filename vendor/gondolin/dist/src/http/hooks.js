@@ -166,6 +166,7 @@ export function createHttpHooks(options = {}) {
         },
         onRequest,
         onResponse: options.onResponse,
+        streamRequestBody: options.streamRequestBody,
     };
     return { httpHooks, env, allowedHosts, secretManager };
 }

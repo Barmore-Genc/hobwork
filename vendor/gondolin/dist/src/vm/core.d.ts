@@ -55,6 +55,8 @@ export declare class VM {
     readonly id: string;
     /** guest filesystem operations */
     readonly fs: VmFs;
+    /** resolves when the VM process ends, whether stopped or crashed */
+    readonly exited: Promise<void>;
     private readonly autoStart;
     private readonly startTimeoutMs;
     private readonly sessionLabel;

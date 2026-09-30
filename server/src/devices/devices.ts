@@ -316,7 +316,7 @@ export function createDevices(options: {
       connected: registry.connected(device.id),
       lastSeenAt: device.lastSeenAt,
       appVersion: device.appVersion,
-      push: device.push !== null,
+      push: Boolean(apns) && device.push !== null,
       createdAt: device.createdAt,
       ownerAllowed: ownerAllowed(device),
     }
@@ -383,7 +383,7 @@ export function createDevices(options: {
       }
     }
     const offline = socketError ? `${device.name} did not answer (${socketError.message})` : `${device.name} is not connected`
-    if (!apns) throw new DeviceError('unreachable', `${offline}, and push notifications are not set up on this Hobwork host`)
+    if (!apns) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications yet`)
     if (!device.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
     let result
     try {
@@ -535,7 +535,7 @@ export function createDevices(options: {
 
   async function push(waiter: Waiter, offline: string): Promise<void> {
     const { command } = waiter
-    if (!apns) throw new DeviceError('unreachable', `${offline}, and push notifications are not set up on this Hobwork host`)
+    if (!apns) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications yet`)
     const device = getDevice(host.db, command.deviceId)
     if (!device?.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
     waiter.pushed = true

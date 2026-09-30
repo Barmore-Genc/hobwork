@@ -144,7 +144,7 @@ test('hello registers capabilities, push token and connection', async () => {
     connected: true,
     capabilities: ['notifications'],
     appVersion: '1.0 (1)',
-    push: true,
+    push: false,
     lastSeenAt: expect.any(String),
   })
   expect(getDevice(host.db, device.deviceId)?.push).toEqual({ token: 'aabbccddeeff00112233', environment: 'production' })

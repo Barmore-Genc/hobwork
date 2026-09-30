@@ -119,9 +119,18 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 - Spend limits can be passed by one request, since cost is known only afterwards. Estimating a request's cost from `max_tokens` and the model's prices before sending it would close that gap.
 - Tell people when a hob reaches a limit (a notification to their devices), not only in the hob log.
 
-## Checking push notifications on a device
+## Push relay
 
-The host's APNs client is tested against a local HTTP/2 server, and the Apple app with unit tests and `just test-host` (`just test-host-mac` on macOS). Check APNs delivery and the web view sign-in on a real iPhone, and on a Mac with a team-signed build: the macOS app has only run signed ad hoc (`just run-mac local`), which gets no push token, no app group and no data protection keychain.
+APNs only accepts pushes to `dev.bgenc.hobwork` signed with a key of team 63QQLP356Q, so a self-hosted host cannot push to the TestFlight or App Store app, and the team key cannot be shared: it can push to every app of the team and cannot be revoked for one host. Until a relay exists the host sends no pushes (see Push in `docs/architecture.md`), so the iOS app only gets notifications and commands while it is open.
+
+Plan: a small relay service that holds the key, run by the app's publisher.
+
+- **Registration**: the app sends its APNs token and environment to the relay and gets an opaque relay token for that device and host. It sends the relay token in `hello` and `PUT /api/devices/push` instead of the APNs token.
+- **Sending**: the host posts the push (headers it sets today: push type, priority, `apns-id`, collapse ID, expiration) with the relay token to the relay, which forwards it to APNs and answers with APNs' status. Tokens APNs reports as gone are answered the same way as today, so the host forgets them.
+- **End-to-end encryption**: the relay sees notification titles, bodies and command arguments otherwise. At pairing, the app and host agree on a key (sent with the device token exchange, kept in the app group's keychain). The host encrypts the `hobwork` part and the alert text; the push carries only a generic alert and `mutable-content: 1`, and the notification service extension decrypts and shows the real text or runs the command. Every push then goes through the extension, which already handles actions and command pushes.
+- **Abuse**: rate limits per relay token and per sending host, a size limit matching APNs' 4 KB, and hosts registering with the relay (a key per host) so one host can be cut off.
+- **Own key**: a host whose owner builds the app with their own team keeps pushing to APNs directly with `HOBWORK_APNS_KEY_FILE`, `HOBWORK_APNS_KEY_ID`, `HOBWORK_APNS_TEAM_ID` and a topic setting, which come back with the relay.
+- Check APNs delivery end to end on a real iPhone and on a Mac with a team-signed build once pushes are on again. Only the socket paths have run on devices so far.
 
 ## Shared UI components
 

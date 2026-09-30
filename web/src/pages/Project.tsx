@@ -17,6 +17,26 @@ function origin(version: Version): string {
   return `Changed${who}`
 }
 
+function InstallScriptFlag({ installScripts }: { installScripts: Version['installScripts'] }) {
+  const { added, removed } = installScripts
+  if (!added.length && !removed.length) return null
+  return (
+    <div className="mt-3 max-w-prose rounded-md border border-warning/40 bg-warning/8 px-3 py-2 text-sm">
+      <p className="font-semibold">Changed which packages can run code when installed</p>
+      {added.length > 0 && (
+        <p className="mt-1 text-muted">
+          Now allowed: <span className="font-mono text-fg">{added.join(', ')}</span>
+        </p>
+      )}
+      {removed.length > 0 && (
+        <p className="mt-1 text-muted">
+          No longer allowed: <span className="font-mono text-fg">{removed.join(', ')}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err)
 }
@@ -50,6 +70,7 @@ function VersionRow({
         <p className="mt-1 text-sm text-muted">
           {origin(version)}, <time dateTime={version.createdAt} title={exactTime(version.createdAt)}>{timeAgo(version.createdAt)}</time>
         </p>
+        <InstallScriptFlag installScripts={version.installScripts} />
         {!current && (
           <div className="mt-3 sm:hidden">
             <Button onClick={() => onRestore(version)}>Restore this version</Button>

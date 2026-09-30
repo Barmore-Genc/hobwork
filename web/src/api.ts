@@ -19,6 +19,7 @@ export type Version = {
   summary: string
   by: string | null
   restoredFrom: number | null
+  installScripts: { added: string[]; removed: string[] }
   createdAt: string
 }
 

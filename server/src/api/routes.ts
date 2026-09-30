@@ -79,6 +79,7 @@ function versionView(version: Version) {
     summary: version.summary,
     by: version.user ?? version.agent,
     restoredFrom: version.restoredFrom,
+    installScripts: version.installScripts,
     createdAt: version.createdAt,
   }
 }

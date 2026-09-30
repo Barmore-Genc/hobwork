@@ -119,10 +119,3 @@ export type DeviceResponse = { ok: true; result: unknown } | { ok: false; error:
 export function handlerModulePath(handler: string): string {
   return `handlers/${handler.replace(/^\.\//, '').replace(/\.[cm]?[jt]sx?$/, '')}.js`
 }
-
-// Workspace VMs' /v1/db, /v1/ha and /v1/devices refuse calls without the
-// session token of the command that makes them. Runtime VMs have none.
-export function internalHeaders(): Record<string, string> {
-  const session = process.env.HOBWORK_SESSION
-  return session ? { 'content-type': 'application/json', 'x-hobwork-session': session } : { 'content-type': 'application/json' }
-}

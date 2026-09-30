@@ -6,16 +6,18 @@ import { MIN_RELEASE_AGE_MINUTES } from './pipeline/pnpm-settings.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
 import { DEFAULT_RESOURCES, memorySize, resolveResources, type ResourceKind, type ResourceRequest } from './sandbox/budget.ts'
 import { extraDependencies } from './platform.ts'
-import type {
-  EgressBlocked,
-  Interceptor,
-  InternalHandler,
-  Sandbox,
-  SandboxFactory,
-  SandboxOptions,
-  SecretRefused,
-  Secret,
-  VmKind,
+import {
+  GUEST_GID,
+  GUEST_UID,
+  type EgressBlocked,
+  type Interceptor,
+  type InternalHandler,
+  type Sandbox,
+  type SandboxFactory,
+  type SandboxOptions,
+  type SecretRefused,
+  type Secret,
+  type VmKind,
 } from './sandbox/sandbox.ts'
 import type {
   ExecOptions,
@@ -53,6 +55,64 @@ const INSTALL_CLI = [
   `printf '#!/bin/sh\\nHOBWORK_GIT_DIR=${GUEST_GIT_DIR} exec node --disable-warning=ExperimentalWarning ${TOOLS_DIR}/main.ts "$@"\\n' > /usr/local/bin/${TOOL_COMMAND}`,
   `chmod 755 /usr/local/bin/${TOOL_COMMAND}`,
 ].join(' && ')
+
+const BROKER_COMMAND = '/usr/local/bin/hobwork-broker'
+const RUN_COMMAND = '/usr/local/bin/hobwork-run'
+const SESSIONS_DIR = '/run/hobwork/sessions'
+
+// Root-owned entry point of the `hobwork` CLI's helper. The image's doas
+// configuration lets the agent user run exactly this path as root. It starts
+// node with an empty environment, since the caller chooses the environment.
+const BROKER_SCRIPT = `#!/bin/sh
+exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/node --disable-warning=ExperimentalWarning ${CLI_DIR}/broker.ts "$@"
+`
+
+// Every command runs through this as root, which drops to the agent user. The
+// session token of a command goes to a file only root reads, named after the
+// command's process (the `hobwork` helper finds it from a calling process's
+// parents), and out of the environment, so processes cannot read it.
+const RUN_SCRIPT = `#!/bin/sh
+if [ -n "\${HOBWORK_SESSION:-}" ]; then
+  start=$(sed 's/^.*) //' /proc/$$/stat | cut -d ' ' -f 20)
+  (umask 077; printf '%s\\n%s\\n' "$start" "$HOBWORK_SESSION" > ${SESSIONS_DIR}/$$)
+  unset HOBWORK_SESSION
+fi
+export HOME=/home/agent USER=agent LOGNAME=agent
+exec su-exec ${GUEST_UID}:${GUEST_GID} "$@"
+`
+
+// hidepid hides the processes of other users from the agent user, and Yama's
+// ptrace scope stops it from attaching to processes it did not start.
+const GUEST_SETUP = `
+set -e
+mkdir -p ${SESSIONS_DIR}
+chmod 700 /run/hobwork ${SESSIONS_DIR}
+echo 1 > /proc/sys/kernel/yama/ptrace_scope
+mount -o remount,hidepid=2 /proc
+mkdir -p /tmp/.cache /tmp/.config /tmp/.local/share
+chown -R ${GUEST_UID}:${GUEST_GID} /tmp/.cache /tmp/.config /tmp/.local /home/agent
+`
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+// Commands run as the agent user, which has no access to session tokens.
+export function asAgent(command: string): string {
+  return `exec ${RUN_COMMAND} /bin/sh -lc ${shellQuote(command)}`
+}
+
+export async function prepareGuest(sandbox: Sandbox, label: string, scripts: Record<string, string> = {}): Promise<void> {
+  const all = { [RUN_COMMAND]: RUN_SCRIPT, ...scripts }
+  try {
+    for (const [path, content] of Object.entries(all)) await sandbox.writeFile(path, content)
+    const setup = await sandbox.exec(`${GUEST_SETUP}chmod 755 ${Object.keys(all).join(' ')}\n`).result
+    if (setup.exitCode !== 0) throw new Error(`Could not set up the guest user in ${label}: ${setup.stderr}`)
+  } catch (err) {
+    await sandbox.stop()
+    throw err
+  }
+}
 
 // Answered by the workspace environment (the branch DB and Home Assistant);
 // everything else on hobwork.internal goes to the CLI API.
@@ -181,7 +241,7 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
       const output = { stdout: new HeadTailOutput(), stderr: new HeadTailOutput() }
       running++
       try {
-        const result = await sandbox.exec(command, {
+        const result = await sandbox.exec(asAgent(command), {
           cwd: guestCwd(cwd),
           timeoutMs,
           signal,
@@ -198,7 +258,7 @@ function execVm(sandbox: Sandbox): Omit<InteractiveWorkspaceVm, 'stop'> & { busy
       }
     },
     spawn(command, { cwd, env, pty, onData }) {
-      const proc = sandbox.spawn(command, { cwd: guestCwd(cwd), env, pty, onData })
+      const proc = sandbox.spawn(asAgent(command), { cwd: guestCwd(cwd), env, pty, onData })
       running++
       const result = proc.result
         .then((r) => ({ exitCode: exitCode(r) }))
@@ -257,7 +317,7 @@ export function workspaceVmBackend(
           if (ENVIRONMENT_PATHS.has(new URL(request.url).pathname)) {
             if (!hasSession?.(workspace, request.headers.get(SESSION_HEADER) ?? '')) {
               return Response.json(
-                { error: 'This only works in commands started over SSH or with the bash tool, which set HOBWORK_SESSION' },
+                { error: 'This only works in commands started over SSH or with the bash tool' },
                 { status: 401 },
               )
             }
@@ -270,6 +330,10 @@ export function workspaceVmBackend(
       await environments?.stop?.(workspace)
       throw err
     }
+    await prepareGuest(sandbox, label, { [BROKER_COMMAND]: BROKER_SCRIPT }).catch(async (err: unknown) => {
+      await environments?.stop?.(workspace)
+      throw err
+    })
     const cli = await sandbox.exec(INSTALL_CLI).result.catch((err: unknown) => err as Error)
     if (cli instanceof Error || cli.exitCode !== 0) {
       await sandbox.stop()
@@ -319,6 +383,12 @@ export function pipelineVmBackend(options: GuestVmOptions): { start: StartPipeli
         mounts: { ...base.mounts, [ICONS_DIR]: { hostPath: HOST_ICONS_DIR, readonly: true } },
       })
       running.add(sandbox)
+      try {
+        await prepareGuest(sandbox, kind)
+      } catch (err) {
+        running.delete(sandbox)
+        throw err
+      }
       return {
         ...execVm(sandbox),
         iconsCommand: `node ${ICONS_DIR}/main.ts`,

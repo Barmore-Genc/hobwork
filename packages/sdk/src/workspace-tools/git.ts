@@ -77,7 +77,7 @@ function run(args: string[], options: { cwd: string; input?: string; maxBytes?: 
 }
 
 function sessionArgs(): string[] {
-  const token = process.env.HOBWORK_SESSION
+  const token = process.env.HOBWORK_TOOL_SESSION
   return token ? ['-c', `http.extraHeader=x-hobwork-session: ${token}`] : []
 }
 

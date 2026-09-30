@@ -1,0 +1,45 @@
+--- src/sandboxfs/main.zig	2026-09-29 18:28:33
++++ src/sandboxfs/main.zig	2026-09-29 18:28:44
+@@ -5,6 +5,11 @@
+ const posix = sandboxd.posix;
+ const log = std.log.scoped(.sandboxfs);
+ 
++// Hobwork: every file shows up owned by the unprivileged guest user (uid and gid
++// 1000 in the image), which can reach the mount because of allow_other.
++const guest_uid: u32 = 1000;
++const guest_gid: u32 = 1000;
++
+ const FUSE_ROOT_ID: u64 = 1;
+ const MAX_RPC_DATA = 60 * 1024;
+ 
+@@ -1090,7 +1095,7 @@
+ }
+ 
+ fn mountFuse(allocator: std.mem.Allocator, fuse_fd: posix.fd_t, mount_point: []const u8) !void {
+-    const data = try std.fmt.allocPrint(allocator, "fd={d},rootmode=40000,user_id=0,group_id=0,default_permissions", .{fuse_fd});
++    const data = try std.fmt.allocPrint(allocator, "fd={d},rootmode=40000,user_id=0,group_id=0,allow_other,default_permissions", .{fuse_fd});
+     defer allocator.free(data);
+     const data_z = try makeZ(allocator, data);
+     defer allocator.free(data_z);
+@@ -1552,8 +1557,8 @@
+     const ctime_ms = getMapU64(attr_map, "ctime_ms") orelse 0;
+     const mode = getMapU32(attr_map, "mode") orelse 0;
+     const nlink = getMapU32(attr_map, "nlink") orelse 1;
+-    const uid = getMapU32(attr_map, "uid") orelse 0;
+-    const gid = getMapU32(attr_map, "gid") orelse 0;
++    const uid: u32 = guest_uid;
++    const gid: u32 = guest_gid;
+     const rdev = getMapU32(attr_map, "rdev") orelse 0;
+     const blksize = getMapU32(attr_map, "blksize") orelse 4096;
+ 
+@@ -1622,8 +1627,8 @@
+         .ctimensec = 0,
+         .mode = 0o40755,
+         .nlink = 2,
+-        .uid = 0,
+-        .gid = 0,
++        .uid = guest_uid,
++        .gid = guest_gid,
+         .rdev = 0,
+         .blksize = 4096,
+         .padding = 0,

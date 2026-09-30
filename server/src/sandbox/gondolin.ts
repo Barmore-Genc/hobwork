@@ -12,6 +12,8 @@ import {
 } from '@earendil-works/gondolin'
 import type { VirtualProvider } from '@earendil-works/gondolin'
 import {
+  GUEST_GID,
+  GUEST_UID,
   INTERNAL_HOST,
   type ExecOptions,
   type ExecResult,
@@ -234,6 +236,7 @@ i=0
 for target in "$@"; do
   i=$((i + 1))
   mkdir -p "/var/lib/hobwork/vm-disk/$i" "$target"
+  chown ${GUEST_UID}:${GUEST_GID} "/var/lib/hobwork/vm-disk/$i"
   mount --bind "/var/lib/hobwork/vm-disk/$i" "$target"
 done
 `

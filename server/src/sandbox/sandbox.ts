@@ -2,6 +2,12 @@
 // leave the host: the sandbox answers them with `SandboxOptions.internal`.
 export const INTERNAL_HOST = 'hobwork.internal'
 
+// The unprivileged user that runs hob code in guests. The image creates it
+// with this ID, and its patched sandboxfs (images/sandboxfs.patch) shows every
+// mounted file as owned by it.
+export const GUEST_UID = 1000
+export const GUEST_GID = 1000
+
 export type Mount = {
   hostPath: string
   readonly?: boolean

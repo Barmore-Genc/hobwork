@@ -1,5 +1,6 @@
 import type { Device, DeviceInfo } from '../devices.ts'
-import { internalHeaders, type DeviceRequest, type DeviceResponse } from './protocol.ts'
+import { internalPost } from './internal-fetch.ts'
+import type { DeviceRequest, DeviceResponse } from './protocol.ts'
 
 // The runner and the handler bundle each have their own copy of this class, so
 // instanceof checks a brand instead of the prototype chain.
@@ -67,11 +68,7 @@ export function createDeviceClient(send: DeviceSend): { device(name: string): De
 
 export function httpDeviceSender(baseUrl: string, invocation?: () => number | undefined): DeviceSend {
   return async (request) => {
-    const res = await fetch(new URL('/v1/devices', baseUrl), {
-      method: 'POST',
-      headers: internalHeaders(),
-      body: JSON.stringify({ ...request, invocation: invocation?.() }),
-    })
+    const res = await internalPost(baseUrl, '/v1/devices', JSON.stringify({ ...request, invocation: invocation?.() }))
     const body = (await res.json().catch(() => undefined)) as DeviceResponse | { error?: string } | undefined
     if (body && 'ok' in body) return body
     throw new DeviceError('host_error', `The host could not handle the device call: HTTP ${res.status}${body?.error ? ` ${body.error}` : ''}`)

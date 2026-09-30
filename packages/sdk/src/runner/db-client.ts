@@ -1,5 +1,6 @@
 import type { Db, Row, SqlParams, SqlValue, Statement, StatementResult } from '../index.ts'
-import { internalHeaders, type DbRequest, type DbResponse, type WireResult, type WireStatement, type WireValue } from './protocol.ts'
+import { internalPost } from './internal-fetch.ts'
+import type { DbRequest, DbResponse, WireResult, WireStatement, WireValue } from './protocol.ts'
 
 export class DbError extends Error {
   code?: string
@@ -75,11 +76,7 @@ export function createDbClient(send: (request: DbRequest) => Promise<DbResponse>
 
 export function httpDbSender(baseUrl: string, invocation?: () => number | undefined) {
   return async (request: DbRequest): Promise<DbResponse> => {
-    const res = await fetch(new URL('/v1/db', baseUrl), {
-      method: 'POST',
-      headers: internalHeaders(),
-      body: JSON.stringify({ ...request, invocation: invocation?.() }),
-    })
+    const res = await internalPost(baseUrl, '/v1/db', JSON.stringify({ ...request, invocation: invocation?.() }))
     const body = (await res.json().catch(() => undefined)) as DbResponse | { error?: string } | undefined
     if (body && 'ok' in body) return body
     throw new DbError(`The host could not run the query: HTTP ${res.status}${body?.error ? ` ${body.error}` : ''}`)

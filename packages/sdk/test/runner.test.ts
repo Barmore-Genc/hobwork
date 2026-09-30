@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -266,4 +266,15 @@ test('fails an invocation whose response body is too large', async () => {
   expect(big.ok).toBe(false)
   if (!big.ok) expect(big.error.message).toBe('The response body is larger than 24MB')
   expect((await invoke('src/limit.ts')).ok).toBe(true)
+})
+
+// Runtime VMs mount only src/runner, so a value import from outside it fails
+// there, although it works on the host.
+test('the runner imports only types from outside its directory', () => {
+  const dir = join(import.meta.dirname, '../src/runner')
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.ts'))) {
+    const source = readFileSync(join(dir, file), 'utf8')
+    const imports = [...source.matchAll(/^import (?!type )[^']*?from '(\.\.\/[^']+)'/gm)].map((m) => m[1])
+    expect(imports, file).toEqual([])
+  }
 })

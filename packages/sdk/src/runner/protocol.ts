@@ -5,6 +5,10 @@
 import type { HaServiceTarget, HaStatesFilter } from '../homeassistant.ts'
 import type { Invocation, LogLevel } from '../index.ts'
 
+// Here rather than in homeassistant.ts, since runtime VMs get the runner
+// directory without the rest of the SDK and only type imports may leave it.
+export const HA_MAX_RETRIES = 5
+
 // Inside the guest. Nothing else listens there.
 export const RUNNER_PORT = 8080
 

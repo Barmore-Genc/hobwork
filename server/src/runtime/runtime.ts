@@ -23,10 +23,11 @@ import { haResponse, type HaAccess } from '../homeassistant/internal.ts'
 import { getHaServices } from '../homeassistant/services.ts'
 import type { TriggerRegistry } from '../homeassistant/triggers.ts'
 import { repoPath, type Host } from '../host.ts'
+import { asAgent, prepareGuest } from '../guest-vm.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
 import { DEFAULT_BRANCH, getProject, listProjects, ProjectError } from '../projects.ts'
 import { branchHead } from '../repo.ts'
-import type { Sandbox, SandboxFactory } from '../sandbox/sandbox.ts'
+import { GUEST_GID, GUEST_UID, type Sandbox, type SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
 import type { AiGateway } from '../ai/gateway.ts'
 import { listVersions } from '../versions.ts'
@@ -483,6 +484,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       ...DEFAULT_RESOURCES.runtime,
       memoryMb: options.memory ? memoryMbOf(options.memory) : DEFAULT_RESOURCES.runtime.memoryMb,
     })
+    const label = deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`
     const sandbox = await createSandbox({
       image: options.image,
       budget: { kind: deployed.branch === undefined ? 'runtime' : 'preview', project },
@@ -510,13 +512,15 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         ),
       onSecretRefused: ({ hostname, message }) =>
         event(project, 'warn', 'secret', `Refused an outgoing request to ${hostname}: ${message}`, deployed.branch),
-      label: deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`,
+      label,
     })
     const tail: string[] = []
     const token = randomBytes(32).toString('hex')
     try {
       await sandbox.writeFile(RUNNER_TOKEN_FILE, token)
-      const proc = sandbox.exec(`node ${RUNNER_DIR}/main.ts`, {
+      // The runner runs as the agent user and has to delete the file before it loads handlers.
+      await prepareGuest(sandbox, label, {}, `chown ${GUEST_UID}:${GUEST_GID} ${RUNNER_TOKEN_FILE}\nchmod 600 ${RUNNER_TOKEN_FILE}\n`)
+      const proc = sandbox.exec(asAgent(`node ${RUNNER_DIR}/main.ts`), {
         env: {
           HOBWORK_APP_DIR: APP_DIR,
           HOBWORK_RUNNER_PORT: String(RUNNER_PORT),

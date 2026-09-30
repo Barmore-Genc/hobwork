@@ -34,7 +34,7 @@ export type HaStatesFilter = {
 
 export const HA_DEFAULT_TIMEOUT_MS = 10_000
 export const HA_MAX_TIMEOUT_MS = 60_000
-export const HA_MAX_RETRIES = 5
+export { HA_MAX_RETRIES } from './runner/protocol.ts'
 
 export type HaCallOptions = {
   // How long the host waits for Home Assistant to answer, at most HA_MAX_TIMEOUT_MS.

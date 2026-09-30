@@ -6,7 +6,7 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 
-# Zig builds Gondolin's guest helpers (see sandboxfs.patch); the release is pinned by checksum.
+# Zig builds the guest helpers from vendor/gondolin; the release is pinned by checksum.
 zig_version=0.16.0
 arch=${HOBWORK_IMAGE_ARCH:-$(uname -m)}
 case "$arch" in
@@ -15,21 +15,16 @@ case "$arch" in
   *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 
-gondolin_version=$(sed -n 's/.*"@earendil-works\/gondolin": "\(.*\)".*/\1/p' "$here/../server/package.json")
-if [ -z "$gondolin_version" ]; then
-  echo 'could not read the @earendil-works/gondolin version from server/package.json' >&2
-  exit 1
-fi
-
 out="build/$arch"
 rm -rf "${here:?}/$out" "$here/build/icu-data" "$here/build/fonts" "$here/build/helpers"
 
 # --privileged: postBuild commands chroot into the rootfs and mount /proc there.
-# The repo root is mounted because the image includes packages/sdk.
+# The repo root is mounted because the image includes packages/sdk and the
+# builder comes from vendor/gondolin.
 docker run --rm --privileged --platform "$platform" \
   -v "$here/..:/repo" -w /repo/images \
   node:24-alpine3.23 sh -euc "
-    apk add --no-cache lz4 cpio e2fsprogs bash xz patch >/dev/null
+    apk add --no-cache lz4 cpio e2fsprogs bash xz >/dev/null
     # The Gondolin builder extracts packages without apk, so icu-data-en (a nodejs
     # dependency) would overwrite icu-data-full. Copying it in after packages keeps
     # every locale available to Intl.
@@ -43,19 +38,19 @@ docker run --rm --privileged --platform "$platform" \
     mkdir -p /tmp/inter build/fonts
     tar -xzf /tmp/font-inter-*.apk -C /tmp/inter usr/share/fonts/inter/InterVariable.ttf 2>/dev/null
     cp /tmp/inter/usr/share/fonts/inter/InterVariable.ttf build/fonts/
-    npm install --global --silent --prefix /opt/gondolin @earendil-works/gondolin@$gondolin_version
-    # Gondolin mounts the workspace FUSE filesystem without allow_other, so only
-    # root could use it. The patch lets the unprivileged guest user in.
+    # A copy, so the builder's dependencies install for the container's platform.
+    cp -R /repo/vendor/gondolin /opt/gondolin
+    rm -rf /opt/gondolin/node_modules
+    (cd /opt/gondolin && npm install --silent --omit=optional --ignore-scripts)
     wget -q -O /tmp/zig.tar.xz https://ziglang.org/download/$zig_version/zig-$arch-linux-$zig_version.tar.xz
     echo '$zig_sha256  /tmp/zig.tar.xz' | sha256sum -c - >/dev/null
     mkdir /opt/zig
     tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
-    cp -R /opt/gondolin/lib/node_modules/@earendil-works/gondolin/dist/guest /tmp/guest
-    (cd /tmp/guest && patch -p0 < /repo/images/sandboxfs.patch)
+    cp -R /opt/gondolin/dist/guest /tmp/guest
     (cd /tmp/guest && /opt/zig/zig build -Doptimize=ReleaseSmall -Dtarget=$arch-linux-musl)
     mkdir -p build/helpers
     cp /tmp/guest/zig-out/bin/* build/helpers/
-    /opt/gondolin/bin/gondolin build --arch $arch --config hobwork.json --output $out
+    node /opt/gondolin/dist/bin/gondolin.js build --arch $arch --config hobwork.json --output $out
     chown -R $(id -u):$(id -g) $out build/icu-data build/fonts build/helpers
   "
 

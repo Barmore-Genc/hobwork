@@ -320,6 +320,8 @@ export class VM {
                 ? "snapshot"
                 : undefined,
         });
+        // Gondolin never restarts QEMU (autoRestart is off), so the first exit is final.
+        this.exited = new Promise((resolve) => this.server.once("exit", () => resolve()));
         this.fs = new VmFsController({
             start: () => this.start(),
             exec: (command, fsOptions = {}) => this.exec(command, fsOptions),

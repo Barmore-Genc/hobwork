@@ -9,6 +9,7 @@ export declare function webRequestToInternalHttpRequest(value: RequestLike, opti
     allowBody: boolean;
     maxBodyBytes: number | null;
 }): Promise<InternalHttpRequest>;
+export declare function webResponseHeadToInternalHttpResponse(value: Pick<ResponseLike, "status" | "statusText" | "headers">): Omit<InternalHttpResponse, "body">;
 export declare function webResponseToInternalHttpResponse(value: ResponseLike, options: {
     maxBodyBytes: number | null;
 }): Promise<InternalHttpResponse>;

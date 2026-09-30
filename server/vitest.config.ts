@@ -4,10 +4,12 @@ const INTEGRATION = 'src/**/*.integration.test.ts'
 
 export default defineConfig({
   test: {
+    // Vendored, so outside node_modules, but it should load as Node loads it.
+    server: { deps: { external: [/\/vendor\/gondolin\//] } },
     projects: [
-      { test: { name: 'unit', include: ['src/**/*.test.ts'], exclude: [INTEGRATION] } },
+      { extends: true, test: { name: 'unit', include: ['src/**/*.test.ts'], exclude: [INTEGRATION] } },
       // The integration tests share the entities of one dev Home Assistant.
-      { test: { name: 'integration', include: [INTEGRATION], fileParallelism: false } },
+      { extends: true, test: { name: 'integration', include: [INTEGRATION], fileParallelism: false } },
     ],
   },
 })

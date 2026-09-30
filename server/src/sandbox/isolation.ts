@@ -1,7 +1,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { machine, tmpdir } from 'node:os'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { loadAssetManifest } from '@earendil-works/gondolin'
 import type { Mount } from './sandbox.ts'
@@ -24,21 +24,25 @@ export function isolationMode(
 // Every process started through bwrap gets its own user, mount, PID, network,
 // IPC and UTS namespace, an empty root and none of the host's environment
 // (which holds HOBWORK_SECRET_KEY and OIDC credentials).
+const COMMON_PATH = '/usr/local/bin:/usr/bin:/bin'
+
 const COMMON = [
   '--unshare-all',
   '--die-with-parent',
   '--new-session',
   '--cap-drop', 'ALL',
   '--clearenv',
-  '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin',
+  '--setenv', 'PATH', COMMON_PATH,
   '--proc', '/proc',
   '--dev', '/dev',
   '--tmpfs', '/tmp',
 ]
 
+const SYSTEM_DIRS = ['/usr', '/bin', '/sbin', '/lib', '/lib32', '/lib64']
+
 function systemBinds(): string[] {
   const args: string[] = []
-  for (const path of ['/usr', '/bin', '/sbin', '/lib', '/lib32', '/lib64']) {
+  for (const path of SYSTEM_DIRS) {
     let stat
     try {
       stat = lstatSync(path)
@@ -182,11 +186,35 @@ function hasKvm(): boolean {
   }
 }
 
-export function qemuBwrapArgs(options: { dir: string, image: string, kvm?: boolean }): string[] {
+export function findQemu(pathVar = process.env.PATH ?? ''): string | undefined {
+  for (const dir of pathVar.split(delimiter)) {
+    if (!dir) continue
+    const path = join(dir, `qemu-system-${machine()}`)
+    try {
+      accessSync(path, constants.X_OK)
+      return realpathSync(path)
+    } catch {}
+  }
+  return undefined
+}
+
+// A QEMU outside the system directories (Nix, /opt) needs its install prefix,
+// where it also finds firmware and libraries, and its bin directory on PATH,
+// since bwrap looks up the command in the namespace's environment.
+function qemuInstallBinds(qemu: string | undefined): string[] {
+  if (!qemu || SYSTEM_DIRS.some((dir) => qemu.startsWith(`${dir}/`))) return []
+  const bin = dirname(qemu)
+  // Nix links every library from another store path.
+  const prefix = qemu.startsWith('/nix/store/') ? '/nix/store' : dirname(bin)
+  return ['--ro-bind', prefix, prefix, '--setenv', 'PATH', `${bin}:${COMMON_PATH}`]
+}
+
+export function qemuBwrapArgs(options: { dir: string, image: string, kvm?: boolean, qemu?: string }): string[] {
   const kvm = options.kvm ?? hasKvm()
   return [
     ...COMMON,
     ...systemBinds(),
+    ...qemuInstallBinds('qemu' in options ? options.qemu : findQemu()),
     ...(kvm ? ['--dev-bind', '/dev/kvm', '/dev/kvm'] : []),
     ...bindAtBothPaths('--ro-bind', options.image),
     // For qemu-sandboxed.sh.

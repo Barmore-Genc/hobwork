@@ -44,6 +44,8 @@ export type CreateHttpHooksOptions = {
     blockInternalRanges?: boolean;
     /** custom request policy callback */
     isRequestAllowed?: HttpHooks["isRequestAllowed"];
+    /** request body streaming opt-in */
+    streamRequestBody?: HttpHooks["streamRequestBody"];
     /** custom ip policy callback */
     isIpAllowed?: HttpHooks["isIpAllowed"];
     /** request hook */

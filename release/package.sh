@@ -36,7 +36,7 @@ commit=$(git -C "$root" rev-parse HEAD)
 # host reads everything listed here at runtime (packages/sdk is mounted into
 # VMs, images/platform decides which dependencies the guest image provides).
 git -C "$root" archive --format=tar HEAD \
-  package.json pnpm-lock.yaml pnpm-workspace.yaml patches \
+  package.json pnpm-lock.yaml pnpm-workspace.yaml vendor/gondolin \
   server/package.json server/src server/migrations \
   packages/sdk packages/theme templates/project images/platform \
   web/package.json |
@@ -47,7 +47,7 @@ cp -R "$root/images/build/$arch" "$stage/images/build/$arch"
 
 # Installed in the staged tree rather than with `pnpm deploy`, because the
 # server imports packages/sdk and packages/theme by relative path.
-(cd "$stage" && pnpm install --frozen-lockfile --prod --filter @hobwork/server --filter @hobwork/sdk --filter @hobwork/theme)
+(cd "$stage" && pnpm install --frozen-lockfile --prod --filter @hobwork/server --filter @hobwork/sdk --filter @hobwork/theme --filter @earendil-works/gondolin)
 
 # pnpm links packages with relative symlinks. An absolute one would point into
 # this build machine after extraction.

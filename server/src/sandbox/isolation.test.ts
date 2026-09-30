@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { machine, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { createGondolinSandbox } from './gondolin.ts'
 import { imageDir } from './image.ts'
 import type { Sandbox } from './sandbox.ts'
-import { createVmDir, isolationAvailableForTests, isolationMode, qemuBwrapArgs, runtimeRoot, workerBwrapArgs } from './isolation.ts'
+import { createVmDir, findQemu, isolationAvailableForTests, isolationMode, qemuBwrapArgs, runtimeRoot, workerBwrapArgs } from './isolation.ts'
 
 const dirs: string[] = []
 afterAll(() => {
@@ -41,11 +41,30 @@ test('VM directories are private and removed with their contents', () => {
 
 test('QEMU gets a clean environment and only the image and its own directory', () => {
   const image = tempDir()
-  const args = qemuBwrapArgs({ dir: '/run/hobwork/vm/v1', image, kvm: true })
+  const args = qemuBwrapArgs({ dir: '/run/hobwork/vm/v1', image, kvm: true, qemu: '/usr/bin/qemu-system-x86_64' })
   expect(args).toEqual(expect.arrayContaining(['--unshare-all', '--die-with-parent', '--new-session', '--clearenv']))
   const binds = args.flatMap((arg, i) => (arg === '--bind' || arg === '--dev-bind' ? [args[i + 2]] : []))
   expect(binds).toEqual(['/dev/kvm', '/run/hobwork/vm/v1'])
-  expect(qemuBwrapArgs({ dir: '/run/hobwork/vm/v1', image, kvm: false })).not.toContain('/dev/kvm')
+  expect(args.filter((arg) => arg === '--setenv' || arg === 'PATH')).toEqual(['--setenv', 'PATH'])
+  expect(qemuBwrapArgs({ dir: '/run/hobwork/vm/v1', image, kvm: false, qemu: undefined })).not.toContain('/dev/kvm')
+})
+
+test('QEMU installed outside the system directories gets its prefix and bin directory', () => {
+  const image = tempDir()
+  const setup = (qemu: string) => qemuBwrapArgs({ dir: '/run/hobwork/vm/v1', image, qemu }).join(' ')
+  expect(setup('/opt/qemu/bin/qemu-system-x86_64')).toContain('--ro-bind /opt/qemu /opt/qemu --setenv PATH /opt/qemu/bin:/usr/local/bin:/usr/bin:/bin')
+  expect(setup('/nix/store/abc-qemu-10.1.0/bin/qemu-system-x86_64')).toContain('--ro-bind /nix/store /nix/store --setenv PATH /nix/store/abc-qemu-10.1.0/bin:/usr/local/bin:/usr/bin:/bin')
+})
+
+test('QEMU is found on PATH by its real path', () => {
+  const opt = tempDir()
+  const links = tempDir()
+  const binary = join(opt, `qemu-system-${machine()}`)
+  writeFileSync(binary, '')
+  chmodSync(binary, 0o755)
+  symlinkSync(binary, join(links, `qemu-system-${machine()}`))
+  expect(findQemu(`/nonexistent:${links}`)).toBe(realpathSync(binary))
+  expect(findQemu('/nonexistent')).toBeUndefined()
 })
 
 test('the VFS worker gets a clean environment and only its socket and mounts writable', () => {

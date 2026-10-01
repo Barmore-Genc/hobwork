@@ -44,6 +44,7 @@ targets:
     sources:
       - path: Hobwork
         excludes:
+          - Alarms
           - Shared/Alarms
           - Shared/ScreenTime
           - Shared/Health
@@ -51,6 +52,8 @@ targets:
           - Capabilities/Health
           - Views/ScreenTimeSettings.swift
           - Views/HealthSettings.swift
+      - path: Hobwork/Alarms
+        destinationFilters: [iOS]
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -184,6 +187,7 @@ targets:
     sources:
       - path: Widgets
       - path: Hobwork/Shared/Alarms/HobworkAlarmMetadata.swift
+      - path: Hobwork/Alarms/AlarmControlIntent.swift
     info:
       path: Widgets/Info.plist
       properties:

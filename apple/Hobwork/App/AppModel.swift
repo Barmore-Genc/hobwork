@@ -22,6 +22,15 @@ final class AppModel {
     #if os(iOS)
         /// Shown over the web view after scanning a tag or opening a tag link.
         var nfcNotice: String?
+        var sheet: Sheet?
+        /// Shown on the alarms screen when a tapped alarms command failed.
+        var alarmProblem: AlarmFollowUp.Problem?
+
+        enum Sheet: String, Identifiable {
+            case settings, alarms
+
+            var id: String { rawValue }
+        }
     #endif
 
     @ObservationIgnored let web = WebController()
@@ -277,7 +286,21 @@ final class AppModel {
     /// A tapped command push. The extension already ran background commands; the command
     /// log answers those again, which is harmless since the host keeps the first result.
     private func run(_ command: DeviceCommand) async {
-        guard let runner, let api, let outcome = await runner.run(command) else { return }
+        guard let runner, let api else { return }
+        #if os(iOS)
+            // The person just tapped the prompt, so this is the moment to ask.
+            if command.capability == AlarmsCapability.capability, !alarms.isAuthorized {
+                await requestAlarms()
+            }
+        #endif
+        let outcome = await runner.run(command)
+        #if os(iOS)
+            if let followUp = AlarmFollowUp.after(command, outcome: outcome, deviceName: DeviceModel.name) {
+                alarmProblem = followUp.problem
+                sheet = .alarms
+            }
+        #endif
+        guard let outcome else { return }
         try? await api.send(DeviceCallResult(id: command.id, outcome: outcome.result))
     }
 }

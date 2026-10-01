@@ -18,7 +18,7 @@ Every `just` recipe regenerates the project first. Targets:
 - `Hobwork`: the app, for iOS and macOS.
 - `HobworkNotificationService`: notification service extension, for iOS and macOS. It opens sealed relay pushes and answers the relay's proof and renewal pushes (see Push). Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
 - `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
-- `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers.
+- `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers, with Pause, Resume, Cancel and Stop buttons. The buttons run `AlarmControlIntent` (`Hobwork/Alarms/AlarmControlIntent.swift`), a `LiveActivityIntent` that is part of both the app and the extension, as Apple requires; iOS runs it in the app, which AlarmKit authorized.
 - `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
 - `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it.
 
@@ -105,13 +105,13 @@ The app sends only what a person explicitly chose to share. It sends no location
 
 `Hobwork/Capabilities/NFC/NFCIntents.swift` has two App Intents for tags with other links, which iOS opens in Safari: "Scan NFC Tag" opens the app and scans (Action Button, Control Center, Siri), and "Send Tag to Hobwork" sends a link to the host in the background, for a Shortcuts personal automation "When I tap an NFC tag". See "Tags with other links" in `docs/architecture.md`.
 
-A command arrives over the socket, by a command push the notification service extension runs, or by a prompt push (NFC, alarms) that the app runs when tapped. AlarmKit authorizes the app and the extension separately, and the extension cannot ask, so alarm commands always run in the app. The command log in the app group makes each command run once and answers repeats with the first result.
+A command arrives over the socket, by a command push the notification service extension runs, or by a prompt push (NFC, alarms) that the app runs when tapped. AlarmKit authorizes the app and the extension separately, and the extension cannot ask, so alarm commands always run in the app. A tapped alarms command asks for AlarmKit authorization first when it is not set up, then opens the Alarms and Timers screen (`Hobwork/Alarms/`, also under Settings), which lists Hobwork's alarms and timers from AlarmManager with their titles from the app group, and lets people pause, resume, stop and cancel them. When the command fails, the screen opens with an alert that says why. AlarmKit does not tell the app when a timer ends, so the screen reads the countdown from the timer's Live Activity. The command log in the app group makes each command run once and answers repeats with the first result.
 
-Unit tests cover argument checks, command dedup and expiry, result, event and sample encoding, Screen Time intervals and the monitor's actions, alarm schedules, NFC links and records, and the notification summaries. What only a device can show:
+Unit tests cover argument checks, command dedup and expiry, result, event and sample encoding, Screen Time intervals and the monitor's actions, alarm schedules, the alarms screen's rows and what follows a tapped alarms command, NFC links and records, and the notification summaries. What only a device can show:
 
 - Screen Time: the Family Controls prompt, the app picker, shields from ManagedSettings, and that DeviceActivity calls the monitor extension at interval start, end and threshold (limits, schedules, the end of timed blocks).
 - Commands run by the notification service extension: whether ManagedSettings, DeviceActivity and HealthKit calls work from it at runtime (AlarmKit does not: on an iPad the extension's authorization stays `notDetermined`), how long they take against the 30 second limit, and that the summary replaces the text.
-- AlarmKit alarms and timers ringing, and the timer's Live Activity.
+- AlarmKit alarms and timers ringing, the timer's Live Activity and its buttons, the authorization prompt after tapping an alarm prompt push, and the countdown on the Alarms and Timers screen (read from `Activity.activities`).
 - NFC reading and writing (the simulator has no NFC), universal links, and iOS background tag reading.
 - The Scan NFC Tag and Send Tag to Hobwork actions from Shortcuts, the Action Button and a "When I tap an NFC tag" automation.
 - Health: authorization, queries while locked (`locked`) and background delivery waking the app.

@@ -45,6 +45,7 @@ protocol AlarmScheduling: AnyObject {
 final class AlarmsCapability: CapabilityHandler {
     nonisolated static let capability = "alarms"
     static let maxTimerSeconds = 24 * 60 * 60
+    nonisolated static let recordsFile = SharedFile<[AlarmRecord]>(name: "alarms.json", empty: [])
 
     private let scheduler: any AlarmScheduling
     private let records: SharedFile<[AlarmRecord]>
@@ -52,7 +53,7 @@ final class AlarmsCapability: CapabilityHandler {
 
     init(
         scheduler: any AlarmScheduling,
-        records: SharedFile<[AlarmRecord]> = SharedFile(name: "alarms.json", empty: []),
+        records: SharedFile<[AlarmRecord]> = AlarmsCapability.recordsFile,
         now: @escaping () -> Date = { Date() }
     ) {
         self.scheduler = scheduler

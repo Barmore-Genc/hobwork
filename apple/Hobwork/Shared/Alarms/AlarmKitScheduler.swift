@@ -27,9 +27,13 @@ final class AlarmKitScheduler: AlarmScheduling {
         let metadata = HobworkAlarmMetadata(title: alarm.title)
         let configuration: AlarmManager.AlarmConfiguration<HobworkAlarmMetadata>
         if let seconds = alarm.seconds {
+            let title = LocalizedStringResource(stringLiteral: alarm.title)
+            let pause = AlarmButton(text: "Pause", textColor: .white, systemImageName: "pause.fill")
+            let resume = AlarmButton(text: "Resume", textColor: .white, systemImageName: "play.fill")
             let presentation = AlarmPresentation(
                 alert: Self.alert(title: alarm.title),
-                countdown: AlarmPresentation.Countdown(title: LocalizedStringResource(stringLiteral: alarm.title))
+                countdown: AlarmPresentation.Countdown(title: title, pauseButton: pause),
+                paused: AlarmPresentation.Paused(title: title, resumeButton: resume)
             )
             configuration = .timer(
                 duration: TimeInterval(seconds),

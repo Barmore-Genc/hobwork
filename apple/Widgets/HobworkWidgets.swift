@@ -1,5 +1,6 @@
 import ActivityKit
 import AlarmKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -15,17 +16,20 @@ struct HobworkWidgets: WidgetBundle {
 struct AlarmLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AlarmAttributes<HobworkAlarmMetadata>.self) { context in
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(context.attributes.metadata?.title ?? "Hobwork")
-                        .font(.headline)
-                    AlarmStatusText(state: context.state)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(context.attributes.metadata?.title ?? "Hobwork")
+                            .font(.headline)
+                        AlarmStatusText(state: context.state)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    AlarmCountdown(state: context.state)
+                        .font(.title.monospacedDigit())
                 }
-                Spacer()
-                AlarmCountdown(state: context.state)
-                    .font(.title.monospacedDigit())
+                AlarmControls(state: context.state, tint: context.attributes.tintColor)
             }
             .padding()
         } dynamicIsland: { context in
@@ -38,6 +42,9 @@ struct AlarmLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     AlarmCountdown(state: context.state)
                         .font(.title2.monospacedDigit())
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    AlarmControls(state: context.state, tint: context.attributes.tintColor)
                 }
             } compactLeading: {
                 Image(systemName: "timer")
@@ -68,6 +75,39 @@ private struct AlarmCountdown: View {
         @unknown default:
             EmptyView()
         }
+    }
+}
+
+private struct AlarmControls: View {
+    let state: AlarmPresentationState
+    let tint: Color
+
+    var body: some View {
+        HStack {
+            switch state.mode {
+            case .countdown:
+                control(.pause, "Pause", systemImage: "pause.fill", tint: tint)
+                control(.cancel, "Cancel", systemImage: "xmark", tint: .gray)
+            case .paused:
+                control(.resume, "Resume", systemImage: "play.fill", tint: tint)
+                control(.cancel, "Cancel", systemImage: "xmark", tint: .gray)
+            case .alert:
+                control(.stop, "Stop", systemImage: "stop.fill", tint: .red)
+            @unknown default:
+                EmptyView()
+            }
+        }
+        .font(.headline)
+    }
+
+    private func control(_ action: AlarmControl, _ title: LocalizedStringKey, systemImage: String, tint: Color) -> some View {
+        Button(intent: AlarmControlIntent(action, alarmID: state.alarmID)) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .tint(tint)
     }
 }
 

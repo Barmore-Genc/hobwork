@@ -20,6 +20,8 @@ HOBWORK_RELAY_APNS_KEY_FILE=AuthKey_XXXXXXXXXX.p8 HOBWORK_RELAY_APNS_KEY_ID=XXXX
 
 ## Docker
 
+CI builds the image and pushes it to `ghcr.io/barmore-genc/hobwork-relay` (`main`, version tags and `sha-<commit>`). To build and run it yourself:
+
 ```sh
 docker build -t hobwork-relay relay/
 docker run -d --name hobwork-relay -p 127.0.0.1:8080:8080 \

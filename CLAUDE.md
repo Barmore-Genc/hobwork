@@ -11,6 +11,7 @@ Design source of truth: `docs/architecture.md` (what the system is) and `docs/to
 - `vendor/gondolin/`: Gondolin 0.12.0 vendored from npm and changed in place (`vendor/gondolin/CHANGES.md`). The host imports it, and `images/build.sh` builds the guest helpers and the image with it.
 - `templates/project/`: template for new projects (not a workspace package).
 - `apple/`: the Apple app for iOS and macOS (`dev.bgenc.hobwork`, SwiftUI, iOS 26 and macOS 26, Swift 6). XcodeGen generates `Hobwork.xcodeproj` from `project.yml` (the project is gitignored); `just build|test|run` (iOS) and `just build-mac|test-mac|run-mac` inside `apple/`. Not part of the pnpm workspace. See `apple/README.md`.
+- `relay/`: the push relay (Rust, axum, rusqlite), which sends APNs pushes for every host. Not part of the pnpm workspace; `cargo test`, `cargo clippy --all-targets` and `cargo fmt` inside `relay/`. See `relay/README.md`.
 - `images/`: Gondolin guest image build config (Alpine, Node, pnpm, git, platform dependency set in `images/platform/`). Not part of the pnpm workspace. See `images/README.md`.
 - `server/src/sandbox/`: the `Sandbox` interface and its Gondolin implementation. Nothing else in the host imports Gondolin. `server/src/guest-vm.ts` builds the workspace and pipeline VM backends on it.
 - `server/src/ssh/`: SSH gateway into workspace VMs and agent SSH keys. The `hobwork` CLI it offers lives in `packages/sdk/src/cli/` and is mounted into workspace VMs; `server/src/workspace-api.ts` answers it.

@@ -26,6 +26,20 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
+  relay:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
   package:
     needs: check
     if: github.event_name != 'pull_request'

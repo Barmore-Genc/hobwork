@@ -86,15 +86,13 @@ The relay and the app are trusted; hosts are not, since anyone can run one. A ho
 
 ### Relay
 
-- `relay/` in this repo, outside the pnpm workspace: Rust with axum, tokio and rusqlite, APNs over HTTP/2 with an ES256 JWT, sandbox and production connections side by side, storage behind a small trait. It ships as one binary and a Dockerfile and runs at `relay.hobwork.bgenc.dev` in Docker on a VPS. `server/src/devices/apns.ts` moves into it.
-- **Registration**: the app sends its APNs token and environment, and gets a registration ID and secret, kept in the app group keychain. One APNs token belongs to one registration.
-- **Ownership proof**: before a registration or token change takes effect, the relay sends an alert push with `mutable-content` and a nonce, which the app returns with its registration secret within 5 minutes (it retries with a fresh nonce). Registration runs in the foreground, so the app's `willPresent` handles the push and presents nothing. If the person has left the app, the notification service extension handles it and hides it with the filtering entitlement, or shows "Notifications from Hobwork are set up" without it. Background pushes are not used here, since iOS can delay or drop them.
-- **App Attest, opt-in**: a registration made with an attestation becomes attested, and every later call on it needs an assertion from that key; the relay tracks the counter to refuse replays. The relay checks the certificate chain to Apple's App Attest root, the nonce, the app ID `63QQLP356Q.dev.bgenc.hobwork` and the environment. Devices without App Attest (old Macs, the simulator) register without it. An unattested request for a token that an attested registration holds is refused.
-- **Grants**: the app allows a host's sidecar key to push to it and gets a grant ID, useless without that key's private half. One grant per pairing; a new grant for a pairing revokes the old one. The app revokes a grant when it unpairs, signs out or gets 401 for its device token. When APNs answers 410, the registration is dead, its grants answer `gone`, and the host forgets them.
-- **Expiry**: grants expire after 30 days. The app or its notification service extension renews a grant after 15, while it still holds the pairing and the host did not last answer 401 for its device token. From day 15, if a grant has not been renewed, the relay sends a renewal push once a day at a random time: a hidden alert with the filtering entitlement, a background push without it.
-- **Sending**: the sidecar signs each request with its Ed25519 key over a timestamp and nonce, and the relay refuses replays. The body is `{ kind: "alert" | "command" | "prompt", priority, expiration, collapseId, keyId, ciphertext }`, with a random collapse ID. The relay builds the APNs payload itself (a generic "Hobwork" alert, `mutable-content: 1` and the ciphertext) and answers with APNs' status. There is no queue: a failed send is `push_failed`, and hobs that need retries do them.
-- **Abuse**: rate limits per grant and per registration, with a ceiling per device; a per-IP limit on registrations (each costs a push) and grants; a size limit on the ciphertext.
-- **Logs**: client IPs as an HMAC with a key replaced every 7 days, so an address can be followed within a week but not after. Logs keep the hashed IP, registration or grant ID, result and APNs status, never tokens, and are deleted after 14 days. The App Store privacy label and a privacy policy for the relay say what it keeps.
+Built in `relay/` (Push relay in `docs/architecture.md`). Left:
+
+- Deploy it at `relay.hobwork.bgenc.dev` in Docker on a VPS behind a TLS proxy, with the team's APNs key, and set `HOBWORK_RELAY_TRUSTED_PROXIES`. Keep Docker's own logs small (`--log-opt max-size`), even though the relay logs no IPs or tokens.
+- App Attest keys belong to the app's bundle ID, so the notification service extension probably cannot make assertions, and an attested registration then cannot renew grants from the extension. Check on a device; if so, renewals from the extension need another proof (for example the renewal push's grant list, signed by the relay).
+- Check an attestation from a real device against the relay: the tests use their own CA, since Apple publishes no sample attestation.
+- `server/src/devices/apns.ts` is ported to `relay/src/apns.rs`; delete it from the host with the sidecar work.
+- The App Store privacy label, from `relay/PRIVACY.md`.
 
 ### Push sidecar
 

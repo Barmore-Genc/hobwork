@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,7 +17,17 @@ function tempDir(): string {
   return dir
 }
 
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const machine = execFileSync('uname', ['-m'], { encoding: 'utf8' }).trim()
+const watchedMachine = machine === 'arm64' ? 'aarch64' : machine
 
 // Prints its arguments one per line, then what it gets on fd 3.
 function fakeCommand(dir: string, name: string, readsFd3 = false) {
@@ -25,11 +36,11 @@ function fakeCommand(dir: string, name: string, readsFd3 = false) {
   chmodSync(path, 0o755)
 }
 
-test('uses Gondolin\'s QEMU unless the sandbox or isolation is on', () => {
-  expect(qemuPath({}, 'linux')).toBeUndefined()
-  expect(qemuPath({ HOBWORK_QEMU_SANDBOX: '0' }, 'linux')).toBeUndefined()
-  expect(qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'off' }, 'linux')).toBeUndefined()
-  expect(qemuPath({}, 'darwin')).toBeUndefined()
+test('runs QEMU through the watcher unless isolation is on', () => {
+  expect(qemuPath({}, 'linux')).toMatch(/qemu-watched\.sh$/)
+  expect(qemuPath({ HOBWORK_QEMU_SANDBOX: '1' }, 'linux')).toMatch(/qemu-watched\.sh$/)
+  expect(qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'off' }, 'linux')).toMatch(/qemu-watched\.sh$/)
+  expect(qemuPath({}, 'darwin')).toMatch(/qemu-watched\.sh$/)
   expect(qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')).toMatch(/qemu-namespaced\.sh$/)
   expect(qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces', HOBWORK_QEMU_SANDBOX: '1' }, 'linux')).toMatch(/qemu-namespaced\.sh$/)
 })
@@ -39,13 +50,37 @@ test('refuses the sandbox and isolation off Linux', () => {
   expect(() => qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'darwin')).toThrow('needs Linux')
 })
 
-test('the wrapper adds the seccomp filter and keeps Gondolin\'s arguments', () => {
-  const path = qemuPath({ HOBWORK_QEMU_SANDBOX: '1' }, 'linux')!
+test('the watcher starts plain QEMU with Gondolin\'s arguments', () => {
   const dir = tempDir()
-  fakeCommand(dir, `qemu-system-${machine}`)
-  const out = execFileSync(path, ['-m', '1G', '-append', 'a b'], {
+  fakeCommand(dir, `qemu-system-${watchedMachine}`)
+  const out = execFileSync(qemuPath({}, 'linux'), ['-m', '1G', '-append', 'a b'], {
     encoding: 'utf8',
     env: { PATH: `${dir}:${process.env.PATH}` },
+  })
+  expect(out.split('\n').slice(0, -1)).toEqual(['-m', '1G', '-append', 'a b'])
+})
+
+test('the watcher kills QEMU when the host dies', async () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, `qemu-system-${watchedMachine}`), '#!/bin/sh\nexec sleep 60\n')
+  chmodSync(join(dir, `qemu-system-${watchedMachine}`), 0o755)
+  const host = spawn('sh', ['-c', `"$0" & echo $!; wait`, qemuPath({}, 'linux')], {
+    env: { PATH: `${dir}:${process.env.PATH}` },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  const [line] = await once(host.stdout, 'data') as [Buffer]
+  const qemu = Number(line.toString().trim())
+  expect(alive(qemu)).toBe(true)
+  host.kill('SIGKILL')
+  await expect.poll(() => alive(qemu), { timeout: 5000, interval: 100 }).toBe(false)
+})
+
+test('the watcher adds the seccomp filter and keeps Gondolin\'s arguments', () => {
+  const dir = tempDir()
+  fakeCommand(dir, `qemu-system-${machine}`)
+  const out = execFileSync(qemuPath({ HOBWORK_QEMU_SANDBOX: '1' }, 'linux'), ['-m', '1G', '-append', 'a b'], {
+    encoding: 'utf8',
+    env: { PATH: `${dir}:${process.env.PATH}`, HOBWORK_QEMU_SANDBOX: '1' },
   })
   expect(out.split('\n').slice(0, -1)).toEqual([
     '-sandbox',
@@ -58,7 +93,7 @@ test('the wrapper adds the seccomp filter and keeps Gondolin\'s arguments', () =
 })
 
 test('the namespace wrapper starts QEMU through bwrap with the VM\'s options and the worker\'s fs socket', () => {
-  const path = qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')!
+  const path = qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')
   const bin = tempDir()
   fakeCommand(bin, 'bwrap', true)
   const vm = join(tempDir(), 'v1')
@@ -77,7 +112,7 @@ test('the namespace wrapper starts QEMU through bwrap with the VM\'s options and
 })
 
 test('the namespace wrapper refuses a command line without the control socket', () => {
-  const path = qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')!
+  const path = qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')
   const bin = tempDir()
   fakeCommand(bin, 'bwrap')
   fakeCommand(bin, `qemu-system-${machine}`)

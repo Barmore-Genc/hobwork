@@ -1,3 +1,5 @@
+import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -6,8 +8,18 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { createGondolinSandbox } from './gondolin.ts'
 import { imageDir, imageExists } from './image.ts'
+import { isolationMode } from './isolation.ts'
 import type { OutputChunk, Sandbox, SandboxOptions } from './sandbox.ts'
 import { systemEnv } from './system-env.ts'
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Boots real VMs, so it only runs with HOBWORK_VM_TESTS=1 (`pnpm test:vm`).
 describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeout: 60_000 }, () => {
@@ -24,6 +36,27 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     const dir = mkdtempSync(join(tmpdir(), 'hobwork-sandbox-test-'))
     dirs.push(dir)
     return dir
+  }
+
+  // Starts a VM in another Node process, then SIGKILLs that process so
+  // Gondolin's exit hook cannot stop the VM. Returns QEMU's PID.
+  async function startInDyingHost(options: { killWatcher?: boolean } = {}): Promise<number> {
+    const script = `
+      const { createGondolinSandbox } = await import(${JSON.stringify(join(import.meta.dirname, 'gondolin.ts'))})
+      const s = await createGondolinSandbox({ image: ${JSON.stringify(image)}, memory: '512M' })
+      console.log(s.hostPid())
+      setInterval(() => {}, 1000)
+    `
+    const host = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const [line] = await once(host.stdout, 'data') as [Buffer]
+    const qemu = Number(line.toString().trim())
+    if (options.killWatcher) {
+      const watchers = execFileSync('pgrep', ['-P', String(qemu)], { encoding: 'utf8' }).trim().split('\n')
+      for (const pid of watchers) process.kill(Number(pid), 'SIGKILL')
+    }
+    host.kill('SIGKILL')
+    await once(host, 'exit')
+    return qemu
   }
 
   async function start(options: Omit<SandboxOptions, 'image'>): Promise<Sandbox> {
@@ -353,6 +386,18 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     await s.stop()
     expect(s.hostPid()).toBeNull()
     await s.exited
+  })
+
+  test('QEMU exits when the host dies', async () => {
+    const qemu = await startInDyingHost()
+    await expect.poll(() => alive(qemu), { timeout: 5000, interval: 100 }).toBe(false)
+  })
+
+  // In namespaces, bwrap's --die-with-parent ends QEMU in place of the watcher.
+  test.skipIf(isolationMode() === 'namespaces')('the guest resets itself when the host dies and QEMU outlives it', async () => {
+    const qemu = await startInDyingHost({ killWatcher: true })
+    expect(alive(qemu)).toBe(true)
+    await expect.poll(() => alive(qemu), { timeout: 30_000, interval: 500 }).toBe(false)
   })
 
   test('exited resolves when the VM process dies without stop', async () => {

@@ -620,15 +620,31 @@ fn openVirtioPort() !posix.fd_t {
     }
 }
 
+/// QEMU connects to the host's control socket once and never reconnects, so
+/// a closed port means the host is gone. The VM resets, which ends QEMU
+/// (it runs with -no-reboot), instead of running on without a host.
+const host_gone_reset_ms: i64 = 10_000;
+
+fn resetVm() noreturn {
+    log.err("host gone for {}ms, resetting", .{host_gone_reset_ms});
+    std.os.linux.sync();
+    _ = std.os.linux.reboot(.MAGIC1, .MAGIC2, .RESTART, null);
+    std.process.exit(1);
+}
+
 fn waitForVirtioData(virtio_fd: posix.fd_t) void {
+    const deadline = milliTimestamp() + host_gone_reset_ms;
     while (true) {
+        const remaining = deadline - milliTimestamp();
+        if (remaining <= 0) resetVm();
+
         var pollfds: [1]posix.pollfd = .{.{
             .fd = virtio_fd,
             .events = posix.POLL.IN,
             .revents = 0,
         }};
 
-        const res = posix.poll(pollfds[0..], -1) catch return;
+        const res = posix.poll(pollfds[0..], @intCast(remaining)) catch return;
         if (res <= 0) continue;
 
         const revents = pollfds[0].revents;

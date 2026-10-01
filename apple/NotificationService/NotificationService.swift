@@ -29,7 +29,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 content.userInfo[OpenedPush.repeatedKey] = id
                 deliver(content)
             } catch {
-                // Without the filtering entitlement the relay's own text shows.
+                // The extension cannot drop a push, so the relay's own text shows.
                 deliver(request.content)
             }
         case let .proof(nonce):

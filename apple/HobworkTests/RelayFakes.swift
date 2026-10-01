@@ -132,7 +132,7 @@ final class FakeRelay: RelayTransport, @unchecked Sendable {
             }
             return (200, .object([
                 "id": .string(id), "status": .string(status(registration)), "attested": .bool(registration.attested),
-                "filtering": .bool(false), "grants": .array(grants),
+                "grants": .array(grants),
             ]), nil)
         case ("PUT", []):
             guard let token = body["token"]?.stringValue else { return error(400, "bad_request") }

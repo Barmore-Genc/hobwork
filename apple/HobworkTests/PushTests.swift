@@ -241,7 +241,7 @@ struct RelayClientTests {
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(try body(request) == json(#"""
-        {"token":"abcd","environment":"sandbox","filtering":false,"attestation":{"keyId":"a2V5","object":"b2Jq","challenge":"ch"}}
+        {"token":"abcd","environment":"sandbox","attestation":{"keyId":"a2V5","object":"b2Jq","challenge":"ch"}}
         """#))
     }
 
@@ -277,7 +277,7 @@ struct RelayClientTests {
 
     @Test func assertsOverAnEmptyBodyForGet() async throws {
         let transport = RecordingTransport()
-        transport.answer = json(#"{"id":"reg1","status":"active","attested":true,"filtering":false,"environment":"sandbox","grants":[{"id":"g1","pairing":"p1","expiresAt":5}]}"#)
+        transport.answer = json(#"{"id":"reg1","status":"active","attested":true,"environment":"sandbox","grants":[{"id":"g1","pairing":"p1","expiresAt":5}]}"#)
         let attest = FakeAttest()
         let relay = RelayClient(transport: transport, asserter: attest, gate: SerialGate())
         let info = try await relay.registration(RelayAuth(id: "reg1", secret: "s", attestKeyId: "k"))

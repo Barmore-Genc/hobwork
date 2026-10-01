@@ -122,7 +122,7 @@ extension Notifier: UNUserNotificationCenterDelegate {
     }
 
     /// The extension marks a push that repeats a notification this device already showed.
-    /// Without the filtering entitlement it cannot hide it, but the app can while open.
+    /// The extension cannot hide a notification, but the app can while open.
     nonisolated static func presentation(for userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions {
         if userInfo[OpenedPush.repeatedKey] != nil { return [] }
         return [.banner, .list, .sound]

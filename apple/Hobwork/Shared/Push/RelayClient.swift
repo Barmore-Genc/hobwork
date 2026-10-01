@@ -134,7 +134,6 @@ struct RelayClient: Sendable {
         struct Body: Encodable {
             var token: String
             var environment: PushEnvironment
-            var filtering = false
             var attestation: RelayAttestation?
         }
         let body = Body(token: token, environment: environment, attestation: attestation)
@@ -149,7 +148,6 @@ struct RelayClient: Sendable {
         struct Body: Encodable {
             var token: String
             var environment: PushEnvironment
-            var filtering = false
         }
         return try await status(method: "PUT", path: "/v1/registrations/\(auth.id)", body: Body(token: token, environment: environment), auth: auth)
     }

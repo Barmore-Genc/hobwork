@@ -127,7 +127,7 @@ Pushes go through the push relay at `https://relay.bgenc.dev` (`RelayClient.buil
 - **Grants**: the host sends its push keys in the token exchange answer and in the `push` message after every `hello`. The app uses push with a host only when its `relay` is the built-in URL. Per pairing it keeps a random pairing ID, an X25519 key pair, the host's keys and a grant for the host's signing key, made once the registration is active and replaced when the signing key changes. The host gets `{ grant, key }` in `hello` and with `PUT /api/devices/push`, and `{ grant: null }` when push is off for it. Grants with less than 15 days left are renewed when the app starts or comes to the foreground, and when a renewal push (a background push) lists them.
 - **Opening**: the extension finds the pairing by grant, opens the push, and rebuilds the notification from the sealed `aps` with the sealed `hobwork` in `userInfo`, so commands, actions and taps work as with unsealed pushes. A push that does not open, has expired, was sent more than 5 minutes ahead of the device's clock, or repeats a notification or command already handled, including over the socket, keeps the relay's text. The app hides repeats while it is in the foreground.
 
-Without the filtering entitlement the extension cannot hide a push, so the proof push shows "Notifications from Hobwork are set up." once per token, and dropped pushes show the relay's generic text.
+The extension cannot hide a push, so the proof push shows "Notifications from Hobwork are set up." once per token, and dropped pushes show the relay's generic text.
 
 ## Push in the simulator
 

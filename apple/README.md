@@ -16,7 +16,7 @@ open Hobwork.xcodeproj
 Every `just` recipe regenerates the project first. Targets:
 
 - `Hobwork`: the app, for iOS and macOS.
-- `HobworkNotificationService`: notification service extension, for iOS and macOS. Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
+- `HobworkNotificationService`: notification service extension, for iOS and macOS. It opens sealed relay pushes and answers the relay's proof and renewal pushes (see Push). Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
 - `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
 - `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers.
 - `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
@@ -26,20 +26,20 @@ Sources in `Hobwork/Shared/` are compiled into the app and the notification serv
 
 The `Hobwork` scheme builds for both platforms from one target. macOS 26 has no AlarmKit or Core NFC, ManagedSettings and most of DeviceActivity are unavailable there, and HealthKit has no data on a Mac (`HKHealthStore.isHealthDataAvailable()` is false), so `project.yml` compiles the alarms, Screen Time, NFC and Health sources for iOS only (`destinationFilters`) and the code around them checks `#if os(iOS)`. The macOS app reports `notifications` and `focus` in `hello`. It has one window and a Settings window (⌘,), keeps running with the window closed so the socket stays open, and reconnects when the Mac wakes.
 
-State shared with the extensions lives in the app group `group.dev.bgenc.hobwork`: JSON files for command IDs already run (1 day), Screen Time app sets and rules, Focus labels, Health sharing and anchors, and alarm titles. Device credentials are in the Keychain under the app group's access group; items from earlier versions move there on the first launch.
+State shared with the extensions lives in the app group `group.dev.bgenc.hobwork`: JSON files for command IDs already run (1 day), notification and command IDs already handled (1 day), the last proof nonce from the relay, Screen Time app sets and rules, Focus labels, Health sharing and anchors, and alarm titles. Device credentials, the relay registration and each pairing's push keys and grant are in the Keychain under the app group's access group; items from earlier versions move there on the first launch.
 
 ## Entitlements and build settings
 
 | Target | Entitlements |
 | --- | --- |
-| Hobwork | Push, App Groups, HealthKit with background delivery, NFC tag reading, Family Controls, Associated Domains (optional) |
+| Hobwork | Push, App Attest, App Groups, HealthKit with background delivery, NFC tag reading, Family Controls, Associated Domains (optional) |
 | HobworkNotificationService | App Groups, HealthKit, Family Controls |
 | HobworkDeviceActivityMonitor | App Groups, Family Controls |
 | HobworkWidgets | App Groups |
-| Hobwork (macOS) | Push, App Sandbox with outgoing connections, App Groups |
+| Hobwork (macOS) | Push, App Attest, App Sandbox with outgoing connections, App Groups |
 | HobworkNotificationService (macOS) | App Sandbox with outgoing connections, App Groups |
 
-The macOS targets use the `-macOS` files (`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`) and the hardened runtime.
+The App Attest entitlement says `development`; TestFlight and App Store builds use the production environment whatever it says. The macOS targets use the `-macOS` files (`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`) and the hardened runtime.
 
 Two build settings pick the iOS entitlements files:
 
@@ -117,6 +117,17 @@ Unit tests cover argument checks, command dedup and expiry, result, event and sa
 - Health: authorization, queries while locked (`locked`) and background delivery waking the app.
 - The Focus filter running when a Focus turns on and off, on iOS and macOS.
 - On macOS with team signing: the push token, pushes with actions and command pushes through the notification service extension, and the credentials in the app group's keychain access group.
+- Relay pushes: App Attest registration and assertions (and whether a Mac supports them), the proof push reaching the extension and the app, renewal background pushes waking the app, sealed pushes opened by the extension on iOS and macOS, and that the extension cannot make assertions for the app's key.
+
+## Push
+
+Pushes go through the push relay at `https://relay.bgenc.dev` (`RelayClient.builtInURL`), as "Hosts and apps on the relay" in `docs/architecture.md` describes. The code is in `Hobwork/Shared/Push/` (relay client, App Attest, sealing, storage, opening pushes) and `Hobwork/Push/PushCoordinator.swift` (the app's registration and grants).
+
+- **Registration**: when an APNs token arrives, the app creates or updates the device's one relay registration, attested with App Attest where `DCAppAttestService` is supported (not in the simulator, maybe not on a Mac) and without it otherwise. Requests of an attested registration carry an assertion and go one at a time. The relay answers with an ownership proof push: the extension writes its nonce to the app group and, for a registration without App Attest, sends it to the relay itself. App Attest keys belong to the app's bundle ID, so for an attested registration the app sends the nonce. It waits up to 3 minutes and asks for another proof push every 30 seconds. A registration whose token is gone registers the token again, and one the relay no longer knows starts over.
+- **Grants**: the host sends its push keys in the token exchange answer and in the `push` message after every `hello`. The app uses push with a host only when its `relay` is the built-in URL. Per pairing it keeps a random pairing ID, an X25519 key pair, the host's keys and a grant for the host's signing key, made once the registration is active and replaced when the signing key changes. The host gets `{ grant, key }` in `hello` and with `PUT /api/devices/push`, and `{ grant: null }` when push is off for it. Grants with less than 15 days left are renewed when the app starts or comes to the foreground, and when a renewal push (a background push) lists them.
+- **Opening**: the extension finds the pairing by grant, opens the push, and rebuilds the notification from the sealed `aps` with the sealed `hobwork` in `userInfo`, so commands, actions and taps work as with unsealed pushes. A push that does not open, has expired, was sent more than 5 minutes ahead of the device's clock, or repeats a notification or command already handled, including over the socket, keeps the relay's text. The app hides repeats while it is in the foreground.
+
+Without the filtering entitlement the extension cannot hide a push, so the proof push shows "Notifications from Hobwork are set up." once per token, and dropped pushes show the relay's generic text.
 
 ## Push in the simulator
 
@@ -129,4 +140,4 @@ just push path/to/other.apns
 
 `push/actions.apns` has the payload the host sends: title and body in `aps.alert`, `category: "hobwork.<id>"` with `mutable-content: 1`, and `hobwork: { id, project, actions }`. Long-press the notification to see the actions. `push/timer.apns` is a command push (the extension runs it once the app is paired) and `push/nfc.apns` a prompt push for an NFC read that runs when tapped. Tapping one sends `{ capability: "notifications", name: "action", data: { id, action } }` to the host, over the socket when connected and with `POST /api/devices/events` otherwise. Tapping the notification itself opens the hob in the app.
 
-The macOS app has no simulator; pushes to it go through APNs. The host sends no pushes until the push relay exists ("Push relay" in `docs/todo.md`), so real pushes can't be tested yet. Debug builds register with the sandbox environment, release builds with production.
+These payloads are unsealed, which the extension still handles. Sealed pushes need a grant from the relay. The macOS app has no simulator; pushes to it go through APNs and the relay. Debug builds register with the sandbox environment and App Attest's development environment, release builds with production.

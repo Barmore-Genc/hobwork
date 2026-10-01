@@ -12,6 +12,8 @@ import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
 import { branchFileReader } from './files.ts'
 import { createDevices } from './devices/devices.ts'
+import { loadPushKeys } from './devices/push/keys.ts'
+import { createRelayPush } from './devices/push/relay.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
 import { backfillHaEvents, backfillHaServices } from './homeassistant/services.ts'
@@ -48,6 +50,7 @@ const aiConfig = { models: config.aiModels, catalog: openRouterCatalog() }
 const ai = createAiGateway(host, aiConfig)
 const devices = createDevices({
   host,
+  ...(config.push ? { relay: createRelayPush({ url: config.push.relayUrl, keys: loadPushKeys(config.push.keyDir) }) } : {}),
   allowlist: config.allowlist,
   publicUrl: config.publicUrl,
   triggers: async (project) => (await runtime.config(project)).config.triggers,

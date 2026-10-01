@@ -1,6 +1,3 @@
-import { generateKeyPairSync } from 'node:crypto'
-import { createServer, type Http2Server, type IncomingHttpHeaders } from 'node:http2'
-import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { DeviceEvent } from '../../../packages/sdk/src/devices.ts'
@@ -9,28 +6,26 @@ import { createProject } from '../projects.ts'
 import { queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, TEST_PUBLIC_URL } from '../test-web.ts'
-import { createApns, type Apns } from './apns.ts'
 import { COMMANDS } from './commands.ts'
 import { createDevices, type DeviceTrigger, type Devices } from './devices.ts'
 import { DeviceError } from './registry.ts'
 import { COMMAND_TTL_MS, getCommand, recordHello, type Push } from './store.ts'
+import { createRelayPush } from './push/relay.ts'
 import { pairDevice } from './test-devices.ts'
+import { startFakeRelay, testPushKeys } from './test-relay.ts'
 
 vi.setConfig({ testTimeout: 15_000 })
 
 type Message = Record<string, unknown>
-type Received = { headers: IncomingHttpHeaders; body: string }
 type Triggers = Record<string, { device?: DeviceTrigger }>
 
-const PUSH: Push = { token: 'a1b2c3d4e5f60718', environment: 'sandbox' }
 const ALL = ['notifications', 'alarms', 'screenTime', 'focus', 'nfc', 'health']
 
 let host: ReturnType<typeof createTestHost>
 let app: Awaited<ReturnType<typeof startTestApp>>
 let cookie: string
-let apnsServer: Http2Server
-let received: Received[]
-let apns: Apns
+let relay: Awaited<ReturnType<typeof startFakeRelay>>
+let received: Awaited<ReturnType<typeof startFakeRelay>>['received']
 let devices: Devices
 let offset: number
 let triggers: Record<string, Triggers>
@@ -39,31 +34,16 @@ let invoked: { project: string; name: string; payload: DeviceEvent }[]
 beforeEach(async () => {
   host = createTestHost()
   cookie = signedIn(host).cookie
-  received = []
   offset = 0
   invoked = []
   triggers = {}
-  apnsServer = createServer((req, res) => {
-    let body = ''
-    req.on('data', (chunk: Buffer) => (body += chunk))
-    req.on('end', () => {
-      received.push({ headers: req.headers, body })
-      res.writeHead(200).end()
-    })
-  })
-  await new Promise<void>((resolve) => apnsServer.listen(0, '127.0.0.1', resolve))
-  const origin = `http://127.0.0.1:${(apnsServer.address() as AddressInfo).port}`
+  const keys = testPushKeys()
+  relay = await startFakeRelay(keys)
+  received = relay.received
   const now = () => Date.now() + offset
-  apns = createApns({
-    key: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey,
-    keyId: 'KEY1234567',
-    teamId: 'TEAM123456',
-    origins: { sandbox: origin, production: origin },
-    now,
-  })
   devices = createDevices({
     host,
-    apns,
+    relay: createRelayPush({ url: relay.url, keys, now }),
     publicUrl: TEST_PUBLIC_URL,
     waitMs: { background: 400, foreground: 800 },
     socketFallbackMs: 150,
@@ -81,7 +61,7 @@ beforeEach(async () => {
 afterEach(async () => {
   devices.close()
   await app.close()
-  await new Promise<void>((resolve) => apnsServer.close(() => resolve()))
+  await relay.close()
   host.dispose()
 })
 
@@ -99,7 +79,7 @@ async function phone(options: { push?: Push | null; name?: string; capabilities?
   recordHello(host.db, device.deviceId, {
     appVersion: '1.0',
     capabilities: options.capabilities ?? ALL,
-    push: options.push === undefined ? PUSH : options.push,
+    push: options.push === undefined ? relay.appPush(`grant-${options.name ?? 'kaan-iphone'}`) : options.push,
   })
   return device
 }
@@ -164,9 +144,12 @@ function postEvent(token: string, body: unknown) {
   })
 }
 
+// The relay request and the payload the app gets after opening it.
 function pushed(index = 0) {
-  const { headers, body } = received[index]!
-  return { headers, payload: JSON.parse(body) as { aps: Record<string, unknown>; hobwork: { project: string; command: Message } } }
+  const { body, plaintext } = received[index]!
+  const { v, sentAt, expiresAt, ...payload } = plaintext
+  expect({ v, sentAt, expiresAt }).toEqual({ v: 1, sentAt: expect.any(Number), expiresAt: body.expiration })
+  return { body, payload: payload as { aps: Record<string, unknown>; hobwork: { project: string; command: Message } } }
 }
 
 test('commands go over the socket when the app is connected, and the first result wins', async () => {
@@ -210,7 +193,7 @@ test('a device that is not connected gets a background command as a passive push
   const until = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const call = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'social', until })
   await vi.waitFor(() => expect(received).toHaveLength(1))
-  const { headers, payload } = pushed()
+  const { body, payload } = pushed()
   const command = payload.hobwork.command
   expect(payload).toEqual({
     aps: {
@@ -225,13 +208,8 @@ test('a device that is not connected gets a background command as a passive push
     },
   })
   expect(Date.parse(String(command.expiresAt)) - Date.now()).toBeGreaterThan(COMMAND_TTL_MS - 5000)
-  expect(headers).toMatchObject({
-    'apns-push-type': 'alert',
-    'apns-priority': '10',
-    'apns-id': command.id,
-    'apns-collapse-id': command.id,
-  })
-  expect(Math.abs(Number(headers['apns-expiration']) - Date.parse(String(command.expiresAt)) / 1000)).toBeLessThanOrEqual(1)
+  expect(body).toMatchObject({ kind: 'command', collapseId: command.id })
+  expect(Math.abs(Number(body.expiration) - Date.parse(String(command.expiresAt)) / 1000)).toBeLessThanOrEqual(1)
 
   expect((await postResult(device.token, { id: command.id, ok: true, value: {} })).status).toBe(204)
   expect(await call).toEqual({})
@@ -242,6 +220,7 @@ test('NFC commands are a prompt push, and nfc.write creates a tag the project ow
   const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', { text: 'Desk' })
   await vi.waitFor(() => expect(received).toHaveLength(1))
   const { payload } = pushed()
+  expect(received[0]!.body.kind).toBe('prompt')
   const command = payload.hobwork.command
   const tag = (command.args as { tag: string }).tag
   expect(payload).toEqual({
@@ -383,7 +362,7 @@ test('a command that reaches nothing fails at once and does not run later', asyn
 
 test('results for commands of other devices, unknown IDs and bad bodies are refused', async () => {
   const device = await phone()
-  const laptop = await phone({ name: 'kaan-mac', push: { token: 'ffeeddccbbaa9988', environment: 'sandbox' } })
+  const laptop = await phone({ name: 'kaan-mac' })
   const call = devices.callCommand('bedtime', 'kaan-iphone', 'focus', 'status').catch((e: unknown) => e)
   await vi.waitFor(() => expect(received).toHaveLength(1))
   const id = pushed().payload.hobwork.command.id

@@ -5,6 +5,7 @@ dist/
 .env
 .env.*
 /data/
+/data-push-keys/
 
 # Xcode
 DerivedData/

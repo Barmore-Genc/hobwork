@@ -21,8 +21,7 @@ export function pairedUniversalLink(publicUrl: string): string {
 
 export const PLATFORMS = ['ios', 'macos'] as const
 export type Platform = (typeof PLATFORMS)[number]
-export type PushEnvironment = 'sandbox' | 'production'
-export type Push = { token: string; environment: PushEnvironment }
+export type Push = { grant: string; key: string }
 
 export type Device = {
   id: number
@@ -100,10 +99,7 @@ function toDevice(row: Record<string, unknown>): Device {
     platform: String(row.platform) as Platform,
     capabilities: JSON.parse(String(row.capabilities)) as string[],
     appVersion: row.app_version === null ? null : String(row.app_version),
-    push:
-      row.push_token === null
-        ? null
-        : { token: String(row.push_token), environment: String(row.push_environment) as PushEnvironment },
+    push: row.push_grant === null ? null : { grant: String(row.push_grant), key: String(row.push_key) },
     createdAt: String(row.created_at),
     lastSeenAt: row.last_seen_at === null ? null : String(row.last_seen_at),
   }
@@ -192,7 +188,7 @@ export function renameDevice(db: DatabaseSync, id: number, name: string): Device
 // web view's session goes too, and with it the app sessions made from it.
 export function revokeDevice(db: DatabaseSync, id: number, now = Date.now()): boolean {
   const result = db
-    .prepare('UPDATE devices SET revoked_at = ?, push_token = NULL, push_environment = NULL WHERE id = ? AND revoked_at IS NULL')
+    .prepare('UPDATE devices SET revoked_at = ?, push_grant = NULL, push_key = NULL WHERE id = ? AND revoked_at IS NULL')
     .run(iso(now), id)
   if (Number(result.changes) === 0) return false
   db.prepare('DELETE FROM device_sign_in_links WHERE device_id = ?').run(id)
@@ -213,7 +209,7 @@ export function recordHello(
     iso(now),
     id,
   )
-  if (hello.push !== undefined) setPushToken(db, id, hello.push)
+  if (hello.push !== undefined) setPush(db, id, hello.push)
   publishChange(db, { kind: 'devices' })
 }
 
@@ -221,18 +217,12 @@ export function touchDevice(db: DatabaseSync, id: number, now = Date.now()) {
   db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(iso(now), id)
 }
 
-// null turns push off for the device, for example when APNs says the token is
-// gone. A token belongs to one app install, so a device paired again on the
-// same phone takes it over from the old record.
-export function setPushToken(db: DatabaseSync, id: number, push: Push | null) {
-  if (push) {
-    db.prepare('UPDATE devices SET push_token = NULL, push_environment = NULL WHERE push_token = ? AND id != ?').run(push.token, id)
-  }
-  db.prepare('UPDATE devices SET push_token = ?, push_environment = ? WHERE id = ?').run(
-    push?.token ?? null,
-    push?.environment ?? null,
-    id,
-  )
+// null turns push off for the device, for example when the relay says the
+// grant is gone. A grant belongs to one app install, so a device paired again
+// on the same phone takes it over from the old record.
+export function setPush(db: DatabaseSync, id: number, push: Push | null) {
+  if (push) db.prepare('UPDATE devices SET push_grant = NULL, push_key = NULL WHERE push_grant = ? AND id != ?').run(push.grant, id)
+  db.prepare('UPDATE devices SET push_grant = ?, push_key = ? WHERE id = ?').run(push?.grant ?? null, push?.key ?? null, id)
 }
 
 export function createWebSessionLink(

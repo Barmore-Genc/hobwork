@@ -106,6 +106,7 @@ Built in `relay/` (Push relay in `docs/architecture.md`). Left:
 - The content key comes from an X25519 exchange between the app and the sidecar, so only they hold it. The payload carries a key ID so keys can rotate with pushes in flight.
 - Encrypted: everything in `hobwork` today, plus title, body, `thread-id`, category, interruption level, sound, and a sent-at time and expiry. The plaintext is compressed with raw deflate (`zlib.deflateRawSync`, `COMPRESSION_ZLIB` in the app), padded to 256-byte buckets, and encrypted with ChaCha20-Poly1305 with the grant ID as associated data. About 2.9 KB of compressed plaintext fits in APNs' 4 KB; `too_large` checks the encrypted size.
 - The notification service extension decrypts every push, rebuilds the notification, and handles actions and commands as today. Prompt pushes (NFC) become `mutable-content` too. It rejects pushes that fail to decrypt, are stale, or repeat one already seen, including one that came over the socket.
+- The app's `willPresent` (`apple/Hobwork/Notifications/Notifier.swift`) returns no presentation options for a push whose ID the app already showed from the socket. Today `willPresent` always returns `[.banner, .list, .sound]`.
 - The relay and Apple still see the APNs token, which grants belong to one device, and the timing, size bucket, kind and priority of pushes.
 
 ### Configuration
@@ -121,7 +122,7 @@ We are not applying for `com.apple.developer.usernotifications.filtering`. Apple
 - The ownership proof shows "Notifications from Hobwork are set up." once per registration.
 - Renewal uses background pushes.
 - Pushes that fail to decrypt or are stale show generic fallback text, as does a notification whose extension crashed or timed out.
-- A push that repeats one the app already got over the socket while open is hidden by the app's `willPresent` returning no presentation options. When the app is not in the foreground with its socket open, as the Mac app often is, both show.
+- A push that repeats one the app already got over the socket while open is hidden by the app's `willPresent` (see Encryption). When the app is not in the foreground with its socket open, as the Mac app often is, both show.
 
 The relay keeps the `filtering` flag, so the entitlement can be added later if Apple widens it. It would then be requested for `dev.bgenc.hobwork.NotificationService` from the account owner's login, with provisioning profiles made by hand with "NSE Filtering" selected; to hide a notification the extension sets title, subtitle and body to empty strings.
 

@@ -88,7 +88,7 @@ targets:
         NSSupportsLiveActivities: true
         # Relay grant renewals arrive as background pushes.
         UIBackgroundModes: [remote-notification]
-        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this iPhone.
+        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this device.
         NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your hobs.
         NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
     dependencies:

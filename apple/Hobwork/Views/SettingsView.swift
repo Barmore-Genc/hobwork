@@ -132,7 +132,7 @@ private struct AlarmsSection: View {
                 Button("Allow Alarms") { Task { await model.requestAlarms() } }
             }
         } footer: {
-            Text("Hobs can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
+            Text("Hobs can set alarms and timers that ring on this \(DeviceModel.name). If you declined before, allow alarms for Hobwork in the Settings app.")
         }
     }
 }

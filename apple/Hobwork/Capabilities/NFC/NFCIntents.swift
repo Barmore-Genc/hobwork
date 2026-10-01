@@ -51,7 +51,7 @@ enum TagIntentError: Error, CustomLocalizedStringResourceConvertible {
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
-        case .notPaired: "Open Hobwork and connect this iPhone to your Hobwork host first."
+        case .notPaired: "Open Hobwork and connect it to your Hobwork host first."
         case let .unreachable(reason): "Couldn't reach your Hobwork host: \(reason)"
         }
     }

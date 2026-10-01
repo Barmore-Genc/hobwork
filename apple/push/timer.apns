@@ -3,7 +3,7 @@
   "aps": {
     "alert": {
       "title": "kitchen",
-      "body": "Timer change for this iPhone. Open Hobwork if it did not apply."
+      "body": "Timer change for this device. Open Hobwork if it did not apply."
     },
     "mutable-content": 1,
     "interruption-level": "passive",

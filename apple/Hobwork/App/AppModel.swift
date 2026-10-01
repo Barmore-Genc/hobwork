@@ -26,6 +26,10 @@ final class AppModel {
 
     @ObservationIgnored let web = WebController()
     @ObservationIgnored let notifier = Notifier()
+    @ObservationIgnored let push = PushCoordinator(
+        relay: RelayClient(asserter: SystemAppAttest()),
+        attester: SystemAppAttest()
+    )
     #if os(iOS)
         @ObservationIgnored let alarms = AlarmKitScheduler()
         @ObservationIgnored let nfc = NDEFTagSession()
@@ -35,7 +39,6 @@ final class AppModel {
         }
     #endif
     @ObservationIgnored private let events = StoredEventQueue()
-    @ObservationIgnored private var pushToken: String?
     #if os(macOS)
         /// Opens the window again, which may be closed while the app keeps running.
         @ObservationIgnored var showWindow: (() -> Void)?
@@ -48,16 +51,10 @@ final class AppModel {
         return "\(version) (\(build))"
     }
 
-    static var pushEnvironment: PushRegistration.Environment {
-        #if DEBUG
-            .sandbox
-        #else
-            .production
-        #endif
-    }
-
     init() {
         notifier.onResponse = { [weak self] response in await self?.handle(response) }
+        notifier.onProof = { [weak self] nonce in self?.push.proofArrived(nonce: nonce) }
+        push.onGrantChange = { [weak self] host, grant in await self?.sendGrant(grant, to: host) }
         EventSender.model = self
         if let stored = StoredPairing.load() {
             activate(Pairing(host: stored.host, credentials: stored.credentials))
@@ -71,10 +68,11 @@ final class AppModel {
         pairing.map { HostAPI(host: $0.host, token: $0.credentials.token) }
     }
 
-    func completePairing(host: URL, credentials: DeviceCredentials) throws {
-        try StoredPairing.save(host: host, credentials: credentials)
+    func completePairing(host: URL, exchange: PairingExchange) throws {
+        try StoredPairing.save(host: host, credentials: exchange.credentials)
         notice = nil
-        activate(Pairing(host: host, credentials: credentials))
+        push.hostKeysChanged(host: host, keys: exchange.push)
+        activate(Pairing(host: host, credentials: exchange.credentials))
     }
 
     /// Removes the device from the host and forgets the host: the device token, the web
@@ -83,6 +81,7 @@ final class AppModel {
         if notice == nil { try? await api?.removeDevice() }
         connection?.stop()
         connection = nil
+        if let host = pairing?.host { push.forget(host: host) }
         StoredPairing.remove()
         events.removeAll()
         pairing = nil
@@ -99,6 +98,7 @@ final class AppModel {
             }
         #endif
         if connection?.state != .connected { connection?.reconnect() }
+        push.refresh()
         web.checkSession()
         Task { await refreshCapabilities() }
     }
@@ -117,19 +117,23 @@ final class AppModel {
     }
 
     func didRegisterForPush(token: Data) {
-        let hex = token.map { String(format: "%02x", $0) }.joined()
-        guard hex != pushToken else { return }
-        pushToken = hex
-        guard let api else { return }
-        let push = PushRegistration(token: hex, environment: Self.pushEnvironment)
-        Task {
-            do {
-                try await api.updatePush(push)
-            } catch HostError.unauthorized {
-                await revoked()
-            } catch {
-                // The next hello carries the token.
-            }
+        push.tokenArrived(token.hex, environment: .current)
+    }
+
+    /// A background push from the relay, which only renewal pushes are.
+    func didReceiveBackgroundPush(_ userInfo: [AnyHashable: Any]) async {
+        guard case let .renew(grants) = RelayPush(userInfo: userInfo) else { return }
+        await push.renew(grants: grants).value
+    }
+
+    private func sendGrant(_ grant: HostPushGrant?, to host: URL) async {
+        guard let api, pairing?.host == host else { return }
+        do {
+            try await api.updatePush(grant)
+        } catch HostError.unauthorized {
+            await revoked()
+        } catch {
+            // The next hello carries the grant.
         }
     }
 
@@ -228,6 +232,7 @@ final class AppModel {
             runner: runner
         )
         connection.onUnauthorized = { [weak self] in Task { await self?.revoked() } }
+        connection.onPush = { [weak self] keys in self?.push.hostKeysChanged(host: pairing.host, keys: keys) }
         self.connection = connection
         web.configure(
             host: pairing.host,
@@ -249,7 +254,7 @@ final class AppModel {
             appVersion: Self.appVersion,
             platform: Hello.platform,
             capabilities: capabilities.reported,
-            push: pushToken.map { PushRegistration(token: $0, environment: Self.pushEnvironment) }
+            push: pairing.flatMap { push.hostGrant(for: $0.host) }
         )
     }
 

@@ -16,19 +16,3 @@ struct PKCE: Equatable, Sendable {
         PKCE(verifier: Base64URL.encode(randomBytes(32)))
     }
 }
-
-enum Base64URL {
-    static func encode(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-}
-
-func randomBytes(_ count: Int) -> Data {
-    var bytes = [UInt8](repeating: 0, count: count)
-    let status = SecRandomCopyBytes(kSecRandomDefault, count, &bytes)
-    precondition(status == errSecSuccess, "SecRandomCopyBytes failed: \(status)")
-    return Data(bytes)
-}

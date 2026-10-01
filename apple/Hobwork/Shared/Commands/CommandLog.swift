@@ -86,6 +86,10 @@ struct FileCommandLog: CommandLog {
     func outcome(_ key: String) -> CommandOutcome? {
         file.read()[key]?.outcome
     }
+
+    func contains(_ key: String) -> Bool {
+        file.read()[key] != nil
+    }
 }
 
 final class MemoryCommandLog: CommandLog, @unchecked Sendable {

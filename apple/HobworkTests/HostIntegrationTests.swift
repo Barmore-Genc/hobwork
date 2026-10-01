@@ -45,14 +45,15 @@ struct HostIntegrationTests {
         let name = "ios-test-\(Int.random(in: 1000 ... 9999))"
         let pairing = Pairing(host: host, deviceName: "iOS test")
         let code = try await pairing.code(from: approve(pairing, name: name))
-        let credentials = try await HostAPI(host: host).exchange(code: code, verifier: pairing.pkce.verifier)
+        let credentials = try await HostAPI(host: host).exchange(code: code, verifier: pairing.pkce.verifier).credentials
         #expect(credentials.name == name)
         #expect(credentials.token.hasPrefix("hwd_"))
 
         let api = HostAPI(host: host, token: credentials.token)
         let link = try await api.webSession(returnTo: "/settings")
         #expect(link.path == "/auth/device")
-        try await api.updatePush(PushRegistration(token: String(repeating: "ab", count: 32), environment: .sandbox))
+        let key = PushPairing(host: host, keys: HostPushKeys(relay: "", signingKey: "", encryptionKey: "", keyId: "")).appKey
+        try await api.updatePush(HostPushGrant(grant: Base64URL.encode(randomBytes(16)), key: key))
         try await api.updatePush(nil)
 
         let connection = DeviceConnection(
@@ -76,7 +77,7 @@ struct HostIntegrationTests {
     @Test func signingOutRemovesTheDevice() async throws {
         let pairing = Pairing(host: host, deviceName: "iOS test")
         let code = try await pairing.code(from: approve(pairing, name: "ios-test-\(Int.random(in: 1000 ... 9999))"))
-        let credentials = try await HostAPI(host: host).exchange(code: code, verifier: pairing.pkce.verifier)
+        let credentials = try await HostAPI(host: host).exchange(code: code, verifier: pairing.pkce.verifier).credentials
         let api = HostAPI(host: host, token: credentials.token)
         try await api.removeDevice()
         await #expect(throws: HostError.unauthorized) { try await api.removeDevice() }

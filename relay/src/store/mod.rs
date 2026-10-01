@@ -53,7 +53,6 @@ pub struct Registration {
     pub token: Option<String>,
     pub environment: Option<Environment>,
     pub pending: Option<PendingToken>,
-    pub filtering: bool,
     pub attest: Option<AttestKey>,
     pub created_at: i64,
     pub gone_at: Option<i64>,
@@ -105,7 +104,6 @@ pub trait Store: Send + Sync {
     fn registration_by_token(&self, token: &str) -> Result<Option<Registration>>;
     fn delete_registration(&self, id: &str) -> Result<bool>;
     fn set_pending_token(&self, id: &str, pending: Option<&PendingToken>) -> Result<()>;
-    fn set_filtering(&self, id: &str, filtering: bool) -> Result<()>;
     /// Makes the pending token the registration's token if `nonce` matches and
     /// has not expired. Another registration holding the token is deleted, and a
     /// registration that was gone loses its grants, since hosts forgot them.

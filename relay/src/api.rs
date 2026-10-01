@@ -12,7 +12,7 @@ use ed25519_dalek::{Signature as EdSignature, VerifyingKey as EdKey};
 use hmac::{Hmac, KeyInit, Mac};
 use ipnet::IpNet;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
@@ -404,8 +404,9 @@ struct AttestationBody {
 struct RegisterBody {
     token: String,
     environment: Environment,
-    #[serde(default)]
-    filtering: bool,
+    /// Accepted because older apps send it.
+    #[serde(default, rename = "filtering")]
+    _filtering: Option<IgnoredAny>,
     attestation: Option<AttestationBody>,
 }
 
@@ -469,7 +470,6 @@ async fn register(state: &State, ip: IpAddr, body: &[u8], audit: &mut Audit) -> 
         token: None,
         environment: None,
         pending: None,
-        filtering: body.filtering,
         attest,
         created_at: now,
         gone_at: None,
@@ -515,7 +515,6 @@ async fn get_registration(
         "id": registration.id,
         "status": registration_status(&registration),
         "environment": registration.environment,
-        "filtering": registration.filtering,
         "attested": registration.attest.is_some(),
         "grants": grants,
     })))
@@ -526,7 +525,9 @@ async fn get_registration(
 struct UpdateBody {
     token: String,
     environment: Environment,
-    filtering: Option<bool>,
+    /// Accepted because older apps send it.
+    #[serde(default, rename = "filtering")]
+    _filtering: Option<IgnoredAny>,
 }
 
 async fn update_registration(
@@ -544,9 +545,6 @@ async fn update_registration(
         let registration = authorize(&state, &id, &method, &uri, &headers, &body).await?;
         let update: UpdateBody = parse_json(&body)?;
         let token = parse_token(&update.token)?;
-        if let Some(filtering) = update.filtering {
-            state.store.set_filtering(&id, filtering)?;
-        }
         if registration.token.as_deref() == Some(token.as_str()) && registration.environment == Some(update.environment)
         {
             return Ok(ok(json!({ "status": "active" })));

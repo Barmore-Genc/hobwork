@@ -86,9 +86,8 @@ The relay and the app are trusted; hosts are not, since anyone can run one. A ho
 
 ### Relay
 
-Built in `relay/` (Push relay in `docs/architecture.md`). Left:
+Built in `relay/` (Push relay in `docs/architecture.md`) and running at `relay.bgenc.dev`. Left:
 
-- Start it at `relay.bgenc.dev`: the deploy is in place, and it needs the team's APNs key (`.p8`) and its ID, and the image package on GHCR made public (or the repo).
 - App Attest keys belong to the app's bundle ID, so the notification service extension probably cannot make assertions, and an attested registration then cannot renew grants from the extension. Check on a device; if so, renewals from the extension need another proof (for example the renewal push's grant list, signed by the relay).
 - Check an attestation from a real device against the relay: the tests use their own CA, since Apple publishes no sample attestation.
 - `server/src/devices/apns.ts` is ported to `relay/src/apns.rs`; delete it from the host with the sidecar work.

@@ -116,13 +116,19 @@ Built in `relay/` (Push relay in `docs/architecture.md`). Left:
 
 ### Filtering entitlement
 
-`com.apple.developer.usernotifications.filtering` (iOS 13.3, macOS 11) lets the extension hide pushes that fail to decrypt, stale or duplicate pushes, and the ownership-proof and renewal pushes, and makes iOS hide a notification whose extension crashed or timed out. It is requested for the extension's bundle ID, `dev.bgenc.hobwork.NotificationService`, from the account owner's login; once granted, provisioning profiles are made by hand with "NSE Filtering" selected. Developer forum reports show approvals for end-to-end encrypted apps, rejections without reasons for other uses, and waits of 2 weeks to 2 months, so apply early. To hide a notification the extension sets title, subtitle and body to empty strings; returning empty content does not work. Everything has to work without it: those pushes then show generic fallback text, and renewal uses background pushes.
+We are not applying for `com.apple.developer.usernotifications.filtering`. Apple grants it only for four use cases (end-to-end encrypted messaging, earthquake warnings, education alerts, healthcare alert retraction) and rejects other uses without a reason. Hobwork encrypts its pushes but is not a messaging app. Without the entitlement the extension cannot hide a push, so:
+
+- The ownership proof shows "Notifications from Hobwork are set up." once per registration.
+- Renewal uses background pushes.
+- Pushes that fail to decrypt or are stale show generic fallback text, as does a notification whose extension crashed or timed out.
+- A push that repeats one the app already got over the socket while open is hidden by the app's `willPresent` returning no presentation options. When the app is not in the foreground with its socket open, as the Mac app often is, both show.
+
+The relay keeps the `filtering` flag, so the entitlement can be added later if Apple widens it. It would then be requested for `dev.bgenc.hobwork.NotificationService` from the account owner's login, with provisioning profiles made by hand with "NSE Filtering" selected; to hide a notification the extension sets title, subtitle and body to empty strings.
 
 ### Checks
 
 - **macOS extension, first**: every relayed push needs the notification service extension to decrypt it. Apple documents it for macOS 10.14, but developer forum threads from 2019 to 2025 report it never being called on macOS, or killed for "sluggish startup", with no answer from Apple. Test it with a team-signed Mac build and a real APNs push before building the rest. If it does not run, Mac notifications show only the generic alert, and content still arrives over the socket, which the Mac app keeps open.
 - On a real iPhone and Mac: ownership-proof and renewal push delivery. Only the socket paths have run on devices so far.
-- Draft the entitlement request for the account owner to submit.
 
 ## Shared UI components
 

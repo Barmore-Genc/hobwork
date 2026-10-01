@@ -215,6 +215,22 @@ test('a device that is not connected gets a background command as a passive push
   expect(await call).toEqual({})
 })
 
+test('alarm commands are a prompt push, since only the app may use AlarmKit', async () => {
+  await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'timer', { title: 'Tea', seconds: 180 }).catch((e: unknown) => e)
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  expect(received[0]!.body.kind).toBe('prompt')
+  const { payload } = pushed()
+  expect(payload.aps).toEqual({
+    alert: { title: 'Start a timer', body: 'bedtime wants to start the timer "Tea". Tap to start it.' },
+    sound: 'default',
+    'thread-id': 'bedtime',
+  })
+  expect(payload.hobwork.command).toMatchObject({ capability: 'alarms', method: 'timer', foreground: true })
+  devices.close()
+  await call
+})
+
 test('NFC commands are a prompt push, and nfc.write creates a tag the project owns', async () => {
   const device = await phone()
   const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', { text: 'Desk' })

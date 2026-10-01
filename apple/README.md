@@ -105,12 +105,12 @@ The app sends only what a person explicitly chose to share. It sends no location
 
 `Hobwork/Capabilities/NFC/NFCIntents.swift` has two App Intents for tags with other links, which iOS opens in Safari: "Scan NFC Tag" opens the app and scans (Action Button, Control Center, Siri), and "Send Tag to Hobwork" sends a link to the host in the background, for a Shortcuts personal automation "When I tap an NFC tag". See "Tags with other links" in `docs/architecture.md`.
 
-A command arrives over the socket, by a command push the notification service extension runs, or by a prompt push (NFC) that the app runs when tapped. The command log in the app group makes each command run once and answers repeats with the first result.
+A command arrives over the socket, by a command push the notification service extension runs, or by a prompt push (NFC, alarms) that the app runs when tapped. AlarmKit authorizes the app and the extension separately, and the extension cannot ask, so alarm commands always run in the app. The command log in the app group makes each command run once and answers repeats with the first result.
 
 Unit tests cover argument checks, command dedup and expiry, result, event and sample encoding, Screen Time intervals and the monitor's actions, alarm schedules, NFC links and records, and the notification summaries. What only a device can show:
 
 - Screen Time: the Family Controls prompt, the app picker, shields from ManagedSettings, and that DeviceActivity calls the monitor extension at interval start, end and threshold (limits, schedules, the end of timed blocks).
-- Commands run by the notification service extension: whether ManagedSettings, DeviceActivity, AlarmKit and HealthKit calls work from it at runtime, how long they take against the 30 second limit, and that the summary replaces the text.
+- Commands run by the notification service extension: whether ManagedSettings, DeviceActivity and HealthKit calls work from it at runtime (AlarmKit does not: on an iPad the extension's authorization stays `notDetermined`), how long they take against the 30 second limit, and that the summary replaces the text.
 - AlarmKit alarms and timers ringing, and the timer's Live Activity.
 - NFC reading and writing (the simulator has no NFC), universal links, and iOS background tag reading.
 - The Scan NFC Tag and Send Tag to Hobwork actions from Shortcuts, the Action Button and a "When I tap an NFC tag" automation.

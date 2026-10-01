@@ -217,7 +217,7 @@ function pushCommand(command: CommandRecord, foreground: boolean) {
 export function commandPushPayload(project: string, command: CommandRecord, foreground: boolean) {
   const hobwork = { project, command: pushCommand(command, foreground) }
   if (foreground) {
-    return { aps: { alert: promptAlert(project, command.method), sound: 'default', 'thread-id': project }, hobwork }
+    return { aps: { alert: promptAlert(project, command.capability, command.method, command.args as Record<string, unknown>), sound: 'default', 'thread-id': project }, hobwork }
   }
   return {
     aps: {

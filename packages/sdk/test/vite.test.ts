@@ -45,3 +45,18 @@ test('builds the dashboard and each handler', async () => {
   const handler = await import(join(dir, 'dist/handlers/src/greeting-route.js'))
   expect(handler.default()).toEqual({ greeting: 'hello' })
 })
+
+test('builds only the handlers when the hob has no index.html', async () => {
+  write({
+    'hobwork.json': '{ "routes": { "GET /greeting": { "handler": "src/greeting-route.ts" } } }\n',
+    'src/greeting-route.ts': "export default () => ({ greeting: 'hello' })\n",
+    // Left from a build before the UI was removed.
+    'dist/index.html': '<!doctype html>',
+  })
+  const builder = await createBuilder({ ...hobworkViteConfig(dir), root: dir, configFile: false, logLevel: 'silent' })
+  await builder.buildApp()
+
+  expect(existsSync(join(dir, 'dist/index.html'))).toBe(false)
+  const handler = await import(join(dir, 'dist/handlers/src/greeting-route.js'))
+  expect(handler.default()).toEqual({ greeting: 'hello' })
+})

@@ -143,7 +143,7 @@ package.json           scripts: typecheck, lint, test, build; extra deps (discou
 tsconfig.json
 vite.config.ts         UI build + Vitest config, from hobworkViteConfig() in @hobwork/sdk/vite
 src/                   handlers and shared code
-ui/                    dashboard pages (React + Tailwind)
+ui/                    dashboard pages (React + Tailwind), optional with index.html
 migrations/*.sql       hob DB migrations, applied in order
 tests/                 Vitest tests
 ```
@@ -595,6 +595,7 @@ For hobs and the agents working on them:
 ## Dashboards and UI
 
 - Hob UIs are plain React + Tailwind pages: `index.html` at the hob root with the code in `ui/`, built by the pipeline with Vite to `dist/index.html` and `dist/assets/`, and served by the host from the deployed version's build at the root of the hob's own origin (`server/src/apps/`, `server/src/runtime/project-ui.ts`). A version without a stored build is built on the first request, as for invocations.
+- The UI is optional. A hob without `index.html` has none: `hobworkViteConfig()` then builds only the handlers (and clears `dist/`, so a page from an earlier build is not served), the hob page shows no "Open app", and its app origin answers 404.
 - Serving: only a signed-in user's app session for that origin (see [Hob app origins](#hob-app-origins)). A path serves the file from the build if there is one, except `dist/handlers/`, and `index.html` for paths without an extension, so client-side routes work. The host adds `<base href="/">` to `index.html` (unless it has one), so relative URLs from older builds (`./assets/...`) resolve on any client-side route; the template builds with `base: '/'`. Files under `assets/` are cached as immutable (Vite hashes their names), `index.html` is revalidated. The host also serves the theme (`/theme/...`) on app origins. Old links to `/p/<hob>/<path>` on the Hobwork host redirect to the app origin.
 - The host provides one theme stylesheet with CSS variables (colors, radii, fonts, light/dark). The template's Tailwind setup maps these to utility classes (`bg-surface`, `text-muted`, ...). Anything that uses them stays on theme, including third-party components.
 - The theme lives in `packages/theme/` (`@hobwork/theme`), which the image build copies into the platform set next to the SDK, so hob builds import `@hobwork/theme/tailwind.css` like the web UI does and the mapping is versioned with the image. The template's `index.html` loads `/theme/theme.css` from the host (marked `vite-ignore`, so Vite leaves the URL alone), and `ui/index.css` imports Tailwind and the mapping. The host serves `theme.css` at `/theme/theme.css` and its fonts (Bricolage Grotesque for headings, Atkinson Hyperlegible Next for text, from the fontsource packages) at `/theme/fonts/`. `tailwind.css` is the Tailwind v4 `@theme inline` mapping, so utilities read the variables and follow light/dark without `dark:` variants. Pages follow the system setting unless the root element has `data-theme="light"` or `"dark"`.

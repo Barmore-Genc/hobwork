@@ -84,6 +84,10 @@ export type CookieOptions = {
   maxAge: number
   secure: boolean
   path?: string
+  // For a cookie that must reach a page framed by another site (share links).
+  // Browsers that block third-party cookies still keep a partitioned one,
+  // stored per top-level site, so it never reaches the same frame elsewhere.
+  crossSite?: boolean
 }
 
 export function setCookie(res: ServerResponse, name: string, value: string, options: CookieOptions) {
@@ -92,9 +96,13 @@ export function setCookie(res: ServerResponse, name: string, value: string, opti
     `Path=${options.path ?? '/'}`,
     `Max-Age=${options.maxAge}`,
     'HttpOnly',
-    'SameSite=Lax',
   ]
-  if (options.secure) parts.push('Secure')
+  // SameSite=None needs Secure, which browsers accept on loopback http too.
+  if (options.crossSite) parts.push('SameSite=None', 'Secure', 'Partitioned')
+  else {
+    parts.push('SameSite=Lax')
+    if (options.secure) parts.push('Secure')
+  }
   res.appendHeader('set-cookie', parts.join('; '))
 }
 

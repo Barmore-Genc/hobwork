@@ -124,6 +124,14 @@ Built in `relay/` (Push relay in `docs/architecture.md`). Left:
 - On a real iPhone and Mac: ownership-proof and renewal push delivery. Only the socket paths have run on devices so far.
 - Draft the entitlement request for the account owner to submit.
 
+## Share links
+
+See Share links in `docs/architecture.md`.
+
+- List a hob's share links on its page in the web UI (agent, branch, read-only, expiry), with revoking one. Today a link ends only when it expires or its credential, agent or hob goes away.
+- Check the embedded view in clients other than Chromium-based ones. Safari's handling of partitioned cookies in third-party frames is untested; if it drops the cookie, the view should say so and offer "Open", which works first-party.
+- Agents cannot see what the view shows. A screenshot or a text snapshot of the rendered page, taken in a browser on the host, would let agents check a UI change without a browser tool of their own.
+
 ## Shared UI components
 
 There is no component library in core; hob UIs use the theme's Tailwind utilities. If agents keep rewriting the same components across hobs, ship them in the platform set.

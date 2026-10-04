@@ -75,7 +75,6 @@ export type ProjectDetail = {
   // The version that runs now. It can differ from the newest while a deploy runs or after one failed.
   currentVersion: number | null
   iconUrl: string
-  versions: Version[]
   entryPoints: EntryPoints | null
   configError?: string
   egress: string[]
@@ -447,6 +446,11 @@ export const api = {
   deletedProjects: () => request<{ trashDays: number; projects: DeletedProject[] }>('GET', '/api/trash'),
   restoreDeletedProject: (id: string, name: string) =>
     request<{ name: string }>('POST', `/api/trash/${encodeURIComponent(id)}/restore`, { name }),
+  versions: (project: string, before?: number) =>
+    request<{ versions: Version[]; more: boolean }>(
+      'GET',
+      `/api/projects/${encodeURIComponent(project)}/versions${query({ before })}`,
+    ),
   restore: (project: string, version: number) =>
     request<{ version: Version; deployError?: string }>(
       'POST',

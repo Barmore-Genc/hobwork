@@ -46,7 +46,8 @@ import { getVersion, listVersions, type Version } from '../versions.ts'
 // ready: deployed, and the runtime starts when something calls it.
 export type ProjectStatus = 'ready' | 'running' | 'updating'
 
-const VERSION_PAGE = 100
+const VERSION_PAGE = 20
+const MAX_VERSION_PAGE = 100
 const INVOCATION_PAGE = 50
 const MAX_INVOCATION_PAGE = 200
 // An invocation keeps at most 1,000 lines plus the one saying the rest was dropped.
@@ -315,7 +316,6 @@ export function createApiRoutes(options: {
           status,
           currentVersion: current?.number ?? null,
           iconUrl: iconUrl(project.name),
-          versions: listVersions(host, project.name, VERSION_PAGE).map(versionView),
           ...(await projectDetail(project)),
         })
       },
@@ -338,6 +338,16 @@ export function createApiRoutes(options: {
           'x-content-type-options': 'nosniff',
         })
         res.end(svg)
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/versions$/,
+      handle: ({ res, params, query }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const limit = pageSize(query, VERSION_PAGE, MAX_VERSION_PAGE)
+        const rows = listVersions(host, project.name, limit + 1, queryInt(query, 'before'))
+        json(res, 200, { versions: rows.slice(0, limit).map(versionView), more: rows.length > limit })
       },
     },
     {

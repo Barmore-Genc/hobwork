@@ -84,10 +84,11 @@ export function recordVersion(
   return toVersion(created)
 }
 
-export function listVersions(host: Host, project: string, limit = 50): Version[] {
+// Newest first. With `before`, only versions older than that number.
+export function listVersions(host: Host, project: string, limit = 50, before?: number): Version[] {
   return host.db
-    .prepare(`${SELECT} WHERE p.name = ? ORDER BY v.number DESC LIMIT ?`)
-    .all(project, limit)
+    .prepare(`${SELECT} WHERE p.name = ? AND v.number < ? ORDER BY v.number DESC LIMIT ?`)
+    .all(project, before ?? Number.MAX_SAFE_INTEGER, limit)
     .map(toVersion)
 }
 

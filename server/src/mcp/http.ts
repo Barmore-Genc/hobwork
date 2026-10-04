@@ -63,6 +63,7 @@ export function createMcpHandler(options: {
   storage?: StorageUsage
   devices?: Devices
   appOrigin?: (target: AppTarget) => string | undefined
+  appsUrl?: string
 }) {
   const authenticate = options.authenticate ?? bearerTokenAuth(options.host)
 
@@ -97,6 +98,7 @@ export function createMcpHandler(options: {
       devices: options.devices,
       ai: options.ai,
       appOrigin: options.appOrigin,
+      appsUrl: options.appsUrl,
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {

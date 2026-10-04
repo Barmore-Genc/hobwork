@@ -27,6 +27,7 @@ import { runBash } from './bash.ts'
 import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
 import { registerDeviceTools } from './devices.ts'
+import { registerHobViewTools } from './hob-view.ts'
 import { registerHomeAssistantTools } from './homeassistant.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 import { registerRuntimeTools } from './runtime.ts'
@@ -49,6 +50,8 @@ export type McpContext = {
   devices?: Devices
   ai?: AiConfig
   appOrigin?: (target: AppTarget) => string | undefined
+  // The apps host, which embedded views of hob apps must be allowed to frame.
+  appsUrl?: string
 }
 
 export const INSTRUCTIONS = `Hobwork runs a household's automations: scripts, scheduled jobs, HTTP routes, webhooks and small dashboards. A hob is a project: a git repository with handlers, a DB and an optional UI. The main branch is the deployed version and changes only by merging another branch.
@@ -70,7 +73,8 @@ Rules:
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job. Commit pnpm-lock.yaml with it: merging installs with --frozen-lockfile. Versions published in the last 3 days are not installed, and packages run install scripts only when pnpm-workspace.yaml lists them under allowBuilds.
 - Changes to egress in hobwork.json apply in the workspace from the next bash command after you commit them.
 - Hob UIs run under a strict Content-Security-Policy (no inline scripts, no scripts from other origins) and refuse requests from other hobs' apps. hobwork.json can add sources with csp and allow other hobs with crossAppRequests.
-- Webhooks are called at <hob app address>/_hobwork/hooks/<name>/<token>. rotate_webhook_token shows the URL.`
+- Webhooks are called at <hob app address>/_hobwork/hooks/<name>/<token>. rotate_webhook_token shows the URL.
+- To show the user a hob's UI, or a branch preview after committing, call show_hob. It embeds the app in the chat where the client can, and returns a link that also lets you open the app.`
 
 const MAX_READ_LINES = 2000
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120
@@ -131,6 +135,7 @@ export function createMcpServer({
   devices,
   ai = { models: DEFAULT_MODELS },
   appOrigin,
+  appsUrl,
 }: McpContext): McpServer {
   const server = new McpServer({ name: 'hobwork', version: '0.0.0' }, { instructions: INSTRUCTIONS })
   limitTools(server, agent.access)
@@ -498,6 +503,7 @@ export function createMcpServer({
     registerBranchHaTools(server, { host, agent })
   }
   registerRuntimeTools(server, { host, runtime, appOrigin })
+  registerHobViewTools(server, { host, agent, appOrigin, appsUrl })
   registerSecretTools(server, { host, secrets, agent, publicUrl })
   registerAiTools(server, { host, agent, ai })
   registerSshKeyTools(server, { host, agent, ssh })

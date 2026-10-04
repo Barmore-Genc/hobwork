@@ -13,18 +13,29 @@ import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
 import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from '../runtime/webhooks.ts'
 import { createAppCode, findAppSession, redeemAppCode, type AppScope } from './sessions.ts'
+import { findShareLink, isShareToken } from './share-links.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
 export const APP_AUTH_PATH = '/auth/app'
 // On an app origin: exchanges that code for the app's own session cookie.
 export const CALLBACK_PATH = '/_hobwork/callback'
+// On an app origin: turns a share link from show_hob into its cookie.
+export const SHARE_PATH = '/_hobwork/share'
 const RESERVED_PREFIX = '/_hobwork/'
 const API_PREFIX = '/api/'
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+// What a read-only share link may send to routes, like read-only agent tokens.
+const READ_METHODS = new Set(['GET', 'HEAD'])
 const CSRF_HEADER = 'x-hobwork-csrf'
 
 type Resolved = { project: Project; target: AppTarget; origin: string; scope: AppScope }
+
+// Who a request to an app origin acts for: a signed-in user's app session, or
+// a share link (as a cookie, or as a bearer token from an agent).
+type Viewer = { shared: false } | { shared: true; readOnly: boolean; bearer: boolean }
+
+const EXPIRED_LINK = 'This link has expired or was revoked. Ask for a new one, or open the app from Hobwork.'
 
 function sendText(res: ServerResponse, status: number, text: string, headers: Record<string, string> = {}) {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...headers })
@@ -65,7 +76,12 @@ export function createAppHttp(options: {
   // Host-only on each app origin; the __Host- prefix also keeps a sibling app
   // from planting its own cookie with a Domain attribute.
   const cookieName = secure ? '__Host-hobwork_app' : 'hobwork_app'
+  const shareCookieName = secure ? '__Host-hobwork_share' : 'hobwork_share'
   const frameHeaders = uiHeaders(publicUrl)
+  // A share link is meant to be framed by MCP clients, whose origins Hobwork
+  // cannot know. Its cookie is partitioned by top-level site, so a page that
+  // frames the app elsewhere gets no session from it.
+  const sharedFrameHeaders = uiHeaders('*')
 
   async function resolve(target: AppTarget): Promise<Resolved | undefined> {
     const project = getProject(host, target.project)
@@ -150,6 +166,30 @@ export function createAppHttp(options: {
     return token ? findAppSession(host.db, allowlist, token, app.scope) : undefined
   }
 
+  // The share cookie is SameSite=None, so requests other sites send carry it.
+  // It counts for opening or framing a page from anywhere, and otherwise only
+  // for the page's own requests.
+  function shareCookieUsable(req: IncomingMessage, pathname: string): boolean {
+    const site = req.headers['sec-fetch-site']
+    if (site === undefined || site === 'same-origin' || site === 'none') return true
+    return req.headers['sec-fetch-mode'] === 'navigate' && !pathname.startsWith(API_PREFIX)
+  }
+
+  // 'expired' when the request brings a share link that no longer opens this app.
+  function viewerOf(req: IncomingMessage, app: Resolved, pathname: string): Viewer | 'expired' | undefined {
+    const header = req.headers.authorization
+    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined
+    if (bearer !== undefined && isShareToken(bearer)) {
+      const link = findShareLink(host.db, bearer, app.scope)
+      return link ? { shared: true, readOnly: link.readOnly, bearer: true } : 'expired'
+    }
+    if (appUser(req, app)) return { shared: false }
+    const cookie = parseCookies(req.headers.cookie).get(shareCookieName)
+    if (cookie === undefined || !shareCookieUsable(req, pathname)) return undefined
+    const link = findShareLink(host.db, cookie, app.scope)
+    return link ? { shared: true, readOnly: link.readOnly, bearer: false } : 'expired'
+  }
+
   // `listed`: the request comes from an app that hobwork.json lets in, so a
   // different origin is expected.
   function csrfError(req: IncomingMessage, app: Resolved, listed = false): string | undefined {
@@ -195,24 +235,36 @@ export function createAppHttp(options: {
     redirect(res, path, frameHeaders)
   }
 
-  async function serveUi(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string) {
-    if (!runtime) return sendUiText(res, publicUrl, 503, 'This Hobwork host does not run hob apps.')
+  // GET /_hobwork/share?token=<token>&returnTo=<path>. The token stays the
+  // credential: the cookie holds it and expires with the link.
+  function share(req: IncomingMessage, res: ServerResponse, app: Resolved, search: URLSearchParams) {
+    if (req.method !== 'GET') return sendText(res, 405, 'Method not allowed', { ...sharedFrameHeaders, allow: 'GET' })
+    const token = search.get('token') ?? ''
+    const link = findShareLink(host.db, token, app.scope)
+    if (!link) return sendText(res, 401, EXPIRED_LINK, sharedFrameHeaders)
+    const maxAge = Math.max(0, Math.floor((Date.parse(link.expiresAt) - Date.now()) / 1000))
+    setCookie(res, shareCookieName, token, { maxAge, secure, crossSite: true })
+    redirect(res, appReturnPath(search.get('returnTo'), app.origin) ?? '/', sharedFrameHeaders)
+  }
+
+  async function serveUi(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string, frameAncestors: string) {
+    if (!runtime) return sendUiText(res, frameAncestors, 503, 'This Hobwork host does not run hob apps.')
     let build: string
     try {
       build = await runtime.build(app.target.project, app.target.branch)
     } catch (err) {
       if (!(err instanceof BuildError)) throw err
       console.error(`Building the UI of ${app.target.project} failed`, err)
-      return sendUiText(res, publicUrl, 503, `${app.target.project} could not be prepared. Try again in a moment.`)
+      return sendUiText(res, frameAncestors, 503, `${app.target.project} could not be prepared. Try again in a moment.`)
     }
-    serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), hobworkOrigin: publicUrl, csp: await cspOf(app) })
+    serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), frameAncestors, csp: await cspOf(app) })
   }
 
   // Only a build that is already stored: these answer without a session, and
   // must not start one.
   async function serveIcons(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string) {
     const build = await runtime?.storedBuild(app.target.project, app.target.branch).catch(() => undefined)
-    serveAppIcons(req, res, { project: app.target.project, build, pathname, hobworkOrigin: publicUrl })
+    serveAppIcons(req, res, { project: app.target.project, build, pathname, frameAncestors: publicUrl })
   }
 
   // Bookmarks and home screen icons of a renamed project's app lead to its new origin.
@@ -261,31 +313,43 @@ export function createAppHttp(options: {
     const url = new URL(req.url ?? '/', app.origin)
     const { pathname, search } = url
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
+    if (pathname === SHARE_PATH) return share(req, res, app, url.searchParams)
     if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
     if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
     const cross = await crossApp(req, app, pathname)
     if (cross.error) return sendJson(res, 403, { error: cross.error }, frameHeaders)
-    const user = appUser(req, app)
-    if (!user) {
-      const page = !pathname.startsWith(API_PREFIX) && req.method === 'GET' && (req.headers.accept ?? '').includes('text/html')
+    const viewer = viewerOf(req, app, pathname)
+    const page = !pathname.startsWith(API_PREFIX) && req.method === 'GET' && (req.headers.accept ?? '').includes('text/html')
+    if (viewer === 'expired') {
+      // The sign-in pages refuse to be framed, so a framed link says why it stopped.
+      if (page) return sendText(res, 401, EXPIRED_LINK, sharedFrameHeaders)
+      return sendJson(res, 401, { error: EXPIRED_LINK }, sharedFrameHeaders)
+    }
+    if (!viewer) {
       if (page) return redirect(res, signInUrl(app, `${app.origin}${pathname}${search}`), frameHeaders)
       return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
     }
+    const frameAncestors = viewer.shared ? '*' : publicUrl
+    const headers = viewer.shared ? sharedFrameHeaders : frameHeaders
     if (pathname.startsWith(API_PREFIX)) {
-      const error = csrfError(req, app, cross.listed)
-      if (error) return sendJson(res, 403, { error }, frameHeaders)
-      if (!runtime) return sendJson(res, 503, { error: 'This Hobwork host does not run handlers' }, frameHeaders)
+      if (viewer.shared && viewer.readOnly && !READ_METHODS.has(req.method ?? 'GET')) {
+        return sendJson(res, 403, { error: 'This link can only read from the app' }, headers)
+      }
+      // A bearer token is never sent by the browser on its own, so it needs no CSRF check.
+      const error = viewer.shared && viewer.bearer ? undefined : csrfError(req, app, cross.listed)
+      if (error) return sendJson(res, 403, { error }, headers)
+      if (!runtime) return sendJson(res, 503, { error: 'This Hobwork host does not run handlers' }, headers)
       return serveRoute(req, res, runtime, {
         project: app.target.project,
         branch: app.target.branch,
         path: pathname.slice(API_PREFIX.length - 1),
         url: url.href,
-        headers: uiHeaders(publicUrl, await cspOf(app)),
+        headers: uiHeaders(frameAncestors, await cspOf(app)),
       })
     }
-    if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', frameHeaders)
-    await serveUi(req, res, app, pathname)
+    if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', headers)
+    await serveUi(req, res, app, pathname, frameAncestors)
   }
 
   return {

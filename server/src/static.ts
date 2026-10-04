@@ -12,7 +12,9 @@ const FONT_FILE = /^[a-z0-9-]+\.woff2$/
 // The policy of the Hobwork web UI. It runs with the user's session, so it may
 // load code only from its own origin. Project apps are on sibling origins of
 // the same site: the web UI must not be framed by them, and it frames only
-// them (`appsFrameSource`). Styles stay inline for React `style` props.
+// them (`appsFrameSource`) and itself: an app without a session sends its
+// frame through /auth/app on this origin to get one. Styles stay inline for
+// React `style` props.
 export function webUiPolicy(appsFrameSource?: string): string {
   return [
     "default-src 'self'",
@@ -21,7 +23,7 @@ export function webUiPolicy(appsFrameSource?: string): string {
     "img-src 'self' data:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    `frame-src ${appsFrameSource ?? "'none'"}`,
+    `frame-src ${appsFrameSource ? `'self' ${appsFrameSource}` : "'none'"}`,
     "form-action 'self'",
     "object-src 'none'",
     "base-uri 'none'",

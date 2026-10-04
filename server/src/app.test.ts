@@ -6,7 +6,7 @@ import { createTestHost } from './test-host.ts'
 import { sendTo, startTestApp, TEST_APPS_DOMAIN, TEST_PUBLIC_URL } from './test-web.ts'
 
 // Project apps are same-site, so they must not be able to frame Hobwork, and
-// the UI may frame only them.
+// the UI may frame only them and its own app sign-in handoff.
 const WEB_UI_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
@@ -14,7 +14,7 @@ const WEB_UI_POLICY = [
   "img-src 'self' data:",
   "font-src 'self' data:",
   "connect-src 'self'",
-  `frame-src http://*.${TEST_APPS_DOMAIN}`,
+  `frame-src 'self' http://*.${TEST_APPS_DOMAIN}`,
   "form-action 'self'",
   "object-src 'none'",
   "base-uri 'none'",

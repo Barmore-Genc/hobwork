@@ -13,6 +13,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 - `migrations/`: `0001_name.sql`, ..., applied in order on deploy.
 - `tests/`: Vitest. Test files share one module cache; mocks, globals and env vars reset after each test.
 - `package.json`: extra npm packages only. Platform packages, `@hobwork/sdk` and `@hobwork/theme` come with the VM.
+- `python3` (standard library only, no pip) is there for ad-hoc scripts in the workspace. Handlers, tests and the build stay TypeScript.
 
 ## Handlers
 

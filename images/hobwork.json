@@ -22,6 +22,7 @@
       "git",
       "nodejs",
       "npm",
+      "python3",
       "su-exec",
       "tzdata"
     ],
@@ -83,6 +84,7 @@
       "cd /opt/hobwork/platform && pnpm install --frozen-lockfile --store-dir /opt/hobwork/pnpm-store",
       "mkdir -p /opt/hobwork/platform/node_modules/@hobwork && mv /opt/hobwork/sdk /opt/hobwork/platform/node_modules/@hobwork/sdk && mv /opt/hobwork/theme /opt/hobwork/platform/node_modules/@hobwork/theme",
       "rm -rf /opt/hobwork/pnpm-store /root/.npm /root/.cache /root/.local /tmp/*",
+      "rm -rf /usr/lib/python3.*/ensurepip",
       "ln -s /opt/hobwork/platform/node_modules /node_modules",
       "mkdir -p /workspace",
       "adduser -D -u 1000 -h /home/agent -s /bin/bash agent",

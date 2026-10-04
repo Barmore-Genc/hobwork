@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { api, ApiError, type EntryPoints, type LastRun, type ProjectDetail, type Version } from '../api.ts'
 import { bytes, dayTime, exactTime, shortDate, timeAgo } from '../format.ts'
+import { kindChanged } from '../live.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice } from '../ui.tsx'
+import { usePaged } from '../usePaged.ts'
 import { DeleteProjectSection } from './project/DeleteProject.tsx'
 import { RenameProjectSection } from './project/RenameProject.tsx'
 import { BranchesSection } from './project/Branches.tsx'
@@ -357,7 +359,19 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
   const [busy, setBusy] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const [result, setResult] = useState<{ from: number; to: number; deployError?: string } | null>(null)
-  const current = project.versions.find((v) => v.number === project.currentVersion) ?? project.versions[0]
+  const {
+    items: versions,
+    more,
+    error,
+    loadingMore,
+    loadMore,
+  } = usePaged<Version>({
+    load: (oldest) => api.versions(project.name, oldest?.number).then((page) => ({ items: page.versions, more: page.more })),
+    key: project.name,
+    isOlder: (version, than) => version.number < than.number,
+    live: kindChanged('project', project.name),
+  })
+  const current = project.currentVersion ?? versions?.[0]?.number
 
   async function restore() {
     if (!target) return
@@ -391,12 +405,17 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
           </Notice>
         </div>
       )}
+      {error && (
+        <div className="mt-6">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
       <ol className="mt-8">
-        {project.versions.map((version) => (
+        {versions?.map((version) => (
           <VersionRow
             key={version.number}
             version={version}
-            current={version.number === current?.number}
+            current={version.number === current}
             onRestore={(v) => {
               setRestoreError(null)
               setTarget(v)
@@ -404,6 +423,11 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
           />
         ))}
       </ol>
+      {more && (
+        <Button onClick={loadMore} disabled={loadingMore}>
+          {loadingMore ? 'Loading…' : 'Show older versions'}
+        </Button>
+      )}
 
       <ConfirmDialog
         open={target !== null}
@@ -416,7 +440,7 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
       >
         <p>
           {project.name} goes back to how it was in version {target?.number}. This is saved as a new version, so version{' '}
-          {current?.number} stays in the list and you can switch back to it at any time.
+          {current} stays in the list and you can switch back to it at any time.
         </p>
         <p>Data the hob has saved stays as it is.</p>
       </ConfirmDialog>

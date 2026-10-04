@@ -101,12 +101,27 @@ test('a project without a rendered icon gets its first letter', async () => {
   expect((await get('/api/projects/nope/icon')).status).toBe(404)
 })
 
-test('project detail lists versions newest first', async () => {
+test('project detail shows the hob', async () => {
   await projectWithTwoVersions()
   const body = await jsonOf(await get('/api/projects/filament'))
-  expect(body).toMatchObject({ name: 'filament', status: 'ready' })
-  expect(body.versions.map((v: { number: number }) => v.number)).toEqual([2, 1])
+  expect(body).toMatchObject({ name: 'filament', status: 'ready', currentVersion: 2 })
   expect((await get('/api/projects/nope')).status).toBe(404)
+})
+
+test('versions are listed newest first, a page at a time', async () => {
+  await projectWithTwoVersions()
+  const numbers = (body: { versions: { number: number }[] }) => body.versions.map((v) => v.number)
+  const all = await jsonOf(await get('/api/projects/filament/versions'))
+  expect(numbers(all)).toEqual([2, 1])
+  expect(all.more).toBe(false)
+  const first = await jsonOf(await get('/api/projects/filament/versions?limit=1'))
+  expect(numbers(first)).toEqual([2])
+  expect(first.more).toBe(true)
+  const rest = await jsonOf(await get('/api/projects/filament/versions?limit=1&before=2'))
+  expect(numbers(rest)).toEqual([1])
+  expect(rest.more).toBe(false)
+  expect((await get('/api/projects/filament/versions?before=x')).status).toBe(400)
+  expect((await get('/api/projects/nope/versions')).status).toBe(404)
 })
 
 test('restoring a version commits it on main as the signed-in user', async () => {

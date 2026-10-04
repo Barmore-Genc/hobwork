@@ -135,6 +135,10 @@ test('agents cannot see or change the settings over the web API', async () => {
   expect((await call('PUT', '/api/projects/filament/ai', { limits }, agent)).status).toBe(401)
 })
 
+async function apiKey(res: Promise<Response>) {
+  return ((await (await res).json()) as { apiKey: { secret: unknown; ownKey: string[] } }).apiKey
+}
+
 test('people set the OpenRouter API key for all hobs, stored as a secret', async () => {
   await app.close()
   const secrets = createSecretStore(host, randomBytes(32))
@@ -142,12 +146,12 @@ test('people set the OpenRouter API key for all hobs, stored as a secret', async
   await createProject(host, 'alarms')
   secrets.create({ name: 'Alarms key', value: 'own', hosts: ['openrouter.ai'], assign: { project: 'alarms', envName: 'OPENROUTER_API_KEY' } }, { kind: 'host' })
 
-  expect((await (await call('GET', '/api/settings/ai')).json()).apiKey).toEqual({ secret: null, ownKey: ['alarms'] })
+  expect(await apiKey(call('GET', '/api/settings/ai'))).toEqual({ secret: null, ownKey: ['alarms'] })
   expect((await call('PUT', '/api/settings/ai/key', { value: '  ' })).status).toBe(400)
 
   const res = await call('PUT', '/api/settings/ai/key', { value: ' sk-or-1 ' })
   expect(res.status).toBe(200)
-  expect((await res.json()).apiKey).toMatchObject({ secret: { name: 'OpenRouter API key', updatedBy: 'Kaan' }, ownKey: ['alarms'] })
+  expect(await apiKey(Promise.resolve(res))).toMatchObject({ secret: { name: 'OpenRouter API key', updatedBy: 'Kaan' }, ownKey: ['alarms'] })
   expect(secrets.forSandbox('filament')).toEqual({ OPENROUTER_API_KEY: { value: 'sk-or-1', hosts: ['openrouter.ai'], headers: [] } })
   expect(JSON.stringify(await (await call('GET', '/api/settings/ai')).json())).not.toContain('sk-or-1')
 
@@ -155,8 +159,7 @@ test('people set the OpenRouter API key for all hobs, stored as a secret', async
   expect(secrets.forSandbox('filament').OPENROUTER_API_KEY?.value).toBe('sk-or-2')
   expect(secrets.list()).toHaveLength(2)
 
-  const removed = await call('DELETE', '/api/settings/ai/key')
-  expect((await removed.json()).apiKey.secret).toBeNull()
+  expect((await apiKey(call('DELETE', '/api/settings/ai/key'))).secret).toBeNull()
   expect(secrets.forSandbox('filament')).toEqual({})
   expect(secrets.forSandbox('alarms').OPENROUTER_API_KEY?.value).toBe('own')
 })

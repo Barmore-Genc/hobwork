@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api, ApiError, type Branch } from '../../api.ts'
 import { exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
-import { APP_FRAME_SANDBOX, ConfirmDialog, Notice } from '../../ui.tsx'
+import { APP_FRAME_SANDBOX, Button, ConfirmDialog, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { branchesChanged } from '../../live.ts'
 import { previewPath, projectPath } from './names.ts'
@@ -106,6 +106,61 @@ function HomeAssistantSwitch({
   )
 }
 
+function DeleteBranch({ project, branch, onChange }: { project: string; branch: Branch; onChange: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function remove() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.deleteBranch(project, branch.name)
+      setOpen(false)
+      onChange()
+    } catch (err) {
+      setError(message(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unmerged = branch.unmergedCommits
+  return (
+    <>
+      <Button
+        variant="quiet-danger"
+        onClick={() => {
+          setError(null)
+          setOpen(true)
+        }}
+      >
+        Delete
+      </Button>
+      <ConfirmDialog
+        open={open}
+        title={`Delete ${branch.name}?`}
+        confirmLabel="Delete branch"
+        variant="danger"
+        busy={busy}
+        error={error}
+        onConfirm={() => void remove()}
+        onCancel={() => setOpen(false)}
+      >
+        {unmerged > 0 ? (
+          <p>
+            This branch has {unmerged} {unmerged === 1 ? 'change' : 'changes'} that never went live. Deleting it throws{' '}
+            {unmerged === 1 ? 'it' : 'them'} away, along with anything an agent is still working on in it.
+          </p>
+        ) : (
+          <p>Everything on this branch is already live. Anything an agent is still working on in it is thrown away.</p>
+        )}
+        <p>Its preview and its copy of the saved data are removed too.</p>
+      </ConfirmDialog>
+    </>
+  )
+}
+
 function BranchRow({ project, branch, onChange }: { project: string; branch: Branch; onChange: () => void }) {
   const [latest] = branch.recentRuns
   return (
@@ -134,15 +189,31 @@ function BranchRow({ project, branch, onChange }: { project: string; branch: Bra
           ) : (
             <p className="mt-1 text-sm text-muted">Not tried yet</p>
           )}
+          {branch.merged && (
+            <p className="mt-1 text-sm text-muted">
+              Went live{' '}
+              <time dateTime={branch.merged.at} title={exactTime(branch.merged.at)}>
+                {timeAgo(branch.merged.at)}
+              </time>
+              . Deleted on{' '}
+              <time dateTime={branch.merged.cleanupAfter} title={exactTime(branch.merged.cleanupAfter)}>
+                {new Date(branch.merged.cleanupAfter).toLocaleDateString()}
+              </time>{' '}
+              unless it changes again.
+            </p>
+          )}
         </div>
-        {branch.previewUrl && (
-          <Link
-            to={previewPath(project, branch.name)}
-            className="inline-flex min-h-10 items-center rounded-md border border-border bg-surface-raised px-4 text-[0.95rem] font-semibold hover:border-muted"
-          >
-            Preview
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {branch.previewUrl && (
+            <Link
+              to={previewPath(project, branch.name)}
+              className="inline-flex min-h-10 items-center rounded-md border border-border bg-surface-raised px-4 text-[0.95rem] font-semibold hover:border-muted"
+            >
+              Preview
+            </Link>
+          )}
+          <DeleteBranch project={project} branch={branch} onChange={onChange} />
+        </div>
       </div>
       <HomeAssistantSwitch project={project} branch={branch} onChange={onChange} />
     </li>

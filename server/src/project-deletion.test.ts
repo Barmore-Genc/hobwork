@@ -211,7 +211,7 @@ test('agents have no MCP tool that deletes a project', async () => {
   try {
     const { tools } = await mcp.client.listTools()
     expect(tools.length).toBeGreaterThan(10)
-    expect(tools.filter((tool) => /delete|remove/.test(tool.name)).map((tool) => tool.name)).toEqual(['delete_file'])
+    expect(tools.filter((tool) => /delete|remove/.test(tool.name)).map((tool) => tool.name)).toEqual(['delete_branch', 'delete_file'])
   } finally {
     await mcp.close()
   }
@@ -221,9 +221,9 @@ test('the trash keeps a deleted project for 7 days', async () => {
   const now = Date.now()
   await deleteProject({ host, workspaces, delivery, runtime, data, now: () => now }, 'filament')
   expect(purgeTrash(host, now + 6 * 24 * 3600_000)).toEqual([])
-  await runHousekeeping(host, runtime, now + 6.9 * 24 * 3600_000)
+  await runHousekeeping(host, { runtime }, now + 6.9 * 24 * 3600_000)
   expect(readdirSync(trashDir(host))).toHaveLength(1)
-  await runHousekeeping(host, runtime, now + 7 * 24 * 3600_000 + 1)
+  await runHousekeeping(host, { runtime }, now + 7 * 24 * 3600_000 + 1)
   expect(readdirSync(trashDir(host))).toEqual([])
 })
 

@@ -1,3 +1,4 @@
+import { forgetBranchMerge } from './branch-merges.ts'
 import { publishChange } from './changes.ts'
 import { git, GitError } from './git.ts'
 import { repoPath, type Host } from './host.ts'
@@ -100,6 +101,8 @@ export async function createBranch(
     throw new ProjectError(`Branch "${branch}" already exists in ${project}`)
   }
   await git(['--git-dir', repo, 'update-ref', `refs/heads/${branch}`, start, ''])
+  // A merge of an earlier branch with this name must not get the new one cleaned up.
+  forgetBranchMerge(host, requireProject(host, project).id, branch)
   publishChange(host.db, { kind: 'branches', project })
   const created = (await listBranches(host, project)).find((b) => b.name === branch)
   if (!created) throw new Error(`Branch ${branch} missing after creation`)

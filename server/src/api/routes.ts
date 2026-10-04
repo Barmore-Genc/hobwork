@@ -42,6 +42,7 @@ import {
 import type { StorageUsage } from '../storage.ts'
 import { addSshKey, listSshKeys, revokeSshKey, SshKeyError } from '../ssh/keys.ts'
 import { getVersion, listVersions, type Version } from '../versions.ts'
+import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 
 // ready: deployed, and the runtime starts when something calls it.
 export type ProjectStatus = 'ready' | 'running' | 'updating'
@@ -158,6 +159,7 @@ export function createApiRoutes(options: {
   host: Host
   auth: Auth
   delivery: Delivery
+  workspaces: WorkspaceManager<ExecWorkspaceVm>
   publicUrl: string
   appOrigin?: (target: AppTarget) => string | undefined
   runtime?: Runtime
@@ -282,7 +284,7 @@ export function createApiRoutes(options: {
   }
 
   const routes: ApiRoute[] = [
-    ...branchRoutes({ host, runtime, appOrigin: options.appOrigin }),
+    ...branchRoutes({ host, runtime, appOrigin: options.appOrigin, workspaces: options.workspaces, delivery, data: options.data }),
     {
       method: 'GET',
       pattern: /^\/api\/projects$/,

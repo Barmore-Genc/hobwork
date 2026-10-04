@@ -130,6 +130,7 @@ export function createApp(
     host,
     auth,
     delivery,
+    workspaces,
     publicUrl: web.publicUrl,
     appOrigin: origins.origin,
     runtime: options.runtime,

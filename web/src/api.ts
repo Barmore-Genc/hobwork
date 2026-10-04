@@ -155,6 +155,8 @@ export type DeletedProject = {
 export type Branch = {
   name: string
   head: { sha: string; subject: string; updatedAt: string }
+  unmergedCommits: number
+  merged: { at: string; cleanupAfter: string } | null
   previewUrl: string | null
   running: boolean
   homeAssistant: { by: string; byAgent: boolean; grantedAt: string } | null
@@ -466,6 +468,8 @@ export const api = {
       'PUT',
       `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/home-assistant`,
     ),
+  deleteBranch: (project: string, branch: string) =>
+    request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}`),
   stopBranchHomeAssistant: (project: string, branch: string) =>
     request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/home-assistant`),
   invocations: (project: string, filter: InvocationFilter) =>

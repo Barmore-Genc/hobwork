@@ -105,6 +105,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'commit',
       'create_branch',
       'create_hob',
+      'delete_branch',
       'delete_file',
       'diff',
       'edit_file',

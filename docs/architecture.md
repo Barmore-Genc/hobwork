@@ -209,6 +209,7 @@ The guest image contains one **platform dependency set** (React, Tailwind, Vite,
 
 - Updating the platform set means rebuilding the image. Deployed builds bundle their dependencies (see [Runtime](#runtime)), so they keep running unchanged; each hob's next workspace, pipeline run or build uses the new versions.
 - Hobs can add extra npm packages in their `package.json`, installed on top of the platform set. This is allowed but discouraged, and `AGENTS.md` says so.
+- The image has `python3` for ad-hoc scripts in workspaces (data wrangling, one-off checks). It is tooling only: handlers are TypeScript, and Python has no package manager in the VMs. pip is not installed and `ensurepip` is deleted from the image, so Python gets no packages beyond its standard library and cannot bypass the npm install protections below.
 
 How the layering works (prototyped in `server/src/sandbox/gondolin.test.ts`):
 

@@ -47,7 +47,7 @@ function oauthAccessToken(): string {
     { clientId: client.id, redirectUri, state: null, codeChallenge: s256(verifier), resource: `${TEST_PUBLIC_URL}/mcp`, scope: null },
     now,
   )
-  const approved = approveRequest(host.db, { request: getRequest(host.db, id, now)!, client, agentName: 'Claude', access: FULL_ACCESS, userId, now })
+  const approved = approveRequest(host.db, { request: getRequest(host.db, id, now)!, client, agent: { name: 'Claude' }, access: FULL_ACCESS, userId, now })
   return exchangeCode(host.db, { client, code: approved!.code, redirectUri, verifier, resource: undefined, now }).access_token
 }
 

@@ -300,7 +300,11 @@ export type ConnectRequest = {
   client: { name: string; uri: string | null; domain: string | null }
   redirectHost: string
   loopback: boolean
+  // A free name for a new agent.
   agentName: string
+  // Existing agents the app can connect as, with the access of their latest sign-in or key.
+  agents: { id: number; name: string; access: Access | null }[]
+  suggested: number | null
 }
 
 export type Device = {
@@ -511,9 +515,9 @@ export const api = {
     request<SshKey>('POST', `/api/agents/${agentId}/ssh-keys`, { name, publicKey }),
   revokeSshKey: (id: number) => request<void>('POST', `/api/ssh-keys/${id}/revoke`),
   connectRequest: (id: string) => request<ConnectRequest>('GET', `/api/oauth/requests/${encodeURIComponent(id)}`),
-  approveConnect: (id: string, agentName: string, access: Access) =>
+  approveConnect: (id: string, agent: { agentId: number } | { agentName: string }, access: Access) =>
     request<{ redirectTo: string }>('POST', `/api/oauth/requests/${encodeURIComponent(id)}/approve`, {
-      agentName,
+      ...agent,
       access,
     }),
   denyConnect: (id: string) =>

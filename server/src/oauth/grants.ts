@@ -105,24 +105,62 @@ function transaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
-// Creates the agent and its grant and returns the one-time authorization code,
-// or undefined when the request was already answered.
+export type ConsentAgent = { id: number; name: string; access: Access | null }
+
+// The agents a person can connect an app as on the consent page, each with the
+// access of its latest sign-in or key to start from. The suggestion is the agent
+// this app signed in as last, or one with its name: a client registering again
+// gets a new client ID, so its name is all that links it to the old connection.
+export function consentAgents(db: DatabaseSync, clientName: string): { agents: ConsentAgent[]; suggested: number | null } {
+  const grantAccess = loadAllAccess(db, 'grant')
+  const tokenAccess = loadAllAccess(db, 'token')
+  const latest = (sql: string, id: number) => {
+    const row = db.prepare(sql).get(id)
+    return row ? Number(row.id) : undefined
+  }
+  const agents = db
+    .prepare('SELECT id, name FROM agents ORDER BY name')
+    .all()
+    .map((row) => {
+      const id = Number(row.id)
+      const grant = latest('SELECT id FROM oauth_grants WHERE agent_id = ? ORDER BY id DESC LIMIT 1', id)
+      const token = latest('SELECT id FROM agent_tokens WHERE agent_id = ? ORDER BY id DESC LIMIT 1', id)
+      const access = grant !== undefined ? grantAccess.get(grant) : token !== undefined ? tokenAccess.get(token) : undefined
+      return { id, name: String(row.name), access: access ?? null }
+    })
+  const previous =
+    db.prepare('SELECT agent_id AS id FROM oauth_grants WHERE client_name = ? ORDER BY id DESC LIMIT 1').get(clientName) ??
+    db.prepare('SELECT id FROM agents WHERE name = ?').get(clientName.trim())
+  return { agents, suggested: previous ? Number(previous.id) : null }
+}
+
+// Creates the grant, for a new agent or one the person picked, and returns the
+// one-time authorization code, or undefined when the request was already
+// answered. Earlier grants of an existing agent stay as they are.
 export function approveRequest(
   db: DatabaseSync,
   options: {
     request: AuthorizationRequest
     client: OAuthClient
-    agentName: string
+    agent: { name: string } | { id: number }
     access: Access
     userId: number
     now: number
   },
 ): { code: string; agent: Agent } | undefined {
-  const { request, client, agentName, access, userId, now } = options
+  const { request, client, access, userId, now } = options
   return transaction(db, () => {
     const pending = db.prepare('DELETE FROM oauth_requests WHERE id = ?').run(request.id)
     if (Number(pending.changes) === 0) return undefined
-    const agent = createAgent(db, agentName)
+    let agent: Agent
+    if ('id' in options.agent) {
+      const existing = getAgent(db, options.agent.id)
+      if (!existing) throw new Error(`Agent ${options.agent.id} does not exist`)
+      agent = existing
+      publishChange(db, { kind: 'agents' })
+    } else {
+      agent = createAgent(db, options.agent.name)
+    }
     const grant = db
       .prepare(
         `INSERT INTO oauth_grants (agent_id, client_id, client_name, redirect_host, resource, scope, user_id, created_at)

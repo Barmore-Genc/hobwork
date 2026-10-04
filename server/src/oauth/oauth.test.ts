@@ -313,6 +313,67 @@ test('the user can rename the agent and a second connection gets its own agent',
   expect(names).toEqual(['Claude on the phone', 'Manual', 'Manual 2'])
 })
 
+test('a client that registers again can reconnect as its agent and keep its SSH keys', async () => {
+  host.db.prepare('INSERT INTO projects (name) VALUES (?)').run('garden')
+  const first = await registeredClient()
+  const old = await tokensFor(first.client_id, { readOnly: true, projects: ['garden'] })
+  const [manual] = await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))
+  const sshKey = addSshKey(host.db, manual.id, 'laptop', generateEd25519KeyPair().public, {
+    via: 'agent',
+    credential: { kind: 'grant', id: manual.connections[0].id },
+  })
+
+  const second = await registeredClient()
+  const { url, verifier } = authorizeUrl(second.client_id)
+  const res = await fetch(url, { redirect: 'manual' })
+  const id = new URL(res.headers.get('location')!, app.base).searchParams.get('request')
+  const info = await jsonOf(await fetch(`${app.base}/api/oauth/requests/${id}`, { headers: { cookie } }))
+  expect(info).toMatchObject({
+    agentName: 'Manual 2',
+    suggested: manual.id,
+    agents: [{ id: manual.id, name: 'Manual', access: { readOnly: true, projects: ['garden'] } }],
+  })
+
+  const approve = (body: unknown) =>
+    fetch(`${app.base}/api/oauth/requests/${id}/approve`, {
+      method: 'POST',
+      headers: writeHeaders(cookie, app.base),
+      body: JSON.stringify(body),
+    })
+  expect((await approve({ agentId: 9999 })).status).toBe(400)
+  expect((await approve({ agentId: String(manual.id) })).status).toBe(400)
+  const answered = await approve({ agentId: manual.id, access: { readOnly: false, projects: ['garden'] } })
+  expect(answered.status).toBe(200)
+  const exchanged = await form('/oauth/token', {
+    grant_type: 'authorization_code',
+    client_id: second.client_id,
+    code: new URL((await jsonOf(answered)).redirectTo).searchParams.get('code')!,
+    redirect_uri: 'https://app.example/callback',
+    code_verifier: verifier,
+    resource: mcpUrl(),
+  })
+  expect(exchanged.status).toBe(200)
+  expect((await mcpRequest((await jsonOf(exchanged)).access_token)).status).toBe(200)
+  expect((await mcpRequest(old.access_token)).status).toBe(200)
+
+  const agents = await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))
+  expect(agents).toHaveLength(1)
+  expect(agents[0].connections.map((c: any) => [c.access.readOnly, c.revokedAt])).toEqual([
+    [false, null],
+    [true, null],
+  ])
+  expect(listSshKeys(host.db, manual.id).map((k) => [k.id, k.revokedAt])).toEqual([[sshKey.id, null]])
+})
+
+test('without a choice on the consent page a client is never attached to an agent with its name', async () => {
+  const { client_id } = await registeredClient()
+  await tokensFor(client_id)
+  const second = await consent(authorizeUrl((await registeredClient()).client_id).url)
+  expect(second.info.suggested).not.toBeNull()
+  const names = (await jsonOf(await fetch(`${app.base}/api/agents`, { headers: { cookie } }))).map((a: any) => a.name)
+  expect(names).toEqual(['Manual', 'Manual 2'])
+})
+
 test('consent needs a signed-in user and the CSRF header', async () => {
   const { client_id } = await registeredClient()
   const res = await fetch(authorizeUrl(client_id).url, { redirect: 'manual' })

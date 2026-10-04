@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DatabaseSync } from 'node:sqlite'
 import { AccessError, parseAccess } from '../access.ts'
-import { agentNameTaken, freeAgentName, MAX_AGENT_NAME } from '../agents.ts'
+import { agentNameTaken, freeAgentName, getAgent, MAX_AGENT_NAME } from '../agents.ts'
 import type { Auth } from '../auth/auth.ts'
 import { HttpError, json, readForm, readJson, redirect } from '../http.ts'
 import { ClientError, createClientStore, isLoopback, redirectUriAllowed, registerClient, secretMatches, type OAuthClient } from './clients.ts'
 import {
   approveRequest,
+  consentAgents,
   deleteRequest,
   exchangeCode,
   getRequest,
@@ -315,6 +316,7 @@ export function createOAuthServer(options: {
         redirectHost: new URL(request.redirectUri).host,
         loopback: isLoopback(request.redirectUri),
         agentName: freeAgentName(db, client.name),
+        ...consentAgents(db, client.name),
       })
     }
     if (action === '/deny') {
@@ -326,11 +328,19 @@ export function createOAuthServer(options: {
       url.searchParams.set('iss', issuer)
       return json(res, 200, { redirectTo: url.href })
     }
-    const body = (await readJson(req)) as { agentName?: unknown; access?: unknown }
-    const agentName = typeof body?.agentName === 'string' ? body.agentName.trim() : ''
-    if (!agentName) throw new HttpError(400, 'Give the agent a name')
-    if (agentName.length > MAX_AGENT_NAME) throw new HttpError(400, `Use at most ${MAX_AGENT_NAME} characters`)
-    if (agentNameTaken(db, agentName)) throw new HttpError(409, `An agent called "${agentName}" already exists`)
+    const body = (await readJson(req)) as { agentId?: unknown; agentName?: unknown; access?: unknown }
+    let agent: { id: number } | { name: string }
+    if (body?.agentId !== undefined && body.agentId !== null) {
+      if (!Number.isSafeInteger(body.agentId)) throw new HttpError(400, 'agentId must be an agent ID')
+      if (!getAgent(db, body.agentId as number)) throw new HttpError(400, 'That agent no longer exists')
+      agent = { id: body.agentId as number }
+    } else {
+      const agentName = typeof body?.agentName === 'string' ? body.agentName.trim() : ''
+      if (!agentName) throw new HttpError(400, 'Give the agent a name')
+      if (agentName.length > MAX_AGENT_NAME) throw new HttpError(400, `Use at most ${MAX_AGENT_NAME} characters`)
+      if (agentNameTaken(db, agentName)) throw new HttpError(409, `An agent called "${agentName}" already exists`)
+      agent = { name: agentName }
+    }
     let access
     try {
       access = parseAccess(db, body?.access)
@@ -338,7 +348,7 @@ export function createOAuthServer(options: {
       if (err instanceof AccessError) throw new HttpError(400, err.message)
       throw err
     }
-    const approved = approveRequest(db, { request, client, agentName, access, userId: user.id, now: now() })
+    const approved = approveRequest(db, { request, client, agent, access, userId: user.id, now: now() })
     if (!approved) throw new HttpError(404, 'This connection request was already answered.')
     const { code } = approved
     const url = new URL(request.redirectUri)

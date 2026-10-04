@@ -37,9 +37,15 @@ export function Frame({ children }: { children: ReactNode }) {
   )
 }
 
+const INPUT_CLASS =
+  'mt-2 min-h-10 w-full rounded-md border border-border bg-surface-raised px-3 text-fg focus:border-accent focus:outline-none'
+
 function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
   const [agentName, setAgentName] = useState(request.agentName)
-  const [access, setAccess] = useState<Access>(READ_ONLY_ACCESS)
+  // null for a new agent.
+  const [agentId, setAgentId] = useState<number | null>(request.suggested)
+  const agent = request.agents.find((a) => a.id === agentId)
+  const [access, setAccess] = useState<Access>(agent?.access ?? READ_ONLY_ACCESS)
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { client } = request
@@ -50,7 +56,9 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
     setError(null)
     try {
       const { redirectTo } =
-        action === 'allow' ? await api.approveConnect(id, agentName.trim(), access) : await api.denyConnect(id)
+        action === 'allow'
+          ? await api.approveConnect(id, agent ? { agentId: agent.id } : { agentName: agentName.trim() }, access)
+          : await api.denyConnect(id)
       window.location.assign(redirectTo)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
@@ -75,6 +83,37 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
         </div>
       )}
 
+      {request.agents.length > 0 && (
+        <div className="mt-8">
+          <label htmlFor="agent" className="font-semibold">
+            Connect as
+          </label>
+          <select
+            id="agent"
+            value={agent ? String(agent.id) : 'new'}
+            onChange={(e) => {
+              const next = request.agents.find((a) => String(a.id) === e.target.value)
+              setAgentId(next?.id ?? null)
+              if (next?.access) setAccess(next.access)
+            }}
+            className={INPUT_CLASS}
+          >
+            <option value="new">A new agent</option>
+            {request.agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          {agent && (
+            <p className="mt-1.5 text-sm text-muted">
+              {agent.name} keeps its SSH keys and its other sign-ins. You can take access away in Agent access at any
+              time.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="mt-8">
         <AccessPicker access={access} onChange={setAccess} />
       </div>
@@ -94,20 +133,22 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
         <p className="mt-4 text-sm text-muted">It cannot manage people, agents, or the values of secrets.</p>
       </section>
 
-      <div className="mt-6">
-        <label htmlFor="agent-name" className="font-semibold">
-          Name in Agent access
-        </label>
-        <input
-          id="agent-name"
-          value={agentName}
-          onChange={(e) => setAgentName(e.target.value)}
-          maxLength={64}
-          required
-          className="mt-2 min-h-10 w-full rounded-md border border-border bg-surface-raised px-3 text-fg focus:border-accent focus:outline-none"
-        />
-        <p className="mt-1.5 text-sm text-muted">You can take access away there at any time.</p>
-      </div>
+      {!agent && (
+        <div className="mt-6">
+          <label htmlFor="agent-name" className="font-semibold">
+            Name in Agent access
+          </label>
+          <input
+            id="agent-name"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            maxLength={64}
+            required
+            className={INPUT_CLASS}
+          />
+          <p className="mt-1.5 text-sm text-muted">You can take access away there at any time.</p>
+        </div>
+      )}
 
       <p className="mt-6 text-sm text-muted">
         After you answer, Hobwork sends you to <strong className="font-semibold text-fg">{request.redirectHost}</strong>.
@@ -124,7 +165,7 @@ function ConnectForm({ id, request }: { id: string; request: ConnectRequest }) {
         <Button variant="quiet" onClick={() => answer('deny')} disabled={busy !== null}>
           {busy === 'deny' ? 'Cancelling…' : 'Cancel'}
         </Button>
-        <Button type="submit" variant="primary" disabled={busy !== null || !agentName.trim() || !accessReady(access)}>
+        <Button type="submit" variant="primary" disabled={busy !== null || (!agent && !agentName.trim()) || !accessReady(access)}>
           {busy === 'allow' ? 'Allowing…' : 'Allow access'}
         </Button>
       </div>

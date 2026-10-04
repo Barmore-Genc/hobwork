@@ -121,7 +121,7 @@ await backfillHaServices(host)
 await backfillHaEvents(host)
 homeAssistant.start()
 await runtime.start()
-const housekeeping = startHousekeeping(host, runtime)
+const housekeeping = startHousekeeping(host, { runtime, branches: { workspaces, delivery, runtime, data } })
 const storage = createStorageUsage(host)
 void storage.measureAll(listProjects(host))
 

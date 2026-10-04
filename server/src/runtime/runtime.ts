@@ -869,16 +869,28 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     )
       .flat()
       .filter((inst): inst is Instance => inst !== undefined)
-    await Promise.all(
-      [...new Set(instances)].map(async (inst) => {
-        if (inst.stopping) return
-        inst.stopping = true
-        clearTimeout(inst.idleTimer)
-        clearTimeout(inst.lifetimeTimer)
-        await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
-      }),
-    )
+    await Promise.all([...new Set(instances)].map((inst) => stopNow(project, inst)))
     for (const [, s] of states) if (s.branch !== undefined) await options.data?.closeBranch(project, s.branch)
+  }
+
+  async function stopNow(project: string, inst: Instance): Promise<void> {
+    if (inst.stopping) return
+    inst.stopping = true
+    clearTimeout(inst.idleTimer)
+    clearTimeout(inst.lifetimeTimer)
+    await inst.sandbox.stop().catch((err: unknown) => console.error(`Stopping the runtime VM of ${project} failed`, err))
+  }
+
+  // Stops a branch's preview right away, without waiting for running invocations.
+  async function removePreview(project: string, branch: string): Promise<void> {
+    const key = `${project}\0${branch}`
+    const s = projects.get(key)
+    if (!s) return
+    projects.delete(key)
+    const starting = await s.starting?.promise.catch(() => undefined)
+    for (const inst of new Set([s.instance, starting])) if (inst) await stopNow(project, inst)
+    changed(project, branch)
+    await removeOldBuilds(project)
   }
 
   // Registers the crons and triggers of the project's current version.
@@ -891,6 +903,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     invoke,
     load,
     remove,
+    removePreview,
     // Called once the project is gone, so its name can be used again.
     forget(project: string): void {
       for (const [key] of statesOf(project)) projects.delete(key)

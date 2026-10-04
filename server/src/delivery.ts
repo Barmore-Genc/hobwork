@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent } from './agents.ts'
 import type { User } from './auth/users.ts'
+import { recordBranchMerge } from './branch-merges.ts'
 import { git, GitError, HOBWORK_IDENTITY } from './git.ts'
 import { repoPath, type Host } from './host.ts'
 import { allowedBuildsChange } from './pipeline/pnpm-settings.ts'
@@ -189,6 +190,7 @@ export function createDelivery(host: Host, options: DeliveryOptions) {
           candidate.branchHead,
           candidate.commit,
         )
+        if (branchReset) recordBranchMerge(host, projectId, branch, candidate.commit)
         const deployError = await deployVersion({
           project,
           version: version.number,

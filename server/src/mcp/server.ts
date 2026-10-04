@@ -33,6 +33,8 @@ import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 import { registerRuntimeTools } from './runtime.ts'
 import { registerSecretTools } from './secrets.ts'
 import { registerSshKeyTools, type SshAddress } from './ssh-keys.ts'
+import { deleteBranch } from '../branch-deletion.ts'
+import { MERGED_BRANCH_DAYS } from '../branch-merges.ts'
 
 export type McpContext = {
   host: Host
@@ -261,6 +263,23 @@ export function createMcpServer({
       },
     },
     async ({ hob: p, branch: b, from }) => json(await createBranch(host, p, b, from)),
+  )
+
+  server.registerTool(
+    'delete_branch',
+    {
+      description: `Delete a branch with its workspace, its copy of the DB and its preview. Refuses while the branch has commits that ${DEFAULT_BRANCH} does not have or uncommitted changes, unless discard_changes is true. Merged branches are deleted automatically ${MERGED_BRANCH_DAYS} days after their last merge if nothing changed on them since.`,
+      inputSchema: {
+        hob,
+        branch: writableBranch,
+        discard_changes: z.boolean().default(false).describe('Delete the branch even if that throws away work that is not merged'),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ hob: p, branch: b, discard_changes }) => {
+      await deleteBranch({ host, workspaces, delivery, runtime, data }, p, b, { discard: discard_changes })
+      return text(`Deleted ${b}`)
+    },
   )
 
   server.registerTool(

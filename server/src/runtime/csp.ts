@@ -29,15 +29,16 @@ function allowed(directive: string, source: string): boolean {
 }
 
 // The policy for hob UIs and route responses on an app origin: no inline
-// scripts, no plugins, and only the Hobwork web UI may frame it. The theme and
-// its fonts are served from the app origin itself.
-export function contentSecurityPolicy(hobworkOrigin: string, loosen: CspSources = {}): string {
+// scripts, no plugins, and only the Hobwork web UI may frame it
+// (`frameAncestors` is its origin, or `*` for a page opened with a share
+// link). The theme and its fonts are served from the app origin itself.
+export function contentSecurityPolicy(frameAncestors: string, loosen: CspSources = {}): string {
   const directives = ["default-src 'self'"]
   for (const [name, { base, always }] of Object.entries(LOOSENABLE)) {
     const extra = (Object.hasOwn(loosen, name) ? loosen[name]! : []).filter((source) => allowed(name, source))
     if (extra.length > 0 || always) directives.push(`${name} ${[...new Set([...base, ...extra])].join(' ')}`)
   }
   // The host adds <base href="/"> to the page, so 'none' would block it.
-  directives.push("object-src 'none'", "base-uri 'self'", `frame-ancestors ${hobworkOrigin}`)
+  directives.push("object-src 'none'", "base-uri 'self'", `frame-ancestors ${frameAncestors}`)
   return directives.join('; ')
 }

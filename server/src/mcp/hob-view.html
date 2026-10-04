@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hobwork</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--color-background-primary, light-dark(#ffffff, #1c1b1a));
+    --fg: var(--color-text-primary, light-dark(#1c1b1a, #f4f2ee));
+    --muted: var(--color-text-secondary, light-dark(#6b6862, #a8a49c));
+    --border: var(--color-border-primary, light-dark(#e2dfd8, #3a3835));
+    --radius: var(--border-radius-md, 8px);
+    --font: var(--font-sans, system-ui, sans-serif);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 var(--font); }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  #title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #branch { color: var(--muted); font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+  #branch:empty { display: none; }
+  .spacer { flex: 1; }
+  button { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button[hidden] { display: none; }
+  #frame { display: block; width: 100%; height: 560px; border: 0; background: var(--bg); }
+  html.fullscreen #frame { height: calc(100vh - 47px); }
+  #message { padding: 24px 12px; color: var(--muted); }
+  #message[hidden], #frame[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <span id="title">Hobwork</span>
+  <span id="branch"></span>
+  <span class="spacer"></span>
+  <button id="fullscreen" type="button" hidden>Full screen</button>
+  <button id="open" type="button" hidden>Open</button>
+</header>
+<div id="message">Opening the app…</div>
+<iframe id="frame" hidden title="Hob app" referrerpolicy="no-referrer"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>
+<script>
+  // MCP Apps (io.modelcontextprotocol/ui): JSON-RPC over postMessage with the
+  // host. The show_hob result carries the share link, which this view frames.
+  const PROTOCOL_VERSION = '2026-01-26'
+  const els = {
+    title: document.getElementById('title'),
+    branch: document.getElementById('branch'),
+    open: document.getElementById('open'),
+    fullscreen: document.getElementById('fullscreen'),
+    message: document.getElementById('message'),
+    frame: document.getElementById('frame'),
+  }
+  let nextId = 1
+  const pending = new Map()
+  let url
+  let displayMode = 'inline'
+  let hostModes = []
+  let canOpenLinks = false
+
+  function send(message) {
+    window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*')
+  }
+
+  function request(method, params) {
+    const id = nextId++
+    send({ id, method, params })
+    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }))
+  }
+
+  function notify(method, params) {
+    send({ method, params })
+  }
+
+  function showMessage(text) {
+    els.message.textContent = text
+    els.message.hidden = false
+    els.frame.hidden = true
+  }
+
+  function applyContext(context) {
+    if (!context) return
+    if (context.theme) document.documentElement.style.colorScheme = context.theme
+    const variables = context.styles && context.styles.variables
+    if (variables) {
+      for (const [name, value] of Object.entries(variables)) {
+        if (name.startsWith('--') && typeof value === 'string') document.documentElement.style.setProperty(name, value)
+      }
+    }
+    if (Array.isArray(context.availableDisplayModes)) hostModes = context.availableDisplayModes
+    if (context.displayMode) displayMode = context.displayMode
+    document.documentElement.classList.toggle('fullscreen', displayMode === 'fullscreen')
+    els.fullscreen.textContent = displayMode === 'fullscreen' ? 'Exit full screen' : 'Full screen'
+    els.fullscreen.hidden = !url || !hostModes.includes('fullscreen')
+  }
+
+  function showLink(result) {
+    const data = result && result.structuredContent
+    const link = data && typeof data.url === 'string' ? data.url : undefined
+    let parsed
+    try {
+      parsed = link && new URL(link)
+    } catch {}
+    if (result && result.isError || !parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
+      const text = result && Array.isArray(result.content) ? result.content.map((c) => c.type === 'text' ? c.text : '').join('\n') : ''
+      return showMessage(text || 'Hobwork could not open this app.')
+    }
+    url = parsed.href
+    els.title.textContent = data.hob || 'Hobwork'
+    els.branch.textContent = data.branch || ''
+    els.open.hidden = false
+    els.fullscreen.hidden = !hostModes.includes('fullscreen')
+    els.message.hidden = true
+    els.frame.hidden = false
+    els.frame.src = url
+  }
+
+  els.open.addEventListener('click', () => {
+    if (!url) return
+    if (canOpenLinks) request('ui/open-link', { url }).catch(() => window.open(url, '_blank', 'noopener'))
+    else window.open(url, '_blank', 'noopener')
+  })
+
+  els.fullscreen.addEventListener('click', () => {
+    const mode = displayMode === 'fullscreen' ? 'inline' : 'fullscreen'
+    request('ui/request-display-mode', { mode }).then((result) => applyContext({ displayMode: result && result.mode })).catch(() => {})
+  })
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent) return
+    const message = event.data
+    if (!message || message.jsonrpc !== '2.0') return
+    if (message.id !== undefined && message.method === undefined) {
+      const waiting = pending.get(message.id)
+      if (!waiting) return
+      pending.delete(message.id)
+      if (message.error) waiting.reject(new Error(message.error.message))
+      else waiting.resolve(message.result)
+      return
+    }
+    switch (message.method) {
+      case 'ui/notifications/tool-input': {
+        const args = (message.params && message.params.arguments) || {}
+        if (typeof args.hob === 'string') els.title.textContent = args.hob
+        if (typeof args.branch === 'string') els.branch.textContent = args.branch
+        break
+      }
+      case 'ui/notifications/tool-result':
+        showLink(message.params)
+        break
+      case 'ui/notifications/tool-cancelled':
+        showMessage('Cancelled.')
+        break
+      case 'ui/notifications/host-context-changed':
+        applyContext(message.params)
+        break
+      case 'ui/resource-teardown':
+      case 'ping':
+        if (message.id !== undefined) send({ id: message.id, result: {} })
+        break
+      default:
+        if (message.id !== undefined) send({ id: message.id, error: { code: -32601, message: 'Method not found' } })
+    }
+  })
+
+  // The host sizes the view from these when its height is flexible.
+  let lastHeight = 0
+  new ResizeObserver(() => {
+    const height = Math.ceil(document.documentElement.getBoundingClientRect().height)
+    if (height === lastHeight) return
+    lastHeight = height
+    notify('ui/notifications/size-changed', { width: Math.ceil(document.documentElement.getBoundingClientRect().width), height })
+  }).observe(document.documentElement)
+
+  request('ui/initialize', {
+    appInfo: { name: 'Hobwork', version: '0.0.0' },
+    appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+    protocolVersion: PROTOCOL_VERSION,
+  })
+    .then((result) => {
+      canOpenLinks = Boolean(result && result.hostCapabilities && result.hostCapabilities.openLinks)
+      applyContext(result && result.hostContext)
+      notify('ui/notifications/initialized', {})
+    })
+    .catch(() => showMessage('This chat app could not start the Hobwork view.'))
+</script>
+</body>
+</html>

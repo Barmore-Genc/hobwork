@@ -129,6 +129,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'rotate_webhook_token',
       'search',
       'set_ai_model',
+      'show_hob',
       'tail_logs',
       'unassign_secret',
       'write_file',

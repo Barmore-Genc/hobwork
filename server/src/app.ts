@@ -116,6 +116,7 @@ export function createApp(
     devices,
     ai: options.ai,
     appOrigin: origins.origin,
+    appsUrl: origins.appsUrl,
   })
 
   const handleAuth = createAuthRoutes({

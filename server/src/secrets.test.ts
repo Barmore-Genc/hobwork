@@ -279,3 +279,55 @@ test('refuses more than ten headers', () => {
   const headers = Array.from({ length: 11 }, (_, i) => `x-key-${i}`)
   expect(() => store.create({ name: 'New', value: 'x', hosts: ['a.example'], headers }, HOST)).toThrow('at most 10 headers')
 })
+
+test('a secret for all hobs reaches every hob without its own secret under that env name', () => {
+  const user: Actor = { kind: 'user', id: 1, name: 'Kaan' }
+  host.db.prepare("INSERT INTO users (id, name, email) VALUES (1, 'Kaan', 'kaan@example.com')").run()
+  const own = store.create(
+    { name: 'Alarms key', value: 'alarms-key', hosts: ['openrouter.ai'], assign: { project: 'alarms', envName: 'OPENROUTER_API_KEY' } },
+    user,
+  )
+  store.create({ name: 'OpenRouter API key', value: 'taken', hosts: [] }, user)
+  const before = store.fingerprint('filament')
+
+  const shared = store.setForAllHobs('OPENROUTER_API_KEY', { name: 'OpenRouter API key', value: 'shared-key', hosts: ['openrouter.ai'] }, user)
+  expect(shared).toMatchObject({ name: 'OpenRouter API key 2', hosts: ['openrouter.ai'], assignments: [], allHobs: { envName: 'OPENROUTER_API_KEY' } })
+  expect(store.forSandbox('filament')).toEqual({ OPENROUTER_API_KEY: { value: 'shared-key', hosts: ['openrouter.ai'], headers: [] } })
+  expect(store.forSandbox('alarms').OPENROUTER_API_KEY?.value).toBe('alarms-key')
+  expect(store.assigned('filament')).toMatchObject([{ envName: 'OPENROUTER_API_KEY', secret: 'OpenRouter API key 2', allHobs: true }])
+  expect(store.assigned('alarms')).toMatchObject([{ envName: 'OPENROUTER_API_KEY', secretId: own.id, allHobs: false }])
+  expect(store.hosts('filament')).toEqual(['openrouter.ai'])
+  expect(store.projectsWithOwn('OPENROUTER_API_KEY')).toEqual(['alarms'])
+  expect(store.fingerprint('filament')).not.toBe(before)
+  expect(store.unassign('filament', 'OPENROUTER_API_KEY', user)).toBe(false)
+
+  const changed = store.fingerprint('filament')
+  store.setForAllHobs('OPENROUTER_API_KEY', { name: 'ignored', value: 'new-key', hosts: [] }, user)
+  expect(store.forSandbox('filament').OPENROUTER_API_KEY).toEqual({ value: 'new-key', hosts: ['openrouter.ai'], headers: [] })
+  expect(store.list().map((secret) => secret.name)).toEqual(['Alarms key', 'OpenRouter API key', 'OpenRouter API key 2'])
+  expect(store.fingerprint('filament')).not.toBe(changed)
+
+  expect(() => store.setForAllHobs('OPENROUTER_API_KEY', { name: 'x', value: 'y', hosts: [] }, { kind: 'agent', id: 1, name: 'claude' })).toThrow(
+    'Only people',
+  )
+  expect(store.removeForAllHobs('OPENROUTER_API_KEY', user)).toBe(true)
+  expect(store.forSandbox('filament')).toEqual({})
+  expect(store.get('OpenRouter API key 2')).toBeUndefined()
+  expect(store.removeForAllHobs('OPENROUTER_API_KEY', user)).toBe(false)
+})
+
+test('removing the secret for all hobs keeps it when a hob has it assigned', () => {
+  const shared = store.setForAllHobs('OPENROUTER_API_KEY', { name: 'OpenRouter API key', value: 'k', hosts: ['openrouter.ai'] }, HOST)
+  store.assign('alarms', shared.id, 'AI_KEY', HOST)
+  store.removeForAllHobs('OPENROUTER_API_KEY', HOST)
+  expect(store.get(shared.id)).toMatchObject({ allHobs: null, assignments: [{ project: 'alarms', envName: 'AI_KEY' }] })
+  expect(Object.keys(store.forSandbox('filament'))).toEqual([])
+  expect(Object.keys(store.forSandbox('alarms'))).toEqual(['AI_KEY'])
+})
+
+test('deleting the secret for all hobs takes it away from every hob', () => {
+  const shared = store.setForAllHobs('OPENROUTER_API_KEY', { name: 'OpenRouter API key', value: 'k', hosts: ['openrouter.ai'] }, HOST)
+  store.remove(shared.id, HOST)
+  expect(store.forAllHobs('OPENROUTER_API_KEY')).toBeUndefined()
+  expect(store.forSandbox('filament')).toEqual({})
+})

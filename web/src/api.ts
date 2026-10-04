@@ -186,6 +186,8 @@ export type Secret = {
   createdBy: string | null
   updatedBy: string | null
   assignments: SecretAssignment[]
+  // Every hob without its own secret under this env name gets it.
+  allHobs: { envName: string; assignedAt: string; assignedBy: ChangedBy } | null
 }
 
 // Hosts an agent asked a secret to be sent to.
@@ -211,6 +213,7 @@ export type ProjectSecret = {
   updatedAt: string
   assignedAt: string
   assignedBy: ChangedBy
+  allHobs: boolean
 }
 
 export type NewSecret = {
@@ -360,6 +363,12 @@ export type AiSettings = ModelChoice & {
   updatedAt: string | null
   updatedBy: string | null
   usage: (AiUsageTotals & { project: string })[]
+  // null when the server has no secret store.
+  apiKey: {
+    secret: { id: number; name: string; updatedAt: string; updatedBy: string | null } | null
+    // Hobs with their own key.
+    ownKey: string[]
+  } | null
 }
 
 export type ProjectAi = {
@@ -537,6 +546,8 @@ export const api = {
   aiSettings: () => request<AiSettings>('GET', '/api/settings/ai'),
   saveAiSettings: (settings: ModelChoice & { limits: AiLimits }) =>
     request<AiSettings>('PUT', '/api/settings/ai', settings),
+  saveAiKey: (value: string) => request<AiSettings>('PUT', '/api/settings/ai/key', { value }),
+  removeAiKey: () => request<AiSettings>('DELETE', '/api/settings/ai/key'),
   projectAi: (project: string) => request<ProjectAi>('GET', `/api/projects/${encodeURIComponent(project)}/ai`),
   saveProjectAi: (project: string, settings: ModelChoice & { limits: AiLimits | null }) =>
     request<ProjectAi>('PUT', `/api/projects/${encodeURIComponent(project)}/ai`, settings),

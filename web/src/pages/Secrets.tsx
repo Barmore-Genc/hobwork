@@ -484,9 +484,18 @@ function SecretCard({
         </div>
       </div>
 
+      {secret.allHobs && (
+        <p className="mt-4 text-sm">
+          Every hob gets it as <span className="font-mono break-all">{secret.allHobs.envName}</span>, unless the hob has its
+          own {secret.allHobs.envName}.{' '}
+          <Link to="/settings#ai" className="font-semibold text-accent-fg underline underline-offset-4">
+            AI settings
+          </Link>
+        </p>
+      )}
       <div className="mt-4 rounded-md border border-border">
         {secret.assignments.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-muted">No hob uses it yet.</p>
+          <p className="px-4 py-3 text-sm text-muted">{secret.allHobs ? 'No hob has it under another name.' : 'No hob uses it yet.'}</p>
         ) : (
           <ul className="divide-y divide-border" aria-label={`Hobs that use ${secret.name}`}>
             {secret.assignments.map((a) => (
@@ -646,14 +655,20 @@ function ProjectSecretRow({ secret, onRemove }: { secret: ProjectSecret; onRemov
         {secret.hosts.length > 0 && <SecretHeaders headers={secret.headers} />}
         <p className="text-sm text-muted">
           <When iso={secret.assignedAt}>
-            Added {timeAgo(secret.assignedAt)}
+            {secret.allHobs ? 'Given to every hob' : 'Added'} {timeAgo(secret.assignedAt)}
             {byText(secret.assignedBy)}
           </When>
         </p>
       </div>
-      <Button variant="quiet-danger" onClick={onRemove}>
-        Remove
-      </Button>
+      {secret.allHobs ? (
+        <Link to="/settings#ai" className="text-sm font-semibold text-accent-fg underline underline-offset-4">
+          Change in AI settings
+        </Link>
+      ) : (
+        <Button variant="quiet-danger" onClick={onRemove}>
+          Remove
+        </Button>
+      )}
     </li>
   )
 }

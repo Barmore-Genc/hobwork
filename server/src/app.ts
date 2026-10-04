@@ -151,7 +151,7 @@ export function createApp(
   const liveSockets = createLiveSockets({ db: host.db, auth, publicUrl: web.publicUrl })
   const handleUserApi = userRoutes(auth, [
     ...allActivityRoutes(host),
-    ...aiSettingsRoutes({ host, ai: options.ai }),
+    ...aiSettingsRoutes({ host, ai: options.ai, secrets: options.secrets }),
     ...haServicesRoutes({ host }),
     ...deviceUserRoutes({ db: host.db, devices, publicUrl: web.publicUrl }),
     ...projectDeletionRoutes({

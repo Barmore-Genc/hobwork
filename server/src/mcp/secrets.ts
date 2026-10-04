@@ -29,7 +29,7 @@ export function registerSecretTools(
     'list_secrets',
     {
       description:
-        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, the headers it may be sent in (headers lists them besides Authorization, which always works), and the hobs it is assigned to with the env name each hob uses. With a hob, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
+        "List the secrets in Hobwork: each secret's name, the hosts its value may be sent to, the headers it may be sent in (headers lists them besides Authorization, which always works), and the hobs it is assigned to with the env name each hob uses. allHobs is the env name every hob gets it under, unless the hob has its own secret under that name. With a hob, only the secrets assigned to it, by env name. Values are never shown. pendingHosts are hosts asked for with request_secret_hosts that wait for the user's approval. Only the user creates secrets and sets their values, in the Hobwork UI.",
       inputSchema: { hob: hob.optional().describe('Only the secrets assigned to this hob') },
       annotations: { readOnlyHint: true },
     },
@@ -38,7 +38,7 @@ export function registerSecretTools(
         requireProject(host, name)
         const assigned = store()
           .assigned(name)
-          .map(({ envName: env, secret, hosts, headers }) => ({ envName: env, secret, hosts, headers }))
+          .map(({ envName: env, secret, hosts, headers, allHobs }) => ({ envName: env, secret, hosts, headers, ...(allHobs ? { allHobs } : {}) }))
         const text = assigned.length
           ? JSON.stringify(assigned, null, 2)
           : `${name} has no secrets assigned. Call list_secrets without a hob to see every secret, and assign one with assign_secret.`
@@ -46,10 +46,11 @@ export function registerSecretTools(
       }
       const library = store()
         .list()
-        .map(({ name: secret, hosts, headers, pendingHostRequest, assignments }) => ({
+        .map(({ name: secret, hosts, headers, pendingHostRequest, assignments, allHobs }) => ({
           name: secret,
           hosts,
           headers,
+          ...(allHobs ? { allHobs: allHobs.envName } : {}),
           ...(pendingHostRequest ? { pendingHosts: pendingHostRequest.hosts } : {}),
           hobs: assignments
             .filter(({ project: p }) => allowsProject(agent.access, p))

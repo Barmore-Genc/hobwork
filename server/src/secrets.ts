@@ -87,6 +87,13 @@ export type AssignmentInfo = {
   assignedBy: ActorInfo
 }
 
+// A secret every hob gets under an env name, unless it has its own secret under that name.
+export type AllHobsInfo = {
+  envName: string
+  assignedAt: string
+  assignedBy: ActorInfo
+}
+
 export type SecretInfo = {
   id: number
   name: string
@@ -100,6 +107,7 @@ export type SecretInfo = {
   createdBy: string | null
   updatedBy: string | null
   assignments: AssignmentInfo[]
+  allHobs: AllHobsInfo | null
 }
 
 // A secret as one project sees it.
@@ -112,6 +120,8 @@ export type ProjectSecretInfo = {
   updatedAt: string
   assignedAt: string
   assignedBy: ActorInfo
+  // Given to every hob, so it cannot be removed from one.
+  allHobs: boolean
 }
 
 export type HostRequestDecision = 'approved' | 'denied' | 'superseded'
@@ -211,7 +221,7 @@ type Row = {
   updatedBy: string | null
 }
 
-type AssignmentRow = AssignmentInfo & { secretId: number }
+type AssignmentRow = AssignmentInfo & { secretId: number; allHobs: boolean }
 
 function nullableString(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value)
@@ -241,6 +251,17 @@ function toAssignment(row: Record<string, unknown>): AssignmentRow {
     envName: String(row.env_name),
     assignedAt: String(row.assigned_at),
     assignedBy: user !== null ? { kind: 'user', name: user } : agent !== null ? { kind: 'agent', name: agent } : null,
+    allHobs: false,
+  }
+}
+
+function toAllHobs(row: Record<string, unknown>): AllHobsInfo & { secretId: number } {
+  const user = nullableString(row.user_name)
+  return {
+    secretId: Number(row.secret_id),
+    envName: String(row.env_name),
+    assignedAt: String(row.assigned_at),
+    assignedBy: user === null ? null : { kind: 'user', name: user },
   }
 }
 
@@ -256,6 +277,10 @@ const SELECT_ASSIGNMENT = `SELECT a.secret_id, p.name AS project, a.env_name, a.
   JOIN projects p ON p.id = a.project_id
   LEFT JOIN users u ON u.id = a.assigned_by_user_id
   LEFT JOIN agents g ON g.id = a.assigned_by_agent_id`
+
+const SELECT_ALL_HOBS = `SELECT a.secret_id, a.env_name, a.assigned_at, u.name AS user_name
+  FROM all_hobs_secrets a
+  LEFT JOIN users u ON u.id = a.assigned_by_user_id`
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
@@ -363,13 +388,25 @@ export function createSecretStore(host: Host, key: Buffer) {
       .map(toAssignment)
   }
 
-  // What a project's VMs get.
+  function allHobsOf(where: string, ...params: (string | number)[]) {
+    const row = host.db.prepare(`${SELECT_ALL_HOBS} WHERE ${where}`).get(...params)
+    return row && toAllHobs(row)
+  }
+
+  // What a project's VMs get: its own secrets, and the ones for all hobs under
+  // env names it has no secret for.
   function assigned(project: string): { assignment: AssignmentRow; row: Row }[] {
     const projectId = requireProject(host, project).id
-    return host.db
-      .prepare(`${SELECT_ASSIGNMENT} WHERE a.project_id = ? ORDER BY a.env_name`)
-      .all(projectId)
-      .map(toAssignment)
+    const own = host.db.prepare(`${SELECT_ASSIGNMENT} WHERE a.project_id = ?`).all(projectId).map(toAssignment)
+    const names = new Set(own.map((assignment) => assignment.envName))
+    const shared = host.db
+      .prepare(SELECT_ALL_HOBS)
+      .all()
+      .map(toAllHobs)
+      .filter(({ envName }) => !names.has(envName))
+      .map((row): AssignmentRow => ({ ...row, project, allHobs: true }))
+    return [...own, ...shared]
+      .sort((a, b) => (a.envName < b.envName ? -1 : a.envName > b.envName ? 1 : 0))
       .map((assignment) => ({ assignment, row: requireSecret(assignment.secretId) }))
   }
 
@@ -408,6 +445,11 @@ export function createSecretStore(host: Host, key: Buffer) {
     }
   }
 
+  function allHobsInfo(secretId: number): AllHobsInfo | null {
+    const shared = allHobsOf('a.secret_id = ?', secretId)
+    return shared ? { envName: shared.envName, assignedAt: shared.assignedAt, assignedBy: shared.assignedBy } : null
+  }
+
   function info(row: Row): SecretInfo {
     return {
       id: row.id,
@@ -420,6 +462,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       createdBy: row.createdBy,
       updatedBy: row.updatedBy,
       assignments: assignmentsOf(row.id).map(({ project, envName, assignedAt, assignedBy }) => ({ project, envName, assignedAt, assignedBy })),
+      allHobs: allHobsInfo(row.id),
     }
   }
 
@@ -433,6 +476,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       updatedAt: row.updatedAt,
       assignedAt: assignment.assignedAt,
       assignedBy: assignment.assignedBy,
+      allHobs: assignment.allHobs,
     }
   }
 
@@ -469,6 +513,19 @@ export function createSecretStore(host: Host, key: Buffer) {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(projectId, row.id, envName, userId(actor), actor.kind === 'agent' ? actor.id : null)
+  }
+
+  function insertSecret(name: string, value: string, hosts: string[], headers: string[], actor: Actor): number {
+    const inserted = host.db
+      .prepare(
+        `INSERT INTO secrets (name, value, hosts, headers, created_by_user_id, updated_by_user_id)
+         VALUES (?, x'', ?, ?, ?, ?) RETURNING id`,
+      )
+      .get(name, JSON.stringify(hosts), JSON.stringify(headers), userId(actor), userId(actor))
+    if (!inserted) throw new Error('Secret insert returned no row')
+    const id = Number(inserted.id)
+    host.db.prepare('UPDATE secrets SET value = ? WHERE id = ?').run(encrypt(id, value), id)
+    return id
   }
 
   function changed(): void {
@@ -552,15 +609,7 @@ export function createSecretStore(host: Host, key: Buffer) {
       if (target) validateEnvName(target.envName)
       if (nameTaken(name)) throw new SecretConflictError(`A secret called "${name}" already exists. Pick another name`)
       const id = transaction(() => {
-        const inserted = host.db
-          .prepare(
-            `INSERT INTO secrets (name, value, hosts, headers, created_by_user_id, updated_by_user_id)
-             VALUES (?, x'', ?, ?, ?, ?) RETURNING id`,
-          )
-          .get(name, JSON.stringify(hosts), JSON.stringify(headers), userId(actor), userId(actor))
-        if (!inserted) throw new Error('Secret insert returned no row')
-        const newId = Number(inserted.id)
-        host.db.prepare('UPDATE secrets SET value = ? WHERE id = ?').run(encrypt(newId, input.value), newId)
+        const newId = insertSecret(name, input.value, hosts, headers, actor)
         if (target) insertAssignment(target.projectId, requireSecret(newId), target.envName, actor)
         return newId
       })
@@ -653,6 +702,56 @@ export function createSecretStore(host: Host, key: Buffer) {
         ),
       ])
       return projectInfo(assigned(project).find(({ assignment }) => assignment.envName === envName)!)
+    },
+
+    // The secret every hob without its own secret under envName gets.
+    forAllHobs(envName: string): SecretInfo | undefined {
+      const shared = allHobsOf('a.env_name = ?', envName)
+      return shared && info(requireSecret(shared.secretId))
+    },
+
+    // Projects that have their own secret under envName instead of the one for all hobs.
+    projectsWithOwn(envName: string): string[] {
+      return host.db
+        .prepare('SELECT p.name FROM secret_assignments a JOIN projects p ON p.id = a.project_id WHERE a.env_name = ? ORDER BY p.name')
+        .all(envName)
+        .map((row) => String(row.name))
+    },
+
+    // Changes the value of the secret for all hobs under envName, or creates
+    // one called `name` (numbered when the name is taken) with these hosts.
+    setForAllHobs(envName: string, input: { name: string; value: string; hosts: string[] }, actor: Actor): SecretInfo {
+      requirePerson(actor)
+      validateEnvName(envName)
+      validateValue(input.value)
+      const shared = allHobsOf('a.env_name = ?', envName)
+      if (shared) return update(requireSecret(shared.secretId), { value: input.value }, actor)
+      const hosts = normalizeHosts(input.hosts)
+      const base = normalizeName(input.name)
+      let name = base
+      for (let n = 2; nameTaken(name); n++) name = `${base} ${n}`
+      const id = transaction(() => {
+        const newId = insertSecret(name, input.value, hosts, [], actor)
+        host.db
+          .prepare('INSERT INTO all_hobs_secrets (env_name, secret_id, assigned_by_user_id) VALUES (?, ?, ?)')
+          .run(envName, newId, userId(actor))
+        return newId
+      })
+      changed()
+      return info(requireSecret(id))
+    },
+
+    // Also deletes the secret when no hob has it assigned.
+    removeForAllHobs(envName: string, actor: Actor): boolean {
+      requirePerson(actor)
+      const shared = allHobsOf('a.env_name = ?', envName)
+      if (!shared) return false
+      transaction(() => {
+        host.db.prepare('DELETE FROM all_hobs_secrets WHERE env_name = ?').run(envName)
+        if (assignmentsOf(shared.secretId).length === 0) host.db.prepare('DELETE FROM secrets WHERE id = ?').run(shared.secretId)
+      })
+      changed()
+      return true
     },
 
     unassign(project: string, envName: string, actor: Actor): boolean {

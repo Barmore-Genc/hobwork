@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { parseCatalog } from '../ai/catalog.ts'
 import { createAiGateway } from '../ai/gateway.ts'
 import { DEFAULT_LIMITS, type AiConfig } from '../ai/settings.ts'
 import { createProject } from '../projects.ts'
+import { createSecretStore } from '../secrets.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 
@@ -131,4 +133,30 @@ test('agents cannot see or change the settings over the web API', async () => {
   expect((await call('GET', '/api/settings/ai', undefined, agent)).status).toBe(401)
   expect((await call('PUT', '/api/settings/ai', { limits }, agent)).status).toBe(401)
   expect((await call('PUT', '/api/projects/filament/ai', { limits }, agent)).status).toBe(401)
+})
+
+test('people set the OpenRouter API key for all hobs, stored as a secret', async () => {
+  await app.close()
+  const secrets = createSecretStore(host, randomBytes(32))
+  app = await startTestApp(host, { ai, secrets })
+  await createProject(host, 'alarms')
+  secrets.create({ name: 'Alarms key', value: 'own', hosts: ['openrouter.ai'], assign: { project: 'alarms', envName: 'OPENROUTER_API_KEY' } }, { kind: 'host' })
+
+  expect((await (await call('GET', '/api/settings/ai')).json()).apiKey).toEqual({ secret: null, ownKey: ['alarms'] })
+  expect((await call('PUT', '/api/settings/ai/key', { value: '  ' })).status).toBe(400)
+
+  const res = await call('PUT', '/api/settings/ai/key', { value: ' sk-or-1 ' })
+  expect(res.status).toBe(200)
+  expect((await res.json()).apiKey).toMatchObject({ secret: { name: 'OpenRouter API key', updatedBy: 'Kaan' }, ownKey: ['alarms'] })
+  expect(secrets.forSandbox('filament')).toEqual({ OPENROUTER_API_KEY: { value: 'sk-or-1', hosts: ['openrouter.ai'], headers: [] } })
+  expect(JSON.stringify(await (await call('GET', '/api/settings/ai')).json())).not.toContain('sk-or-1')
+
+  await call('PUT', '/api/settings/ai/key', { value: 'sk-or-2' })
+  expect(secrets.forSandbox('filament').OPENROUTER_API_KEY?.value).toBe('sk-or-2')
+  expect(secrets.list()).toHaveLength(2)
+
+  const removed = await call('DELETE', '/api/settings/ai/key')
+  expect((await removed.json()).apiKey.secret).toBeNull()
+  expect(secrets.forSandbox('filament')).toEqual({})
+  expect(secrets.forSandbox('alarms').OPENROUTER_API_KEY?.value).toBe('own')
 })

@@ -170,6 +170,11 @@ test('the project log filters events and problems and continues after a cursor',
   // Lines the view hides still move the cursor on.
   expect(await logs(`?after=${all.cursor}&view=events`)).toEqual({ lines: [], cursor: next.cursor })
   expect((await get('/api/projects/filament/logs?view=nope')).status).toBe(400)
+
+  appendLog(host, { project: 'filament', branch: 'spools', source: 'handler', level: 'warn', message: 'preview line' })
+  expect(messages(await logs(`?after=${next.cursor}`))).toEqual([])
+  expect(messages(await logs(`?after=${next.cursor}&branch=spools`))).toEqual(['preview line'])
+  expect(messages(await logs(`?after=${all.cursor}&branch=*`))).toEqual(['weighed 790 g', 'preview line'])
 })
 
 test('the project page shows entry points, reachable hosts, the DB and the app', async () => {

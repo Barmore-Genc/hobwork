@@ -6,7 +6,7 @@ import { Button, Notice } from '../../ui.tsx'
 import { useLoad } from '../../useLoad.ts'
 import { usePaged } from '../../usePaged.ts'
 import { kindChanged } from '../../live.ts'
-import { projectPath, KIND_LABELS } from './names.ts'
+import { ALL_VERSIONS, hasPreviewChoice, LIVE, projectPath, KIND_LABELS } from './names.ts'
 import { ProjectLayout } from './ProjectLayout.tsx'
 import { RunStatus } from './runs.tsx'
 
@@ -17,12 +17,11 @@ const PERIODS = [
   { value: '168', label: 'Last 7 days' },
 ]
 
-// branch: '' for everything, 'main' for the live version, or a branch name.
 type Filter = { kind: InvocationKind | ''; status: InvocationStatus | ''; hours: string; branch: string }
 
 function toQuery(filter: Filter, before?: number) {
   return {
-    branch: filter.branch || undefined,
+    branch: filter.branch,
     kind: filter.kind || undefined,
     status: filter.status || undefined,
     since: filter.hours ? new Date(Date.now() - Number(filter.hours) * 3600_000).toISOString() : undefined,
@@ -32,6 +31,38 @@ function toQuery(filter: Filter, before?: number) {
 
 export const selectClass =
   'min-h-10 rounded-md border border-border bg-surface-raised px-3 text-fg focus:border-accent focus:outline-none'
+
+export function BranchSelect({
+  id,
+  value,
+  branches,
+  onChange,
+  allHobs = false,
+}: {
+  id: string
+  value: string
+  branches: string[]
+  onChange: (value: string) => void
+  allHobs?: boolean
+}) {
+  const names = [...new Set([...branches, ...(value !== LIVE && value !== ALL_VERSIONS ? [value] : [])])]
+  return (
+    <>
+      <label className="sr-only" htmlFor={id}>
+        Version
+      </label>
+      <select id={id} className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value={LIVE}>{allHobs ? 'Live versions' : 'Live version'}</option>
+        <option value={ALL_VERSIONS}>Live and previews</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            Preview of {name}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+}
 
 export function RunRow({ project, run, showProject = false }: { project: string; run: Invocation; showProject?: boolean }) {
   return (
@@ -81,7 +112,7 @@ function Runs({ project }: { project: string }) {
     kind: '',
     status: '',
     hours: '',
-    branch: new URLSearchParams(window.location.search).get('branch') ?? '',
+    branch: new URLSearchParams(window.location.search).get('branch') || LIVE,
   }))
   const { data: branches } = useLoad(() => api.branches(project), project, kindChanged('branches', project))
   const {
@@ -102,8 +133,8 @@ function Runs({ project }: { project: string }) {
     setFilter({ ...filter, ...change })
   }
 
-  const filtered = filter.kind !== '' || filter.status !== '' || filter.hours !== '' || filter.branch !== ''
-  const branchNames = [...new Set([...(branches ?? []).map((b) => b.name), ...(filter.branch && filter.branch !== 'main' ? [filter.branch] : [])])]
+  const filtered = filter.kind !== '' || filter.status !== '' || filter.hours !== '' || filter.branch !== LIVE
+  const branchNames = branches?.map((b) => b.name) ?? []
 
   return (
     <section className="mt-8" aria-label="Runs">
@@ -111,26 +142,13 @@ function Runs({ project }: { project: string }) {
         Every time the hob runs, because of a schedule, a request, a webhook or something at home.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
-        {branchNames.length > 0 && (
-          <>
-            <label className="sr-only" htmlFor="run-branch">
-              Version
-            </label>
-            <select
-              id="run-branch"
-              className={selectClass}
-              value={filter.branch}
-              onChange={(e) => changeFilter({ branch: e.target.value })}
-            >
-              <option value="">Live and previews</option>
-              <option value="main">Live version</option>
-              {branchNames.map((name) => (
-                <option key={name} value={name}>
-                  Preview of {name}
-                </option>
-              ))}
-            </select>
-          </>
+        {hasPreviewChoice(branchNames, filter.branch) && (
+          <BranchSelect
+            id="run-branch"
+            value={filter.branch}
+            branches={branchNames}
+            onChange={(branch) => changeFilter({ branch })}
+          />
         )}
         <label className="sr-only" htmlFor="run-kind">
           What started it

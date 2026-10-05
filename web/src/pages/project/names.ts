@@ -37,3 +37,12 @@ export const PROJECT_NAME_HINT = 'Lowercase letters, digits and single hyphens, 
 export function validProjectName(name: string): boolean {
   return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) && name.length <= 40
 }
+
+// Which versions a page shows: 'main' for the live one, '*' for all, or a
+// branch name for its previews. The host shows only main when left out.
+export const LIVE = 'main'
+export const ALL_VERSIONS = '*'
+
+export function hasPreviewChoice(branches: string[], value: string) {
+  return branches.length > 0 || value !== LIVE
+}

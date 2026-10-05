@@ -114,6 +114,29 @@ test('problems are failed runs and warning events of every project', async () =>
   expect((await get('/api/activity/attention')).status).toBe(400)
 })
 
+test('branch previews show up only when asked for, and never in the attention count', async () => {
+  const id = startInvocation(host, { project: 'filament', version: 2, branch: 'spools', kind: 'route', name: 'GET /preview', manual: true })
+  host.db.prepare('UPDATE invocations SET started_at = ? WHERE id = ?').run('2026-09-01T11:00:00.000Z', id)
+  finishInvocation(host, id, { status: 'error', durationMs: 5, error: 'Error: not approved' })
+  appendLog(host, {
+    project: 'filament',
+    branch: 'spools',
+    source: 'runtime',
+    level: 'warn',
+    event: 'egress-blocked',
+    message: 'Blocked outgoing request to preview.example:443',
+    time: '2026-09-01T11:30:00.000Z',
+  })
+  const branches = (items: unknown) => (items as ({ run: { branch: string | null } } | { event: { branch: string | null } })[]).map((i) => ('run' in i ? i.run.branch : i.event.branch))
+
+  expect(branches((await get('/api/activity/problems')).body.items)).toEqual([null, null, null, null, null])
+  expect(branches((await get('/api/activity/problems?branch=spools')).body.items)).toEqual(['spools', 'spools'])
+  expect(branches((await get('/api/activity/problems?branch=*')).body.items)).toHaveLength(7)
+  expect((await get('/api/activity')).body.invocations!.map((i) => i.name)).not.toContain('GET /preview')
+  expect((await get('/api/activity?branch=*')).body.invocations!.map((i) => i.name)).toContain('GET /preview')
+  expect((await get('/api/activity/attention?since=2026-09-01T08:15:00Z')).body).toEqual({ count: 3, more: false })
+})
+
 test('only signed-in people see activity across projects', async () => {
   const { token } = createAgentToken(host.db, 'claude')
   for (const path of ['/api/activity', '/api/activity/problems', '/api/activity/attention?since=2026-01-01T00:00:00Z']) {

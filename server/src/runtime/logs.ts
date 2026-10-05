@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { truncateMiddle } from '../mcp/output.ts'
-import { requireProject } from '../projects.ts'
+import { DEFAULT_BRANCH, requireProject } from '../projects.ts'
 
 export type InvocationKind = 'route' | 'webhook' | 'cron' | 'trigger'
 export type InvocationStatus = 'running' | 'ok' | 'error'
@@ -186,6 +186,15 @@ export function getInvocation(host: Host, id: number): InvocationRecord | undefi
   return row ? toInvocation(row) : undefined
 }
 
+export const ALL_BRANCHES = '*'
+
+// Branch previews are kept out of logs and runs unless asked for: main when
+// left out, every version for '*', or one branch's previews.
+export function branchFilter(value: string | null | undefined): string | null | undefined {
+  if (value === ALL_BRANCHES) return undefined
+  return !value || value === DEFAULT_BRANCH ? null : value
+}
+
 export type InvocationFilter = {
   // All projects when left out.
   project?: string
@@ -261,6 +270,8 @@ export function appendLog(host: Host, entry: NewLogEntry): void {
 
 export type LogFilter = {
   project: string
+  // A branch name, or null for main only. Undefined means all.
+  branch?: string | null
   invocationId?: number
   // Log IDs are a cursor: lines after this one.
   afterId?: number
@@ -294,6 +305,7 @@ function toLog(row: Record<string, unknown>): LogEntry {
 export function queryLogs(host: Host, filter: LogFilter): LogEntry[] {
   const { where, params, add } = conditions('p.name = ?', filter.project)
   if (filter.invocationId !== undefined) add('l.invocation_id = ?', filter.invocationId)
+  if (filter.branch !== undefined) add('l.branch IS ?', filter.branch)
   if (filter.afterId !== undefined) add('l.id > ?', filter.afterId)
   if (filter.since) add('l.time >= ?', filter.since)
   if (filter.until) add('l.time <= ?', filter.until)

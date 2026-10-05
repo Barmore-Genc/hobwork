@@ -232,3 +232,41 @@ Last resort if Apple rejects the Family Controls distribution entitlement. No th
 - The app still sends no `screenTime` capability. A new capability maps set names to Shortcut names the person enters in the app's settings, one to block and one to unblock.
 - A call arriving while the app is in the foreground opens the Shortcut. Otherwise the host sends a notification, and tapping it opens the app, which opens the Shortcut. The notification service extension cannot open URLs, so this always needs a tap.
 - Schedules and limits are left to the blocker app or to Shortcuts personal automations (time of day, Focus, NFC), which run without Hobwork. Hobwork only knows the state if the Shortcut reports it back, for example through a Hobwork App Intent it calls last.
+
+## Siri
+
+Hobs could be run by voice, for example "add milk to my shopping list" running the shopping list hob. Siri only runs App Intents of installed apps, so the app is the bridge. The app already has App Intents (`apple/Hobwork/Capabilities/NFC/NFCIntents.swift`). Device events (`POST /api/devices/events`) answer 204 and run triggers later, so Siri needs a new endpoint that runs a handler and returns what Siri says.
+
+### Siri AI (iOS 27)
+
+Researched October 2026 ([WWDC26 session 240](https://developer.apple.com/videos/play/wwdc2026/240/), [App schema domains](https://developer.apple.com/documentation/appintents/app-schema-domains)).
+
+- Siri AI runs only App Intents that adopt an app schema from natural language. Plain App Intents still show up in Shortcuts, Spotlight and widgets, and App Shortcuts still work with their fixed phrases.
+- The `.reminders` domain (iOS and macOS 27) fits list hobs. `@AppIntent(schema: .reminders.createReminder)` gets `title: String`, `list: ListEntity?`, `dueDate`, `note`, `tags` and more, and returns a `ReminderEntity`. The domain also has `createList`, `createSection`, `updateReminder` (complete, due date) and `deleteReminders`, and the entity schemas `list`, `reminder`, `section`.
+- The app's `ListEntity` query would return lists that hobs declare. "Add milk to my shopping list in Hobwork" then arrives with `title = "milk"` and the shopping list hob's list, parsed by Siri. Other domains (Calendar, Notes, Clock) could map to hobs the same way. Actions that fit no domain cannot be one-shot with Siri AI.
+- Unknown: whether the person has to name the app when Apple's Reminders app also adopts the domain. The docs do not say, and the session's demo names the app. Test on a device.
+- Requirements ([How to get Siri AI](https://support.apple.com/en-us/127893)): iPhone 15 Pro or later, M1 Macs or later. Device and Siri language must match a supported language (English; French, Japanese, Korean, Portuguese and Spanish announced for October 2026). Not on iPhone, iPad or Apple Watch in the EU (Macs work), not with a mainland China Apple Account.
+
+### Catch-all with keyword routing
+
+Works on every device and language Siri supports. App Shortcut phrases cannot contain a `String` parameter, only `AppEntity` and `AppEnum` ones, so "ask Hobwork to add milk to the shopping list" cannot match in one turn. Leaving the `String` parameter out of the phrase makes Siri ask for it in a second turn and pass the answer through as text (the approach an Apple engineer gives in [this forum thread](https://developer.apple.com/forums/thread/832277)).
+
+- "Ask Hobwork" → "What do you need?" → "add milk to the shopping list". The host routes the text by keyword.
+- A `HobKeyword` entity in the phrase, `"\(\.$keyword) in \(.applicationName)"`, with values refreshed by `updateAppShortcutParameters()`: "Shopping list in Hobwork" → "What should I do?" → "add milk". Siri picks the hob before the text arrives. Keep the keyword set small and stable.
+
+A hob declares keywords and one handler in `hobwork.json`:
+
+```json
+"voice": { "keywords": ["shopping list", "groceries"], "handler": "src/voice.ts" }
+```
+
+- The host matches keywords without starting a VM: lowercase, strip punctuation, tolerate plurals, match whole words, longest match wins. Then it invokes only that hob.
+- The handler gets `{ text, keyword }`, parses what it can itself (`^add (.+?) to (my |the )?shopping list$`) and uses the AI gateway only when that fails. It returns `{ say }`, or `{ unhandled: true }`.
+- No match, a keyword two hobs declare, or `unhandled`: either a router model call with the hobs' keywords and descriptions, or a spoken "No hob handles that". A setting picks which.
+- A keyword conflict cannot fail one hob's merge because of another hob. The pipeline warns and the runtime falls back as above.
+- Siri expects a quick answer. Host-side matching plus a cold runtime VM (about 0.7s on `colossus`) fits. A model fallback adds one to three seconds.
+
+### Plan
+
+1. The catch-all with both phrases: the `voice` entry in `hobwork.json` and its schema, a device endpoint that routes and returns `{ say }`, and the App Intent with the keyword entity.
+2. The `.reminders` schema for list hobs, so Siri AI devices get one-shot "add milk to my shopping list". Needs a way for hobs to declare lists and handle create, update and delete.

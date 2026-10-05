@@ -16,8 +16,12 @@ const USAGE = `Usage: hobwork <command>
   diff                   uncommitted changes
   commit "<message>"     commit all changes and push them to the branch
   merge "<summary>"      run the pipeline, merge into main and deploy
-  logs [-f] [-n <lines>] hob logs; -f keeps printing new lines
-  invocations [-n <count>]  recent handler invocations
+  logs [-f] [-n <lines>] [-b <branch>]
+                         hob logs; -f keeps printing new lines
+  invocations [-n <count>] [-b <branch>]
+                         recent handler invocations
+                         Both show the deployed version; -b <branch> shows that
+                         branch's previews and -b '*' everything
   sql "<statement>"      run one SQL statement on the branch DB, a copy of the
                          production DB taken when the workspace VM started
   ha state <entity_id>   a Home Assistant entity's state and attributes
@@ -100,6 +104,14 @@ function count(args: string[], fallback: number): number {
   return value
 }
 
+function branch(args: string[]): string {
+  const i = args.indexOf('-b')
+  if (i === -1) return ''
+  const value = args[i + 1]
+  if (!value || value.startsWith('-')) throw new UsageError('-b needs a branch name, or * for all')
+  return `&branch=${encodeURIComponent(value)}`
+}
+
 function text(args: string[], what: string): string {
   const value = args.filter((a) => a !== '-m').join(' ').trim()
   if (!value) throw new UsageError(`Give a ${what}`)
@@ -146,11 +158,11 @@ async function ha(args: string[]): Promise<void> {
   process.stdout.write(`${JSON.stringify(body.result, null, 2)}\n`)
 }
 
-async function followLogs(lines: number): Promise<void> {
-  let result = await call('GET', `/v1/workspace/logs?limit=${lines}`)
+async function followLogs(lines: number, shown: string): Promise<void> {
+  let result = await call('GET', `/v1/workspace/logs?limit=${lines}${shown}`)
   for (;;) {
     print(result)
-    result = await call('GET', `/v1/workspace/logs?after=${result.cursor ?? 0}&wait=${FOLLOW_WAIT_SECONDS}&limit=1000`)
+    result = await call('GET', `/v1/workspace/logs?after=${result.cursor ?? 0}&wait=${FOLLOW_WAIT_SECONDS}&limit=1000${shown}`)
   }
 }
 
@@ -166,14 +178,14 @@ async function main(argv: string[]): Promise<void> {
     case 'merge':
       return print(await call('POST', '/v1/workspace/merge', { summary: text(args, 'summary of the change') }))
     case 'logs':
-      if (args.includes('-f')) return followLogs(count(args, 20))
-      return print(await call('GET', `/v1/workspace/logs?limit=${count(args, 50)}`))
+      if (args.includes('-f')) return followLogs(count(args, 20), branch(args))
+      return print(await call('GET', `/v1/workspace/logs?limit=${count(args, 50)}${branch(args)}`))
     case 'sql':
       return sql(text(args, 'SQL statement'))
     case 'ha':
       return ha(args)
     case 'invocations':
-      return print(await call('GET', `/v1/workspace/invocations?limit=${count(args, 20)}`))
+      return print(await call('GET', `/v1/workspace/invocations?limit=${count(args, 20)}${branch(args)}`))
     case undefined:
     case 'help':
     case '-h':

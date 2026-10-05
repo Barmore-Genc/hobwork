@@ -144,6 +144,14 @@ test('logs, logs -f and invocations', async () => {
   expect(logs.stdout).toMatch(/INFO \[runtime start\] runtime started/)
   expect(await hobwork(['invocations'])).toMatchObject({ code: 0, stdout: 'No invocations yet\n' })
 
+  appendLog(host, { project: 'filament', branch: 'spools', source: 'handler', level: 'info', message: 'preview line' })
+  expect((await hobwork(['logs'])).stdout).not.toContain('preview line')
+  expect((await hobwork(['logs', '-b', 'spools'])).stdout).toContain('preview line')
+  const all = (await hobwork(['logs', '-b', '*'])).stdout
+  expect(all).toContain('preview line')
+  expect(all).toContain('runtime started')
+  expect(await hobwork(['logs', '-b'])).toMatchObject({ code: 2, stderr: expect.stringContaining('-b needs a branch name') })
+
   const follow = spawn(process.execPath, [CLI, 'logs', '-f'], {
     env: { PATH: process.env.PATH, HOBWORK_INTERNAL_URL: internalUrl, ...session.env },
   })

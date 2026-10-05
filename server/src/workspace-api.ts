@@ -8,7 +8,7 @@ import { formatInvocation, formatLines } from './mcp/runtime.ts'
 import { latestRun } from './pipeline/runner.ts'
 import { DEFAULT_BRANCH, ProjectError } from './projects.ts'
 import { log } from './repo.ts'
-import { lastLogId, listInvocations, queryLogs, waitForLogs } from './runtime/logs.ts'
+import { branchFilter, lastLogId, listInvocations, queryLogs, waitForLogs } from './runtime/logs.ts'
 import type { Runtime } from './runtime/runtime.ts'
 import type { InternalHandler } from './sandbox/sandbox.ts'
 import { listVersions } from './versions.ts'
@@ -116,7 +116,8 @@ export function createWorkspaceApi(options: {
     const limit = intParam(url, 'limit', DEFAULT_LOG_LINES, 1000)
     const wait = intParam(url, 'wait', 0, MAX_WAIT_SECONDS)
     const after = url.searchParams.has('after') ? intParam(url, 'after', 0, Number.MAX_SAFE_INTEGER) : undefined
-    const read = () => queryLogs(host, { project, afterId: after, limit })
+    const shown = branchFilter(url.searchParams.get('branch'))
+    const read = () => queryLogs(host, { project, branch: shown, afterId: after, limit })
     let lines = read()
     if (!lines.length && after !== undefined && wait > 0) {
       await waitForLogs(project, wait * 1000, request.signal)
@@ -132,7 +133,7 @@ export function createWorkspaceApi(options: {
 
   function invocations({ project, url }: Context): CliResult {
     const limit = intParam(url, 'limit', DEFAULT_INVOCATIONS, 200)
-    const found = listInvocations(host, { project, limit })
+    const found = listInvocations(host, { project, branch: branchFilter(url.searchParams.get('branch')), limit })
     return { output: found.length ? truncateMiddle(found.map(formatInvocation).join('\n')) : 'No invocations yet', ok: true }
   }
 

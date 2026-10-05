@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, type LogLine, type LogView } from '../../api.ts'
-import { subscribeLive } from '../../live.ts'
+import { kindChanged, subscribeLive } from '../../live.ts'
 import { Button, Notice } from '../../ui.tsx'
+import { useLoad } from '../../useLoad.ts'
+import { BranchSelect } from './Activity.tsx'
+import { hasPreviewChoice, LIVE } from './names.ts'
 import { LogLines } from './LogLines.tsx'
 import { ProjectLayout } from './ProjectLayout.tsx'
 
@@ -20,8 +23,8 @@ const EMPTY: Record<LogView, string> = {
 const MAX_LINES = 1000
 const PAGE = 200
 
-// Mounted once per view, so switching views starts from a clean slate.
-function LogFeed({ project, view, live }: { project: string; view: LogView; live: boolean }) {
+// Mounted once per view and branch, so switching starts from a clean slate.
+function LogFeed({ project, view, branch, live }: { project: string; view: LogView; branch: string; live: boolean }) {
   const [lines, setLines] = useState<LogLine[] | null>(null)
   const [fresh, setFresh] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
@@ -45,12 +48,12 @@ function LogFeed({ project, view, live }: { project: string; view: LogView; live
         do {
           again = false
           if (cursor.current === null) {
-            const first = await api.logs(project, { view }, signal)
+            const first = await api.logs(project, { view, branch }, signal)
             if (signal.aborted) return
             setLines(first.lines)
             cursor.current = first.cursor
           } else {
-            const next = await api.logs(project, { view, after: cursor.current, limit: PAGE }, signal)
+            const next = await api.logs(project, { view, branch, after: cursor.current, limit: PAGE }, signal)
             if (signal.aborted) return
             cursor.current = next.cursor
             if (next.lines.length) {
@@ -78,7 +81,7 @@ function LogFeed({ project, view, live }: { project: string; view: LogView; live
       stop.abort()
       unsubscribe?.()
     }
-  }, [project, view, live])
+  }, [project, view, branch, live])
 
   return (
     <div className="mt-5">
@@ -95,7 +98,10 @@ function LogFeed({ project, view, live }: { project: string; view: LogView; live
 
 function ProjectLog({ project }: { project: string }) {
   const [view, setView] = useState<LogView>('all')
+  const [branch, setBranch] = useState(LIVE)
   const [live, setLive] = useState(true)
+  const { data: branches } = useLoad(() => api.branches(project), project, kindChanged('branches', project))
+  const branchNames = branches?.map((b) => b.name) ?? []
 
   return (
     <section className="mt-8" aria-label="Hob log">
@@ -104,20 +110,25 @@ function ProjectLog({ project }: { project: string }) {
         requests. Newest first.
       </p>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-        <div role="group" aria-label="Show" className="inline-flex rounded-md border border-border bg-surface p-0.5">
-          {VIEWS.map((item) => (
-            <button
-              key={item.view}
-              type="button"
-              aria-pressed={view === item.view}
-              onClick={() => setView(item.view)}
-              className={`min-h-9 rounded-[calc(var(--hw-radius-md)-2px)] px-3.5 text-[0.95rem] transition-colors ${
-                view === item.view ? 'bg-surface-raised font-semibold text-fg shadow-sm' : 'text-muted hover:text-fg'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <div role="group" aria-label="Show" className="inline-flex rounded-md border border-border bg-surface p-0.5">
+            {VIEWS.map((item) => (
+              <button
+                key={item.view}
+                type="button"
+                aria-pressed={view === item.view}
+                onClick={() => setView(item.view)}
+                className={`min-h-9 rounded-[calc(var(--hw-radius-md)-2px)] px-3.5 text-[0.95rem] transition-colors ${
+                  view === item.view ? 'bg-surface-raised font-semibold text-fg shadow-sm' : 'text-muted hover:text-fg'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          {hasPreviewChoice(branchNames, branch) && (
+            <BranchSelect id="log-branch" value={branch} branches={branchNames} onChange={setBranch} />
+          )}
         </div>
         <div className="flex items-center gap-3">
           {live && (
@@ -131,7 +142,7 @@ function ProjectLog({ project }: { project: string }) {
           </Button>
         </div>
       </div>
-      <LogFeed key={view} project={project} view={view} live={live} />
+      <LogFeed key={`${view} ${branch}`} project={project} view={view} branch={branch} live={live} />
     </section>
   )
 }

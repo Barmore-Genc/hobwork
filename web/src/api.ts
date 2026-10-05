@@ -488,12 +488,12 @@ export const api = {
     ),
   activity: (filter: ActivityFilter) =>
     request<{ invocations: ActivityRun[]; more: boolean }>('GET', `/api/activity${query(filter)}`),
-  problems: (filter: { project?: string; before?: string }) =>
+  problems: (filter: { project?: string; branch?: string; before?: string }) =>
     request<{ items: Problem[]; more: boolean }>('GET', `/api/activity/problems${query(filter)}`),
   attention: (since: string) => request<{ count: number; more: boolean }>('GET', `/api/activity/attention${query({ since })}`),
   invocation: (project: string, id: number) =>
     request<InvocationDetail>('GET', `/api/projects/${encodeURIComponent(project)}/invocations/${id}`),
-  logs: (project: string, options: { view: LogView; after?: number; limit?: number }, signal?: AbortSignal) =>
+  logs: (project: string, options: { view: LogView; branch?: string; after?: number; limit?: number }, signal?: AbortSignal) =>
     request<{ lines: LogLine[]; cursor: number }>(
       'GET',
       `/api/projects/${encodeURIComponent(project)}/logs${query(options)}`,

@@ -1,7 +1,7 @@
 import type { Host } from '../host.ts'
 import { HttpError, json } from '../http.ts'
 import { getProject } from '../projects.ts'
-import { listInvocations, type InvocationRecord, type LifecycleEvent, type LogLevel } from '../runtime/logs.ts'
+import { branchFilter, listInvocations, type InvocationRecord, type LifecycleEvent, type LogLevel } from '../runtime/logs.ts'
 import type { ApiRoute } from './router.ts'
 import {
   INVOCATION_KINDS,
@@ -32,14 +32,20 @@ export type Problem =
   | { type: 'run'; time: string; run: ReturnType<typeof invocationView> }
   | { type: 'event'; time: string; event: ProblemEvent }
 
+type ProblemFilter = { project?: string; branch?: string | null; since?: string; before?: string; limit: number }
+
 // Lifecycle events at warn or error: blocked requests, rollbacks, crashes,
 // DB warnings, refused triggers, failed deploys.
-function problemEvents(host: Host, filter: { project?: string; since?: string; before?: string; limit: number }): ProblemEvent[] {
+function problemEvents(host: Host, filter: ProblemFilter): ProblemEvent[] {
   const where = ["l.event IS NOT NULL", "l.level IN ('warn', 'error')"]
-  const params: (string | number)[] = []
+  const params: (string | number | null)[] = []
   if (filter.project) {
     where.push('p.name = ?')
     params.push(filter.project)
+  }
+  if (filter.branch !== undefined) {
+    where.push('l.branch IS ?')
+    params.push(filter.branch)
   }
   if (filter.since) {
     where.push('l.time >= ?')
@@ -68,7 +74,7 @@ function problemEvents(host: Host, filter: { project?: string; since?: string; b
     }))
 }
 
-function failedRuns(host: Host, filter: { project?: string; since?: string; before?: string; limit: number }): InvocationRecord[] {
+function failedRuns(host: Host, filter: ProblemFilter): InvocationRecord[] {
   return listInvocations(host, { ...filter, status: 'error' })
 }
 
@@ -88,6 +94,7 @@ export function allActivityRoutes(host: Host): ApiRoute[] {
         const limit = pageSize(query, PAGE, MAX_PAGE)
         const rows = listInvocations(host, {
           project: projectFilter(host, query),
+          branch: branchFilter(query.get('branch')),
           kind: queryEnum(query, 'kind', INVOCATION_KINDS),
           status: queryEnum(query, 'status', INVOCATION_STATUSES),
           since: queryTime(query, 'since'),
@@ -106,6 +113,7 @@ export function allActivityRoutes(host: Host): ApiRoute[] {
         const limit = pageSize(query, PAGE, MAX_PAGE)
         const filter = {
           project: projectFilter(host, query),
+          branch: branchFilter(query.get('branch')),
           since: queryTime(query, 'since'),
           before: queryTime(query, 'before'),
           limit: limit + 1,
@@ -118,14 +126,16 @@ export function allActivityRoutes(host: Host): ApiRoute[] {
       },
     },
     {
-      // How many problems happened since the person last looked, for the nav.
+      // How many problems of deployed versions happened since the person last
+      // looked, for the nav.
       method: 'GET',
       pattern: /^\/api\/activity\/attention$/,
       handle: ({ res, query }) => {
         const since = queryTime(query, 'since')
         if (!since) throw new HttpError(400, 'since is required')
         const limit = MAX_ATTENTION + 1
-        const count = failedRuns(host, { since, limit }).length + problemEvents(host, { since, limit }).length
+        const filter = { branch: null, since, limit }
+        const count = failedRuns(host, filter).length + problemEvents(host, filter).length
         json(res, 200, { count: Math.min(count, MAX_ATTENTION), more: count > MAX_ATTENTION })
       },
     },

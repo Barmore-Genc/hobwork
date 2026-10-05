@@ -137,8 +137,11 @@ test('invoke runs a branch preview, and branch webhooks get their own URL', asyn
   expect(list).toContain('cron "cleanup" branch add-spools (manual) ok')
   expect(list).not.toContain(' v2 ')
   expect(await ok('list_invocations', { hob: 'filament', branch: 'main' })).toBe('No invocations match')
-  const logs = await ok('get_logs', { hob: 'filament', source: 'handler' })
-  expect(logs).toContain('branch add-spools')
+  expect(await ok('list_invocations', { hob: 'filament' })).toBe('No invocations match')
+  expect(await ok('list_invocations', { hob: 'filament', branch: '*' })).toContain('branch add-spools')
+  expect(await ok('get_logs', { hob: 'filament', source: 'handler' })).toBe('No log lines match')
+  expect(await ok('get_logs', { hob: 'filament', source: 'handler', branch: 'add-spools' })).toContain('branch add-spools')
+  expect(await ok('get_logs', { hob: 'filament', source: 'handler', branch: '*' })).toContain('branch add-spools')
 
   const missing = await mcp.call('invoke', { hob: 'filament', kind: 'route', name: 'GET /spools/5', branch: 'nope' })
   expect(missing.isError).toBe(true)

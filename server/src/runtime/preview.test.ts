@@ -300,7 +300,8 @@ test('activity can be filtered by branch', async () => {
     ((await (await fetch(`${app.base}/api/projects/filament/invocations${query}`, { headers: { cookie } })).json()) as any).invocations.map(
       (i: { branch: string | null }) => i.branch,
     )
-  expect(await list('')).toEqual([null, 'add-spools'])
+  expect(await list('')).toEqual([null])
+  expect(await list('?branch=*')).toEqual([null, 'add-spools'])
   expect(await list('?branch=add-spools')).toEqual(['add-spools'])
   expect(await list('?branch=main')).toEqual([null])
 })

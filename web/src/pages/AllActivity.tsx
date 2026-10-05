@@ -7,8 +7,8 @@ import { Button, Notice, PageHeading } from '../ui.tsx'
 import { useLoad } from '../useLoad.ts'
 import { usePaged } from '../usePaged.ts'
 import { kindChanged } from '../live.ts'
-import { RunRow, selectClass } from './project/Activity.tsx'
-import { EVENT_LABELS, KIND_LABELS, projectPath } from './project/names.ts'
+import { BranchSelect, RunRow, selectClass } from './project/Activity.tsx'
+import { ALL_VERSIONS, EVENT_LABELS, KIND_LABELS, LIVE, projectPath } from './project/names.ts'
 
 type View = 'runs' | 'problems'
 
@@ -25,7 +25,7 @@ const PROBLEM_LABELS: Record<string, string> = {
   'home-assistant': 'Home Assistant services',
 }
 
-type Filter = { view: View; project: string; kind: InvocationKind | ''; status: InvocationStatus | '' }
+type Filter = { view: View; project: string; branch: string; kind: InvocationKind | ''; status: InvocationStatus | '' }
 
 function readFilter(search: URLSearchParams): Filter {
   const kind = search.get('kind') ?? ''
@@ -33,6 +33,7 @@ function readFilter(search: URLSearchParams): Filter {
   return {
     view: search.get('view') === 'problems' ? 'problems' : 'runs',
     project: search.get('project') ?? '',
+    branch: search.get('branch') || LIVE,
     kind: kind in KIND_LABELS ? (kind as InvocationKind) : '',
     status: ['ok', 'error', 'running'].includes(status) ? (status as InvocationStatus) : '',
   }
@@ -42,6 +43,7 @@ function filterPath(filter: Filter): string {
   const search = new URLSearchParams()
   if (filter.view === 'problems') search.set('view', 'problems')
   if (filter.project) search.set('project', filter.project)
+  if (filter.branch !== LIVE) search.set('branch', filter.branch)
   if (filter.view === 'runs' && filter.kind) search.set('kind', filter.kind)
   if (filter.view === 'runs' && filter.status) search.set('status', filter.status)
   const text = search.toString()
@@ -86,6 +88,7 @@ function EventRow({ problem }: { problem: Extract<Problem, { type: 'event' }> })
 function Runs({ filter }: { filter: Filter }) {
   const query = {
     project: filter.project || undefined,
+    branch: filter.branch,
     kind: filter.kind || undefined,
     status: filter.status || undefined,
   }
@@ -102,7 +105,7 @@ function Runs({ filter }: { filter: Filter }) {
     live: (change) => change.kind === 'invocations' && (!filter.project || change.project === filter.project),
   })
 
-  const filtered = filter.project !== '' || filter.kind !== '' || filter.status !== ''
+  const filtered = filter.project !== '' || filter.branch !== LIVE || filter.kind !== '' || filter.status !== ''
   return (
     <>
       {error && <Notice tone="error">{error}</Notice>}
@@ -125,10 +128,10 @@ function Runs({ filter }: { filter: Filter }) {
   )
 }
 
-function Problems({ project }: { project: string }) {
+function Problems({ project, branch }: { project: string; branch: string }) {
   const { items, more, error, loadingMore, loadMore } = usePaged<Problem>({
-    load: (oldest) => api.problems({ project: project || undefined, before: oldest?.time }),
-    key: project,
+    load: (oldest) => api.problems({ project: project || undefined, branch, before: oldest?.time }),
+    key: JSON.stringify([project, branch]),
     isOlder: (item, than) => item.time < than.time,
     // Failed runs and lifecycle events at warn or error level.
     live: (change) => (change.kind === 'invocations' || change.kind === 'logs') && (!project || change.project === project),
@@ -163,10 +166,18 @@ export function AllActivityPage() {
   const { pathname, search } = useLocation()
   const filter = readFilter(search)
   const { data: projects } = useLoad(api.projects, '', kindChanged('projects'))
+  const { data: branches } = useLoad(
+    () => (filter.project ? api.branches(filter.project) : Promise.resolve([])),
+    filter.project,
+    filter.project ? kindChanged('branches', filter.project) : undefined,
+  )
   const attention = useAttention(pathname)
 
   function change(update: Partial<Filter>) {
-    navigate(filterPath({ ...filter, ...update }), { replace: true })
+    const next = { ...filter, ...update }
+    // A branch name means one hob's previews; other hobs have their own branches.
+    if (update.project !== undefined && next.branch !== LIVE && next.branch !== ALL_VERSIONS) next.branch = LIVE
+    navigate(filterPath(next), { replace: true })
   }
 
   const views: { view: View; label: string }[] = [
@@ -232,6 +243,13 @@ export function AllActivityPage() {
             <option value={filter.project}>{filter.project}</option>
           )}
         </select>
+        <BranchSelect
+          id="activity-branch"
+          value={filter.branch}
+          branches={branches?.map((b) => b.name) ?? []}
+          onChange={(branch) => change({ branch })}
+          allHobs={!filter.project}
+        />
         {filter.view === 'runs' && (
           <>
             <label className="sr-only" htmlFor="activity-kind">
@@ -269,7 +287,7 @@ export function AllActivityPage() {
       </div>
 
       <div className="mt-6">
-        {filter.view === 'runs' ? <Runs filter={filter} /> : <Problems project={filter.project} />}
+        {filter.view === 'runs' ? <Runs filter={filter} /> : <Problems project={filter.project} branch={filter.branch} />}
       </div>
     </div>
   )

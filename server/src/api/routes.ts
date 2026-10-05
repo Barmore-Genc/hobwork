@@ -18,6 +18,7 @@ import type { ProjectData } from '../data/project-data.ts'
 import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
 import { nextRun, parseCron } from '../runtime/cron.ts'
 import {
+  branchFilter,
   getInvocation,
   lastLogId,
   latestInvocations,
@@ -358,11 +359,9 @@ export function createApiRoutes(options: {
       handle: ({ res, params, query }) => {
         const project = requireProjectByName(host, params[0]!)
         const limit = pageSize(query, INVOCATION_PAGE, MAX_INVOCATION_PAGE)
-        const branch = query.get('branch')
         const rows = listInvocations(host, {
           project: project.name,
-          // main is the deployed version; any other name is a branch preview.
-          branch: branch ? (branch === project.defaultBranch ? null : branch) : undefined,
+          branch: branchFilter(query.get('branch')),
           kind: queryEnum(query, 'kind', INVOCATION_KINDS),
           status: queryEnum(query, 'status', INVOCATION_STATUSES),
           since: queryTime(query, 'since'),
@@ -392,6 +391,7 @@ export function createApiRoutes(options: {
         const after = queryInt(query, 'after')
         const filter: LogFilter = {
           project: project.name,
+          branch: branchFilter(query.get('branch')),
           afterId: after,
           eventsOnly: view === 'events',
           minLevel: view === 'problems' ? 'warn' : undefined,

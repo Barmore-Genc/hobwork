@@ -6,6 +6,8 @@ import type { Host } from '../host.ts'
 import { DEFAULT_BRANCH, ProjectError, requireProject } from '../projects.ts'
 import { branchExists } from '../repo.ts'
 import {
+  ALL_BRANCHES,
+  branchFilter,
   getInvocation,
   lastLogId,
   listInvocations,
@@ -27,6 +29,10 @@ const MAX_TAIL_SECONDS = 60
 const hob = z.string().describe('Hob name, e.g. "filament-tracker"')
 const kind = z.enum(['route', 'cron', 'webhook', 'trigger'])
 const branch = z.string().optional().describe(`Branch to run as a preview (its latest commit). Omit, or "${DEFAULT_BRANCH}", for the deployed version`)
+const branchShown = z
+  .string()
+  .optional()
+  .describe(`Whose records to show: omit, or "${DEFAULT_BRANCH}", for the deployed version; a branch name for its previews; "${ALL_BRANCHES}" for all`)
 
 function previewBranch(value: string | undefined): string | undefined {
   return value === undefined || value === DEFAULT_BRANCH ? undefined : value
@@ -176,7 +182,7 @@ export function registerRuntimeTools(
         'List recorded invocations of a hob, newest first: ID, start time, kind and name, version (or branch, for previews), status, duration, HTTP status and the first line of the error. Use get_logs with an invocation_id for its log lines and full stack trace.',
       inputSchema: {
         hob,
-        branch: z.string().optional().describe(`Only this branch's previews; "${DEFAULT_BRANCH}" for the deployed version only. Omit for all`),
+        branch: branchShown,
         kind: kind.optional(),
         name: z.string().optional().describe('Route key ("GET /spools") or cron, webhook or trigger name'),
         status: z.enum(['running', 'ok', 'error']).optional(),
@@ -190,7 +196,7 @@ export function registerRuntimeTools(
       requireProject(host, p)
       const found = listInvocations(host, {
         project: p,
-        branch: b === undefined ? undefined : (previewBranch(b) ?? null),
+        branch: branchFilter(b),
         kind: k,
         name,
         status,
@@ -208,9 +214,10 @@ export function registerRuntimeTools(
     'get_logs',
     {
       description:
-        'Read the log store of a hob, oldest first: handler output (console and ctx.log, per invocation), runtime events (start, stop, crash, deploy, auto-revert, blocked egress) and pipeline step results. With invocation_id, also shows that invocation\'s record with its error and full stack trace. Without a starting point (after_id, since, invocation_id), shows the latest lines. Each line starts with its ID; pass the last one as after_id to continue.',
+        'Read the log store of a hob, oldest first: handler output (console and ctx.log, per invocation), runtime events (start, stop, crash, deploy, auto-revert, blocked egress) and pipeline step results. Shows the deployed version\'s lines unless branch says otherwise. With invocation_id, shows all lines of that invocation, on any branch, with its record, error and full stack trace. Without a starting point (after_id, since, invocation_id), shows the latest lines. Each line starts with its ID; pass the last one as after_id to continue.',
       inputSchema: {
         hob,
+        branch: branchShown,
         invocation_id: z.number().int().optional(),
         after_id: z.number().int().optional().describe('Only lines after this log line ID'),
         since: z.string().optional().describe('ISO time, e.g. "2026-01-31T08:00:00Z"'),
@@ -221,7 +228,7 @@ export function registerRuntimeTools(
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ hob: p, invocation_id, after_id, since, until, source, min_level, limit }) => {
+    async ({ hob: p, branch: b, invocation_id, after_id, since, until, source, min_level, limit }) => {
       requireProject(host, p)
       const toIso = (value: string | undefined, field: string) => {
         if (value === undefined) return undefined
@@ -239,6 +246,7 @@ export function registerRuntimeTools(
       }
       const lines = queryLogs(host, {
         project: p,
+        branch: invocation_id === undefined ? branchFilter(b) : undefined,
         invocationId: invocation_id,
         afterId: after_id,
         since: toIso(since, 'since'),
@@ -260,22 +268,24 @@ export function registerRuntimeTools(
     'tail_logs',
     {
       description:
-        'Wait for new log lines of a hob and return them as soon as there are any. Returns a cursor; pass it to the next call to continue where this one ended. Without a cursor, only lines logged after the call starts are returned. Use it while triggering a handler, e.g. after asking the user to press a button.',
+        'Wait for new log lines of a hob and return them as soon as there are any: the deployed version\'s unless branch or invocation_id says otherwise. Returns a cursor; pass it to the next call to continue where this one ended. Without a cursor, only lines logged after the call starts are returned. Use it while triggering a handler, e.g. after asking the user to press a button.',
       inputSchema: {
         hob,
         cursor: z.number().int().optional().describe('Log line ID from a previous get_logs or tail_logs call'),
+        branch: branchShown,
         invocation_id: z.number().int().optional(),
         wait_seconds: z.number().int().min(0).max(MAX_TAIL_SECONDS).default(30),
         limit: z.number().int().min(1).max(1000).default(200),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ hob: p, cursor, invocation_id, wait_seconds, limit }, extra) => {
+    async ({ hob: p, cursor, branch: b, invocation_id, wait_seconds, limit }, extra) => {
+      const shown = invocation_id === undefined ? branchFilter(b) : undefined
       requireProject(host, p)
       let after = cursor ?? lastLogId(host, p)
       const deadline = Date.now() + wait_seconds * 1000
       for (;;) {
-        const lines = queryLogs(host, { project: p, afterId: after, invocationId: invocation_id, limit })
+        const lines = queryLogs(host, { project: p, branch: shown, afterId: after, invocationId: invocation_id, limit })
         if (lines.length) {
           const formatted = formatLines(lines)
           after = formatted.cursor ?? after

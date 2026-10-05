@@ -385,7 +385,7 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
       const seconds = Math.round((Date.now() - downSince.getTime()) / 1000)
       logger.info(`Reconnected to Home Assistant after ${seconds}s`)
       if (subscriptions.size > 0) {
-        logger.warn(
+        logger.info(
           `Home Assistant triggers that fired between ${downSince.toISOString()} and ${new Date().toISOString()} were missed (${subscriptions.size} trigger subscriptions affected)`,
         )
       }
@@ -441,7 +441,7 @@ export function createHomeAssistant(options: HomeAssistantOptions): HomeAssistan
     const delay = Math.min(maxDelay, initialDelay * 2 ** attempt)
     attempt++
     if (wasConnected) {
-      logger.warn(
+      logger.info(
         `Lost the Home Assistant connection (${reason}), reconnecting.${subscriptions.size > 0 ? ` ${subscriptions.size} trigger subscriptions are inactive until then, and triggers that fire meanwhile are lost.` : ''}`,
       )
     } else if (firstFailure) {

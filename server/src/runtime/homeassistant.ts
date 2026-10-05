@@ -35,15 +35,19 @@ export function triggerRegistryLogger(host: Host): Logger {
 }
 
 // Connection problems of the HA client affect every project with triggers:
-// triggers that fire while the connection is down are lost.
+// triggers that fire while the connection is down are lost. Dropped
+// connections are logged at info, since a home HA restarts now and then.
 export function homeAssistantClientLogger(host: Host, projectsWithTriggers: () => string[]): Logger {
-  const forward = (level: 'warn' | 'error', args: unknown[]) => {
+  const forward = (level: LogLevel, args: unknown[]) => {
     const message = format(...args)
     if (!/trigger/i.test(message)) return
     for (const project of projectsWithTriggers()) record(host, project, level, message)
   }
   return {
-    info: (...args) => console.info(...args),
+    info(...args) {
+      console.info(...args)
+      forward('info', args)
+    },
     warn(...args) {
       console.warn(...args)
       forward('warn', args)

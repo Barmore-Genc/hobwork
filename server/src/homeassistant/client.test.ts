@@ -147,7 +147,7 @@ test('reconnects, resubscribes and logs missed triggers', async () => {
   fake.silent.clear()
   await vi.waitFor(() => expect(fake.subscriptions).toHaveLength(2))
   expect(fake.authenticated).toBe(2)
-  expect(logs.some((l) => l.startsWith('warn: Lost the Home Assistant connection'))).toBe(true)
+  expect(logs.some((l) => l.startsWith('info: Lost the Home Assistant connection'))).toBe(true)
   expect(logs.some((l) => l.includes('were missed (2 trigger subscriptions affected)'))).toBe(true)
 
   fake.fire({ trigger: { n: 1 } })

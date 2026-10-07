@@ -23,3 +23,25 @@ test('clamps idleTimeout below the largest setTimeout delay', () => {
   expect(parseProjectConfig('{ "idleTimeout": "365d" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)
   expect(parseProjectConfig('{ "idleTimeout": "99999999999999999999ms" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)
 })
+
+test('reads static mounts, longest prefix first, and drops any that could serve something else', () => {
+  expect(parseProjectConfig('{}').static).toEqual([])
+  const mounts = parseProjectConfig(
+    JSON.stringify({
+      static: {
+        '/photos': { dir: 'photos' },
+        '/photos/shared': { dir: 'shared', public: true },
+        '/api/files': { dir: 'x' },
+        '/_hobwork/x': { dir: 'x' },
+        '/theme': { dir: 'x' },
+        '/up': { dir: '../etc' },
+        '/.git': { dir: 'x' },
+        'nope': { dir: 'x' },
+      },
+    }),
+  ).static
+  expect(mounts).toEqual([
+    { prefix: '/photos/shared', dir: 'shared', public: true },
+    { prefix: '/photos', dir: 'photos', public: false },
+  ])
+})

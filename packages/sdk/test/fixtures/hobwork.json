@@ -21,6 +21,9 @@
       "handler": "src/desk-button.ts"
     }
   },
+  "static": {
+    "/photos": { "dir": "photos" }
+  },
   "egress": ["api.example.com"],
   "idleTimeout": "1h"
 }

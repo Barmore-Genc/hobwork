@@ -63,7 +63,7 @@ Before changing a hob, read its AGENTS.md (read_file on main or on your branch).
 Workflow: create a branch, change files on it (write_file, edit_file), run checks in the branch workspace with bash (pnpm typecheck, pnpm lint, pnpm test), then commit. File changes stay in the branch workspace until you commit. When the change is done, merge the branch with a summary: this runs the pipeline and deploys the change as a new version, or returns the failing step's output.
 
 Rules:
-- Handlers are like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the hob DB through the SDK.
+- Handlers are like AWS Lambda functions. Nothing in memory survives between invocations. Store state in the hob DB through the SDK, and files such as uploads in ctx.files, which hobwork.json can serve under static without running a handler. Branch previews share production's files.
 - There are no long-running processes. Use a cron for recurring work.
 - Every change needs tests. Merging runs typecheck, lint, tests and build, and refuses on failure.
 - Migrations are forward-only and additive: add tables and columns, never drop or rename them, so older versions keep working after a restore.

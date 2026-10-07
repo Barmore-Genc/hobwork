@@ -8,7 +8,13 @@ import type {
   SerializedRequest,
   SerializedResponse,
 } from '../../../packages/sdk/src/runner/protocol.ts'
-import { MAX_INVOKE_RESULT_BYTES, MAX_RESPONSE_BODY_BYTES, RUNNER_PORT, RUNNER_TOKEN_FILE } from '../../../packages/sdk/src/runner/protocol.ts'
+import {
+  FILES_PATH,
+  MAX_INVOKE_RESULT_BYTES,
+  MAX_RESPONSE_BODY_BYTES,
+  RUNNER_PORT,
+  RUNNER_TOKEN_FILE,
+} from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
 import { publishChange } from '../changes.ts'
 import { dbResponse } from '../data/internal.ts'
@@ -36,6 +42,7 @@ import { cleanupBuilds, type BuildCleanupOptions } from './build-cleanup.ts'
 import { buildDir, createBuilder, treeOf } from './builds.ts'
 import type { CspSources } from './csp.ts'
 import { allHandlers, entriesOf, readProjectConfig, type ProjectConfig } from './config.ts'
+import { filesResponse, projectFilesDir, streamsFileBody, type StaticMount } from './files.ts'
 import {
   appendLog,
   appendLogs,
@@ -387,6 +394,11 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     const { branch } = deployed
     const url = new URL(request.url)
     const route = `${request.method} ${url.pathname}`
+    // Previews share the deployed version's files: unlike the DB there is no
+    // copy per branch.
+    if (url.pathname === FILES_PATH || url.pathname.startsWith(`${FILES_PATH}/`)) {
+      return filesResponse(request, projectFilesDir(host, project))
+    }
     if (!INTERNAL_ROUTES.has(route)) {
       return Response.json({ error: `${route} does not exist` }, { status: 404 })
     }
@@ -498,6 +510,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       egress,
       secrets,
       internal: (request) => handleInternal(project, deployed, () => inst, request),
+      streamInternal: streamsFileBody,
       intercept: options.ai?.interceptor(
         project,
         deployed.branch === undefined ? { source: 'runtime' } : { source: 'preview', branch: deployed.branch },
@@ -917,6 +930,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     // The extra Content-Security-Policy sources the deployed version (or the branch) declares.
     async csp(project: string, branch?: string): Promise<CspSources> {
       return (await deployedFor(project, branch)).config.csp
+    },
+    // The directories of hob files the deployed version (or the branch) serves.
+    async staticMounts(project: string, branch?: string): Promise<StaticMount[]> {
+      return (await deployedFor(project, branch)).config.static
     },
     // The hobs whose apps may send requests to this one, as its deployed version (or the branch) declares.
     async crossAppRequests(project: string, branch?: string): Promise<string[]> {

@@ -36,6 +36,8 @@ test('measures each part of a project', async () => {
   const project = await createProject(host, 'filament')
   write(join(host.dataDir, 'projects', 'filament', 'db.sqlite'), 4096)
   write(join(host.dataDir, 'projects', 'filament', 'db.sqlite-wal'), 1000)
+  write(join(host.dataDir, 'projects', 'filament', 'files', 'photos', 'cat.jpg'), 700)
+  write(join(host.dataDir, 'projects', 'filament', 'files.tmp', 'upload'), 30)
   const branch = workspaceDir(host, 'filament', 'feature/spools')
   write(join(branch, 'db.sqlite'), 2048)
   write(join(branch, 'db.sqlite-wal'), 100)
@@ -50,6 +52,7 @@ test('measures each part of a project', async () => {
   const use = await measureStorage(host, project, new Date('2026-09-29T10:00:00Z'))
   expect(use).toMatchObject({
     database: 5096,
+    files: 730,
     branchDatabases: 2148,
     workspaces: 320,
     builds: 550,
@@ -57,7 +60,7 @@ test('measures each part of a project', async () => {
     measuredAt: '2026-09-29T10:00:00.000Z',
   })
   expect(use.repo).toBeGreaterThan(0)
-  expect(use.total).toBe(5096 + 2148 + 320 + 550 + 14 + use.repo)
+  expect(use.total).toBe(5096 + 730 + 2148 + 320 + 550 + 14 + use.repo)
 })
 
 test('counts other projects and symlinked files as nothing', async () => {
@@ -73,6 +76,7 @@ test('counts other projects and symlinked files as nothing', async () => {
   expect(await measureStorage(host, project)).toMatchObject({
     total: 0,
     database: 0,
+    files: 0,
     branchDatabases: 0,
     workspaces: 0,
     repo: 0,

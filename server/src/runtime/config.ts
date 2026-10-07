@@ -1,10 +1,12 @@
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
+import { filePathProblem } from '../../../packages/sdk/src/runner/protocol.ts'
 import { git, GitError } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { TriggerEntry } from '../homeassistant/triggers.ts'
 import { ProjectError } from '../projects.ts'
 import type { ResourceRequest } from '../sandbox/budget.ts'
 import type { CspSources } from './csp.ts'
+import type { StaticMount } from './files.ts'
 import type { InvocationKind } from './logs.ts'
 
 export type Entry = { handler: string }
@@ -17,6 +19,8 @@ export type ProjectConfig = {
   egress: string[]
   csp: CspSources
   crossAppRequests: string[]
+  // Longest prefix first.
+  static: StaticMount[]
   idleTimeoutMs: number
   resources: ResourceRequest
 }
@@ -33,9 +37,27 @@ export function parseDuration(text: string): number {
   return Number(match[1]) * UNITS[match[2]!]!
 }
 
+// Paths on the app origin that are not the UI's.
+const RESERVED_PREFIXES = new Set(['api', '_hobwork', 'theme'])
+
+// The schema checks these too, but an entry that would serve anything else is
+// dropped here as well, like CSP sources.
+function staticMounts(entries: Record<string, { dir?: unknown; public?: unknown }> | undefined): StaticMount[] {
+  return Object.entries(entries ?? {})
+    .filter(([prefix, entry]) => {
+      const path = prefix.slice(1)
+      return prefix.startsWith('/') && !filePathProblem(path) && !RESERVED_PREFIXES.has(path.split('/')[0]!) && !filePathProblem(entry.dir)
+    })
+    .map(([prefix, entry]) => ({ prefix, dir: entry.dir as string, public: entry.public === true }))
+    .sort((a, b) => b.prefix.length - a.prefix.length)
+}
+
 // The pipeline validated hobwork.json against the schema before it reached main.
 export function parseProjectConfig(raw: string): ProjectConfig {
-  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs'>> & { idleTimeout?: string }
+  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static'>> & {
+    idleTimeout?: string
+    static?: Record<string, { dir?: unknown; public?: unknown }>
+  }
   return {
     routes: json.routes ?? {},
     crons: json.crons ?? {},
@@ -45,6 +67,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     csp: json.csp ?? {},
     resources: json.resources ?? {},
     crossAppRequests: json.crossAppRequests ?? [],
+    static: staticMounts(json.static),
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }

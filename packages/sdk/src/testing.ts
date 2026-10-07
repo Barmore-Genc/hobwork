@@ -1,4 +1,4 @@
-// Test helpers for hob code: `import { createTestDb, createTestContext } from '@hobwork/sdk/testing'`.
+// Test helpers for hob code: `import { createTestDb, createTestFiles, createTestContext } from '@hobwork/sdk/testing'`.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -6,8 +6,10 @@ import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
 import type { Device } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
-import type { Context, Db, Logger } from './index.ts'
+import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
+import { checkFilePath, FilesError } from './runner/files-client.ts'
+import { MAX_FILE_BYTES, MAX_FILE_LIST } from './runner/protocol.ts'
 
 export type TestDbOptions = {
   // Directory with the migrations. Default: migrations/ in the current directory
@@ -30,6 +32,69 @@ export function createTestDb(options: TestDbOptions = {}): Db {
   const { execute } = createExecutor(db)
   // The JSON round trip matches what crosses the wire in a VM.
   return createDbClient(async (request) => JSON.parse(JSON.stringify(execute(JSON.parse(JSON.stringify(request))).response)))
+}
+
+async function bytesOf(body: FileBody): Promise<Uint8Array> {
+  if (typeof body === 'string') return new TextEncoder().encode(body)
+  if (body instanceof Uint8Array) return body.slice()
+  if (body instanceof ArrayBuffer) return new Uint8Array(body.slice(0))
+  return new Uint8Array(await new Response(body).arrayBuffer())
+}
+
+// Empty in-memory files for ctx.files, with the same path rules and errors as
+// the host.
+export function createTestFiles(): Files {
+  const files = new Map<string, { bytes: Uint8Array; modified: string }>()
+  const info = (path: string): FileInfo | undefined => {
+    const file = files.get(path)
+    return file && { path, size: file.bytes.length, modified: file.modified }
+  }
+  return {
+    async put(path, body) {
+      checkFilePath(path)
+      const bytes = await bytesOf(body)
+      if (bytes.length > MAX_FILE_BYTES) throw new FilesError('too_large', `A file is at most ${MAX_FILE_BYTES} bytes`)
+      const parents = path.split('/').slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('/'))
+      const parent = parents.find((p) => files.has(p))
+      if (parent) throw new FilesError('conflict', `"${parent}" is a file, so "${path}" cannot be stored`)
+      if ([...files.keys()].some((p) => p.startsWith(`${path}/`))) {
+        throw new FilesError('conflict', `"${path}" is a directory`)
+      }
+      files.set(path, { bytes, modified: new Date().toISOString() })
+      return info(path)!
+    },
+    async get(path) {
+      checkFilePath(path)
+      const found = info(path)
+      if (!found) return undefined
+      const bytes = files.get(path)!.bytes.slice()
+      const file: StoredFile = {
+        ...found,
+        body: new Blob([bytes]).stream(),
+        bytes: async () => bytes,
+        text: async () => new TextDecoder().decode(bytes),
+      }
+      return file
+    },
+    async stat(path) {
+      checkFilePath(path)
+      return info(path)
+    },
+    async delete(path) {
+      checkFilePath(path)
+      return files.delete(path)
+    },
+    async list({ prefix = '', after = '', limit = MAX_FILE_LIST } = {}) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_FILE_LIST) {
+        throw new FilesError('invalid_path', `limit must be a whole number from 1 to ${MAX_FILE_LIST}`)
+      }
+      return [...files.keys()]
+        .filter((path) => path.startsWith(prefix) && path > after)
+        .sort()
+        .slice(0, limit)
+        .map((path) => info(path)!)
+    },
+  }
 }
 
 const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
@@ -79,9 +144,9 @@ export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
   device?: (name: string) => DeviceStub
 }
 
-// A handler context for tests. `db` defaults to a fresh test DB; `fetch`, `ha`
-// and devices reject until a test stubs them, since tests should not reach the
-// network, change the home or notify anyone.
+// A handler context for tests. `db` defaults to a fresh test DB and `files` to
+// empty test files; `fetch`, `ha` and devices reject until a test stubs them,
+// since tests should not reach the network, change the home or notify anyone.
 export function createTestContext(overrides: TestContextOverrides = {}): Context {
   return {
     invocation: { id: 1, kind: 'route', name: 'test', manual: true },
@@ -94,5 +159,6 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
     ha: { ...unstubbedHa(), ...overrides.ha },
     device: (name) => stubbedDevice(name, overrides.device?.(name)),
     db: overrides.db ?? createTestDb(),
+    files: overrides.files ?? createTestFiles(),
   }
 }

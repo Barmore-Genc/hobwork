@@ -1,9 +1,12 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { startFakeOidcProvider, type FakeOidcProvider } from '../auth/fake-oidc.ts'
 import { findSessionRecord } from '../auth/sessions.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, requireProject } from '../projects.ts'
+import { projectFilesDir } from '../runtime/files.ts'
 import { createRuntime, type Runtime } from '../runtime/runtime.ts'
 import { fakeRuntimeSandboxes } from '../runtime/test-sandbox.ts'
 import { createTestHost } from '../test-host.ts'
@@ -35,6 +38,7 @@ const BUILD = [
 let host: ReturnType<typeof createTestHost>
 let app: Awaited<ReturnType<typeof startTestApp>>
 let runtime: Runtime
+let sandboxes: ReturnType<typeof fakeRuntimeSandboxes>
 let provider: FakeOidcProvider
 
 const client = { id: 'hobwork', secret: 'test-secret' }
@@ -48,8 +52,9 @@ async function release(project: string, files: Files) {
 beforeEach(async () => {
   host = createTestHost()
   provider = await startFakeOidcProvider(client)
+  sandboxes = fakeRuntimeSandboxes()
   runtime = createRuntime(host, {
-    createSandbox: fakeRuntimeSandboxes().factory,
+    createSandbox: sandboxes.factory,
     image: '/nonexistent-image',
     startBuildVm: startHostPipelineVm,
   })
@@ -453,4 +458,117 @@ test('the Hobwork UI, links, own previews and other sites still reach an app', a
   expect((await get('/', { 'sec-fetch-site': 'cross-site', 'sec-fetch-dest': 'document', origin: 'https://evil.example' })).status).toBe(200)
   expect((await get('/api/spools', { 'sec-fetch-site': 'same-site', origin: 'http://blog.hobwork.test' })).status).toBe(403)
   expect((await send(`${FILAMENT}/api/spools`, { headers: { cookie: filament } })).status).toBe(200)
+})
+
+const FILES_JSON = {
+  ...HOBWORK_JSON,
+  routes: { ...HOBWORK_JSON.routes, 'PUT /photos/:name': { handler: 'src/upload.ts' } },
+  static: { '/photos': { dir: 'photos' }, '/shared': { dir: 'shared/out', public: true } },
+}
+const UPLOAD = `printf 'export default async (ctx) => ctx.files.put("photos/" + ctx.params.name, await ctx.request.text())' > dist/handlers/src/upload.js`
+
+function storeFile(project: string, path: string, contents: string) {
+  const target = join(projectFilesDir(host, project), ...path.split('/'))
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, contents)
+}
+
+async function releaseWithFiles() {
+  await release('filament', { 'package.json': fakePackageJson({ build: `${BUILD} && ${UPLOAD}` }), 'hobwork.json': JSON.stringify(FILES_JSON) })
+}
+
+test('static mounts serve the files handlers store, without starting a VM', async () => {
+  await releaseWithFiles()
+  const { cookie } = signedIn(host)
+  const session = { cookie: appSessionCookie(host, cookie, 'filament') }
+  storeFile('filament', 'photos/2026/cat.jpg', 'meow')
+
+  const photo = await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: session })
+  expect(photo.status).toBe(200)
+  expect(photo.body).toBe('meow')
+  expect(photo.headers['content-type']).toBe('image/jpeg')
+  expect(photo.headers['cache-control']).toBe('private, no-cache')
+  expect(photo.headers['x-content-type-options']).toBe('nosniff')
+  expect(sandboxes.created).toHaveLength(0)
+
+  const again = await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: { ...session, 'if-none-match': photo.headers.etag as string } })
+  expect(again.status).toBe(304)
+  const part = await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: { ...session, range: 'bytes=1-2' } })
+  expect(part.status).toBe(206)
+  expect(part.body).toBe('eo')
+  expect(part.headers['content-range']).toBe('bytes 1-2/4')
+  expect((await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: { ...session, range: 'bytes=-1' } })).body).toBe('w')
+  expect((await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: { ...session, range: 'bytes=9-' } })).status).toBe(416)
+  // A range for another version of the file gets the whole file.
+  const stale = await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: { ...session, range: 'bytes=1-2', 'if-range': '"old"' } })
+  expect(stale.status).toBe(200)
+  expect(stale.body).toBe('meow')
+
+  // Private mounts need the app session like the UI.
+  expect((await send(`${FILAMENT}/photos/2026/cat.jpg`)).status).toBe(401)
+  expect(location(await send(`${FILAMENT}/photos/2026/cat.jpg`, { headers: page }))).toContain('/auth/app')
+
+  // A route stores a file through ctx.files, and the mount serves it.
+  const upload = await send(`${FILAMENT}/api/photos/dog.png`, {
+    method: 'PUT',
+    headers: { ...session, 'x-hobwork-csrf': '1' },
+    body: 'woof',
+  })
+  expect(upload.status, upload.body).toBe(200)
+  expect(JSON.parse(upload.body)).toMatchObject({ path: 'photos/dog.png', size: 4 })
+  const dog = await send(`${FILAMENT}/photos/dog.png`, { headers: session })
+  expect(dog.body).toBe('woof')
+  expect(dog.headers['content-type']).toBe('image/png')
+})
+
+test('public mounts need no session, and nothing outside a mount is served', async () => {
+  await releaseWithFiles()
+  storeFile('filament', 'shared/out/plan.pdf', '%PDF')
+  storeFile('filament', 'shared/out/logo.svg', '<svg/>')
+  storeFile('filament', 'shared/out/page.html', '<script>alert(1)</script>')
+  storeFile('filament', 'shared/out/app.js', 'alert(1)')
+  storeFile('filament', 'shared/secret.txt', 'not shared')
+  storeFile('filament', 'photos/cat.jpg', 'meow')
+
+  const pdf = await send(`${FILAMENT}/shared/plan.pdf`)
+  expect(pdf.status).toBe(200)
+  expect(pdf.headers['content-type']).toBe('application/pdf')
+  expect(pdf.headers['cache-control']).toBe('public, no-cache')
+  expect(pdf.headers['content-security-policy']).toBeUndefined()
+  // From another hob's app too: the files are public.
+  expect((await send(`${FILAMENT}/shared/plan.pdf`, { headers: { origin: SLEEP, 'sec-fetch-site': 'same-site' } })).status).toBe(200)
+
+  const svg = await send(`${FILAMENT}/shared/logo.svg`)
+  expect(svg.headers['content-type']).toBe('image/svg+xml')
+  expect(svg.headers['content-security-policy']).toContain('sandbox')
+  // What could run script on the app origin is a download, never a page or script.
+  for (const path of ['/shared/page.html', '/shared/app.js']) {
+    const res = await send(`${FILAMENT}${path}`)
+    expect(res.headers['content-type'], path).toBe('application/octet-stream')
+    expect(res.headers['content-disposition'], path).toBe('attachment')
+  }
+
+  for (const path of [
+    '/shared/',
+    '/shared',
+    '/shared/missing.pdf',
+    '/shared/..%2fsecret.txt',
+    '/shared/%2e%2e/secret.txt',
+    '/shared/..%2f..%2fphotos/cat.jpg',
+    '/shared/.%2e/secret.txt',
+    '/shared/a%00.txt',
+  ]) {
+    // URL parsing turns /shared/%2e%2e/ into /, which needs a session.
+    const res = await send(`${FILAMENT}${path}`)
+    expect([401, 404], path).toContain(res.status)
+    expect(res.body, path).not.toContain('not shared')
+  }
+  expect((await send(`${FILAMENT}/shared/plan.pdf`, { method: 'POST' })).status).toBe(405)
+  expect(sandboxes.created).toHaveLength(0)
+
+  // A mount wins over the UI: no index.html for paths under it.
+  const { cookie } = signedIn(host)
+  const missing = await send(`${FILAMENT}/photos/nope`, { headers: { ...page, cookie: appSessionCookie(host, cookie, 'filament') } })
+  expect(missing.status).toBe(404)
+  expect(missing.body).not.toContain('<title>Spools</title>')
 })

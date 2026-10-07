@@ -49,6 +49,10 @@ test('stages the host DB, project DBs, repos and keys, and leaves out what the h
   writeFileSync(join(dataDir, 'ssh_host_ed25519_key'), 'host key', { mode: 0o600 })
   mkdirSync(join(dataDir, 'builds', 'filament', 'abc'), { recursive: true })
   mkdirSync(join(dataDir, 'workspaces', 'filament', 'add-spools'), { recursive: true })
+  mkdirSync(join(dataDir, 'projects', 'filament', 'files', 'photos'), { recursive: true })
+  writeFileSync(join(dataDir, 'projects', 'filament', 'files', 'photos', 'cat.jpg'), 'meow')
+  mkdirSync(join(dataDir, 'projects', 'filament', 'files.tmp'), { recursive: true })
+  writeFileSync(join(dataDir, 'projects', 'filament', 'files.tmp', 'upload'), 'half')
 
   const result = await stageBackup(dataDir, staging)
   expect(result).toEqual({ projects: ['alarms', 'filament'], secretKey: true })
@@ -60,6 +64,11 @@ test('stages the host DB, project DBs, repos and keys, and leaves out what the h
   expect(stagedProject.prepare('SELECT count(*) AS n FROM pairs').get()).toEqual({ n: 2 })
   stagedProject.close()
   expect(existsSync(join(staging, 'projects', 'alarms'))).toBe(false)
+  // Files are hard links: replacing a file renames a new one into place, so the staged one stays as it was.
+  const stagedFile = join(staging, 'projects', 'filament', 'files', 'photos', 'cat.jpg')
+  expect(readFileSync(stagedFile, 'utf8')).toBe('meow')
+  expect(statSync(stagedFile).ino).toBe(statSync(join(dataDir, 'projects', 'filament', 'files', 'photos', 'cat.jpg')).ino)
+  expect(existsSync(join(staging, 'projects', 'filament', 'files.tmp'))).toBe(false)
 
   const stagedRepo = join(staging, 'repos', 'filament.git')
   expect(await refs(stagedRepo)).toBe(await refs(repo))

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { repoPath, type Host } from './host.ts'
 import type { Project } from './projects.ts'
 import { projectBuildsDir } from './runtime/builds.ts'
+import { FILES_DIR, UPLOADS_DIR } from './runtime/files.ts'
 
 // Bytes on disk per part of a project. `logs` counts the text of its log lines
 // and invocation errors in the host DB, since they share one file with every
@@ -10,6 +11,8 @@ import { projectBuildsDir } from './runtime/builds.ts'
 export type StorageUse = {
   total: number
   database: number
+  // ctx.files, uploads in progress included.
+  files: number
   branchDatabases: number
   workspaces: number
   repo: number
@@ -65,6 +68,20 @@ async function workspaceSizes(host: Host, project: string) {
   return { branchDatabases, workspaces }
 }
 
+// The hob DB and its files share data/projects/<hob>/.
+async function projectDataSizes(host: Host, project: string) {
+  let database = 0
+  let files = 0
+  const root = join(host.dataDir, 'projects', project)
+  for (const entry of await entries(root)) {
+    const path = join(root, entry.name)
+    const size = entry.isDirectory() ? await dirSize(path) : entry.isFile() ? await fileSize(path) : 0
+    if (entry.name === FILES_DIR || entry.name === UPLOADS_DIR) files += size
+    else database += size
+  }
+  return { database, files }
+}
+
 function logSize(host: Host, projectId: number): number {
   const row = host.db
     .prepare(
@@ -78,16 +95,17 @@ function logSize(host: Host, projectId: number): number {
 }
 
 export async function measureStorage(host: Host, project: Pick<Project, 'id' | 'name'>, now = new Date()): Promise<StorageUse> {
-  const [database, repo, builds, { branchDatabases, workspaces }] = await Promise.all([
-    dirSize(join(host.dataDir, 'projects', project.name)),
+  const [{ database, files }, repo, builds, { branchDatabases, workspaces }] = await Promise.all([
+    projectDataSizes(host, project.name),
     dirSize(repoPath(host, project.name)),
     dirSize(projectBuildsDir(host, project.name)),
     workspaceSizes(host, project.name),
   ])
   const logs = logSize(host, project.id)
   return {
-    total: database + branchDatabases + workspaces + repo + builds + logs,
+    total: database + files + branchDatabases + workspaces + repo + builds + logs,
     database,
+    files,
     branchDatabases,
     workspaces,
     repo,

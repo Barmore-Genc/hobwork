@@ -134,6 +134,32 @@
       "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "maxLength": 63 }
     },
+    "static": {
+      "description": "Serves directories of the hob's files (ctx.files) at paths of its app, straight from the host without starting the hob's VM. The key is the URL path, the value names the directory: \"/photos\": { \"dir\": \"photos\" } serves the file photos/2026/cat.jpg at /photos/2026/cat.jpg. Only to signed-in users and share links, like the UI, unless \"public\" is true. A path here wins over the UI's files. It cannot be under /api, /_hobwork or /theme. Images, audio, video, PDF, fonts and plain text are shown in the browser; every other file is a download.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$",
+        "not": { "pattern": "^/(api|_hobwork|theme)(/|$)" },
+        "maxLength": 256
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dir"],
+        "properties": {
+          "dir": {
+            "description": "Directory of the hob's files, like \"photos\" or \"uploads/avatars\".",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$",
+            "maxLength": 256
+          },
+          "public": {
+            "description": "Serve the files to anyone with the link, without signing in. Default false.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
     "resources": {
       "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 512 MB and 2 vCPUs, workspaces and pipeline runs (which also run builds) to 2048 MB and 4 vCPUs. Values above the defaults are capped to them.",

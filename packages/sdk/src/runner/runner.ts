@@ -7,6 +7,7 @@ import { format } from 'node:util'
 import type { Context, Handler, Invocation, LogLevel, Logger } from '../index.ts'
 import { createDbClient, httpDbSender } from './db-client.ts'
 import { createDeviceClient, httpDeviceSender } from './device-client.ts'
+import { createFilesClient } from './files-client.ts'
 import { createHaClient, httpHaSender } from './ha-client.ts'
 import { createHostClient, type HostClient } from './host-client.ts'
 import {
@@ -120,6 +121,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
   const db = createDbClient(httpDbSender(options.internalUrl, () => current.getStore()?.id))
   const ha = createHaClient(httpHaSender(options.internalUrl, () => current.getStore()?.id))
   const devices = createDeviceClient(httpDeviceSender(options.internalUrl, () => current.getStore()?.id))
+  const files = createFilesClient(options.internalUrl)
   const secrets = Object.freeze({ ...options.secrets })
 
   // Console output inside an invocation belongs to it. Output outside any
@@ -171,6 +173,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         fetch: globalThis.fetch.bind(globalThis),
         log,
         db,
+        files,
         ha,
         device: devices.device,
         devices: devices.devices,

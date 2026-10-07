@@ -83,6 +83,7 @@ export function ProjectsPage() {
 
 const PARTS: [keyof StorageUse, string][] = [
   ['database', 'Database'],
+  ['files', 'Stored files'],
   ['branchDatabases', 'Branch database copies'],
   ['workspaces', 'Branch files'],
   ['repo', 'Code history'],
@@ -95,6 +96,7 @@ function StorageLine({ storage }: { storage: StorageUse }) {
   return (
     <span className="text-sm text-muted tabular" title={breakdown}>
       {bytes(storage.total)} on disk, database {storage.database ? bytes(storage.database) : 'empty'}
+      {storage.files ? `, files ${bytes(storage.files)}` : ''}
     </span>
   )
 }

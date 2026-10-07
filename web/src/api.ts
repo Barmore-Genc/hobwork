@@ -37,6 +37,7 @@ export type ProjectSummary = {
 export type StorageUse = {
   total: number
   database: number
+  files: number
   branchDatabases: number
   workspaces: number
   repo: number

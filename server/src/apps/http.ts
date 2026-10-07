@@ -8,6 +8,7 @@ import { BuildError } from '../runtime/builds.ts'
 import { sendJson, sendRuntimeError, serveRoute, serveWebhook } from '../runtime/http.ts'
 import { ICONS_PREFIX, MANIFEST_PATH, sendUiText, serveAppIcons, serveProjectUi, uiHeaders } from '../runtime/project-ui.ts'
 import type { CspSources } from '../runtime/csp.ts'
+import { findStaticMount, projectFilesDir, serveStaticFile, type StaticMount } from '../runtime/files.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
@@ -260,6 +261,16 @@ export function createAppHttp(options: {
     serveProjectUi(req, res, { project: app.target.project, build, rest: pathname.slice(1), frameAncestors, csp: await cspOf(app) })
   }
 
+  // A version whose hobwork.json cannot be read serves no files.
+  async function staticMountOf(app: Resolved, pathname: string): Promise<StaticMount | undefined> {
+    const mounts = await runtime?.staticMounts(app.target.project, app.target.branch).catch(() => undefined)
+    return mounts && findStaticMount(mounts, pathname)
+  }
+
+  function serveStatic(req: IncomingMessage, res: ServerResponse, app: Resolved, mount: StaticMount, pathname: string) {
+    return serveStaticFile(req, res, { files: projectFilesDir(host, app.target.project), mount, pathname })
+  }
+
   // Only a build that is already stored: these answer without a session, and
   // must not start one.
   async function serveIcons(req: IncomingMessage, res: ServerResponse, app: Resolved, pathname: string) {
@@ -317,6 +328,9 @@ export function createAppHttp(options: {
     if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
     if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
+    const mount = pathname.startsWith(API_PREFIX) || pathname.startsWith(RESERVED_PREFIX) ? undefined : await staticMountOf(app, pathname)
+    // Public files are for anyone with the link, from any site.
+    if (mount?.public) return serveStatic(req, res, app, mount, pathname)
     const cross = await crossApp(req, app, pathname)
     if (cross.error) return sendJson(res, 403, { error: cross.error }, frameHeaders)
     const viewer = viewerOf(req, app, pathname)
@@ -349,6 +363,7 @@ export function createAppHttp(options: {
       })
     }
     if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', headers)
+    if (mount) return serveStatic(req, res, app, mount, pathname)
     await serveUi(req, res, app, pathname, frameAncestors)
   }
 

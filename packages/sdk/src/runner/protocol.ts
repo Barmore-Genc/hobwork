@@ -119,6 +119,55 @@ export type DeviceRequest = (
 
 export type DeviceResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
 
+// PUT http://hobwork.internal/v1/files/<path> stores the body (streamed, up to
+// MAX_FILE_BYTES) and answers FilesResponse with a FileInfo. GET on the same
+// path answers the bytes with FILE_SIZE_HEADER and FILE_MODIFIED_HEADER (the
+// body is streamed, so Content-Length may be gone), or a FilesResponse error.
+// Each path segment is URI-encoded.
+export const FILES_PATH = '/v1/files'
+export const MAX_FILE_BYTES = 1024 * 1024 * 1024
+export const FILE_SIZE_HEADER = 'x-hobwork-size'
+export const FILE_MODIFIED_HEADER = 'x-hobwork-modified'
+export const MAX_FILE_LIST = 1000
+
+export type FileInfo = { path: string; size: number; modified: string }
+
+// POST http://hobwork.internal/v1/files
+export type FilesRequest =
+  | { action: 'stat'; path: string }
+  | { action: 'delete'; path: string }
+  | { action: 'list'; prefix?: string; after?: string; limit?: number }
+
+export type FilesErrorCode = 'invalid_path' | 'not_found' | 'too_large' | 'conflict' | 'unavailable'
+
+export type FilesResponse =
+  | { ok: true; result: unknown }
+  | { ok: false; error: { code: FilesErrorCode; message: string } }
+
+const MAX_FILE_PATH_LENGTH = 512
+const MAX_FILE_PATH_DEPTH = 16
+// No leading dot, so nothing can be named `.` or `..` and dotfiles cannot be
+// stored, and only characters that need no escaping on any file system.
+const FILE_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,254}$/
+
+// What is wrong with a file path like "photos/2026/cat.jpg", or undefined.
+// The host checks this too.
+export function filePathProblem(path: unknown): string | undefined {
+  if (typeof path !== 'string' || path === '') return 'A file path must be a non-empty string'
+  if (path.length > MAX_FILE_PATH_LENGTH) return `A file path is at most ${MAX_FILE_PATH_LENGTH} characters`
+  const segments = path.split('/')
+  if (segments.length > MAX_FILE_PATH_DEPTH) return `A file path has at most ${MAX_FILE_PATH_DEPTH} segments`
+  if (!segments.every((segment) => FILE_SEGMENT.test(segment))) {
+    return `"${path}" is not a valid file path: use segments of letters, digits, ".", "_" and "-" separated by "/", none starting with "."`
+  }
+  return undefined
+}
+
+// The URL path of a file under FILES_PATH. Expects a valid path.
+export function fileUrlPath(path: string): string {
+  return `${FILES_PATH}/${path.split('/').map(encodeURIComponent).join('/')}`
+}
+
 // Where `pnpm build` puts a handler, relative to the build's root (the
 // project's dist/). The template's vite.config.ts writes the same layout.
 export function handlerModulePath(handler: string): string {

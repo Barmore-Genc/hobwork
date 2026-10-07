@@ -1,4 +1,5 @@
 import { createReadStream, statSync, type Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
 import { dirname, extname, join, resolve, sep } from 'node:path'
@@ -62,6 +63,21 @@ export function fileStats(path: string): Stats | undefined {
   }
 }
 
+// The byte range a Range header asks for. Several ranges are answered with
+// the whole file, which the header allows.
+function byteRange(header: string | undefined, size: number): { start: number; end: number } | 'unsatisfiable' | undefined {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header?.trim() ?? '')
+  if (!match || (match[1] === '' && match[2] === '')) return undefined
+  const [first, last] = [match[1]!, match[2]!]
+  const start = first === '' ? Math.max(0, size - Number(last)) : Number(first)
+  const end = first === '' || last === '' ? size - 1 : Math.min(Number(last), size - 1)
+  if ((first === '' && Number(last) === 0) || start >= size || start > end) return 'unsatisfiable'
+  return { start, end }
+}
+
+// Sends a file with an ETag and byte ranges. `headers` may set the content
+// type. With `handle`, the file is read from it (and it is closed), so a file
+// replaced since `stats` was taken cannot be sent instead.
 export function sendFile(
   req: IncomingMessage,
   res: ServerResponse,
@@ -69,21 +85,43 @@ export function sendFile(
   stats: Stats,
   cacheControl: string,
   headers: Record<string, string> = {},
+  handle?: FileHandle,
 ) {
   const etag = `"${stats.size.toString(16)}-${Math.floor(stats.mtimeMs).toString(16)}"`
+  const done = () => void handle?.close().catch(() => {})
   if (req.headers['if-none-match'] === etag) {
+    done()
     res.writeHead(304, { ...headers, etag, 'cache-control': cacheControl }).end()
     return
   }
-  res.writeHead(200, {
-    ...headers,
+  const ifRange = req.headers['if-range']
+  const range = req.method === 'GET' && (ifRange === undefined || ifRange === etag) ? byteRange(req.headers.range, stats.size) : undefined
+  const common = {
     'content-type': CONTENT_TYPES[extname(path)] ?? 'application/octet-stream',
-    'content-length': stats.size,
+    ...headers,
+    'accept-ranges': 'bytes',
     'cache-control': cacheControl,
     etag,
+  }
+  if (range === 'unsatisfiable') {
+    done()
+    res.writeHead(416, { ...common, 'content-range': `bytes */${stats.size}`, 'content-length': 0 }).end()
+    return
+  }
+  const { start, end } = range ?? { start: 0, end: stats.size - 1 }
+  res.writeHead(range ? 206 : 200, {
+    ...common,
+    'content-length': end - start + 1,
+    ...(range ? { 'content-range': `bytes ${start}-${end}/${stats.size}` } : {}),
   })
-  if (req.method === 'HEAD') res.end()
-  else createReadStream(path).pipe(res)
+  if (req.method === 'HEAD' || stats.size === 0) {
+    done()
+    res.end()
+    return
+  }
+  const stream = handle ? handle.createReadStream({ start, end }) : createReadStream(path, { start, end })
+  stream.on('error', () => res.destroy())
+  stream.pipe(res)
 }
 
 // Resolves a URL path inside `root`, or undefined when it would leave it.

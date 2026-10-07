@@ -21,7 +21,7 @@ afterEach(() => {
 const BASE = 'http://hobwork.internal'
 const client = () => createFilesClient(BASE, async (input, init) => filesResponse(new Request(input, init), files))
 
-function put(path: string, body: BodyInit | null, headers: Record<string, string> = {}, max?: number) {
+function put(path: string, body: RequestInit['body'], headers: Record<string, string> = {}, max?: number) {
   const request = new Request(`${BASE}/v1/files/${path}`, { method: 'PUT', body, headers, duplex: 'half' } as RequestInit)
   return filesResponse(request, files, max)
 }

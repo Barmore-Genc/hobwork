@@ -19,6 +19,7 @@ import { createRuntime, type Runtime } from './runtime/runtime.ts'
 import { fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './runtime/test-sandbox.ts'
 import { rotateWebhookToken } from './runtime/webhooks.ts'
 import { createSecretStore, type SecretStore } from './secrets.ts'
+import { changeTags, listHobs, setStarred } from './project-list.ts'
 import { createTestHost } from './test-host.ts'
 import { fakePackageJson, seedMain } from './test-project.ts'
 import { sendTo, signedIn, startTestApp, TEST_APPS_DOMAIN, writeHeaders } from './test-web.ts'
@@ -277,6 +278,8 @@ test('the trash lists deleted projects with who deleted them and when they are r
 test('restoring brings a deleted project back as it was', async () => {
   const token = rotateWebhookToken(host, 'filament', 'scanned')
   host.db.prepare("INSERT INTO nfc_tags (id, project_id) VALUES ('tag-1', ?)").run(projectId('filament'))
+  setStarred(host, 'filament', true)
+  changeTags(host, 'filament', { add: ['workshop'] })
   const before = rowCounts(projectId('filament'))
   await deleteProject({ host, workspaces, delivery, runtime, data }, 'filament')
   const [entry] = (await trashList()).projects
@@ -289,6 +292,7 @@ test('restoring brings a deleted project back as it was', async () => {
   for (const table of ['versions', 'secret_assignments', 'webhook_tokens']) expect(after[table], table).toBe(before[table])
   expect(host.db.prepare('SELECT project_id FROM nfc_tags WHERE id = ?').get('tag-1')).toEqual({ project_id: projectId('filament') })
   expect(secrets.assigned('filament')).toMatchObject([{ envName: 'SPOOL_KEY' }])
+  expect(listHobs(host, 'name:filament')).toMatchObject([{ starred: true, tags: ['workshop'] }])
   expect((await trashList()).projects).toEqual([])
   expect(readdirSync(trashDir(host))).toEqual([])
 

@@ -7,6 +7,7 @@ import type { ProjectData } from './data/project-data.ts'
 import type { Delivery } from './delivery.ts'
 import { repoPath, type Host } from './host.ts'
 import { assertNameFree } from './project-rename.ts'
+import { hobTags, isStarred } from './project-list.ts'
 import { claimName, DEFAULT_BRANCH, getProject, ProjectError, requireProject, type Project } from './projects.ts'
 import { projectBuildsDir } from './runtime/builds.ts'
 import { appendLog } from './runtime/logs.ts'
@@ -60,6 +61,8 @@ export type TrashInfo = {
     updatedByAgentId?: number | null
     updatedAt: string
   } | null
+  starred?: boolean
+  tags?: string[]
 }
 
 export type TrashEntry = {
@@ -157,12 +160,12 @@ async function deleteNow(
 }
 
 // Rows that go with the project row but are needed to bring it back as it was:
-// versions, secret assignments, webhook tokens (so webhook URLs keep working)
-// and NFC tags (they are written on physical tags).
+// versions, secret assignments, webhook tokens (so webhook URLs keep working),
+// NFC tags (they are written on physical tags), and its star and tags.
 function restorableRows(
   host: Host,
   projectId: number,
-): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access' | 'ai'> {
+): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access' | 'ai' | 'starred' | 'tags'> {
   const all = (sql: string) => host.db.prepare(sql).all(projectId)
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
@@ -214,6 +217,8 @@ function restorableRows(
         updatedByAgentId: nullable(row.updated_by_agent_id),
         updatedAt: String(row.updated_at),
       }))[0] ?? null,
+    starred: isStarred(host, projectId),
+    tags: hobTags(host, projectId),
   }
 }
 
@@ -289,7 +294,7 @@ export type ProjectRestoreDeps = {
 
 // Brings a deleted project back from the trash, under its old name or another
 // one: its repo, DB, versions, secret assignments whose secret still exists,
-// webhook tokens, NFC tags, its own AI models and limits, and its place in the
+// webhook tokens, NFC tags, its star and tags, its own AI models and limits, and its place in the
 // project lists of agent tokens and OAuth connections that still exist. Run
 // history, logs, AI usage records and branch workspaces stay gone. It starts like after a host restart, building its
 // deployed version when first needed.
@@ -350,10 +355,10 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
   try {
     const row = db
       .prepare(
-        `INSERT INTO projects (name, default_branch, created_at)
-         VALUES (?, ?, coalesce(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) RETURNING id`,
+        `INSERT INTO projects (name, default_branch, created_at, starred)
+         VALUES (?, ?, coalesce(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), ?) RETURNING id`,
       )
-      .get(name, DEFAULT_BRANCH, info.createdAt ?? null)
+      .get(name, DEFAULT_BRANCH, info.createdAt ?? null, info.starred ? 1 : 0)
     const projectId = Number(row!.id)
     claimName(host, name)
     const version = db.prepare(
@@ -395,6 +400,8 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     for (const t of info.webhookTokens ?? []) token.run(projectId, t.name, t.tokenHash, t.createdAt)
     const tag = db.prepare('INSERT OR IGNORE INTO nfc_tags (id, project_id, created_at) VALUES (?, ?, ?)')
     for (const t of info.nfcTags ?? []) tag.run(t.id, projectId, t.createdAt)
+    const hobTag = db.prepare('INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES (?, ?)')
+    for (const t of info.tags ?? []) hobTag.run(projectId, t)
     const tokenAccess = db.prepare(
       'INSERT OR IGNORE INTO agent_token_projects (token_id, project_id) SELECT id, ? FROM agent_tokens WHERE id = ?',
     )

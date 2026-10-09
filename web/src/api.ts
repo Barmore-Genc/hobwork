@@ -26,6 +26,8 @@ export type Version = {
 export type ProjectSummary = {
   name: string
   defaultBranch: string
+  starred: boolean
+  tags: string[]
   status: ProjectStatus
   currentVersion: Version | null
   iconUrl: string
@@ -72,6 +74,8 @@ export type DbStatus = {
 export type ProjectDetail = {
   name: string
   createdAt: string
+  starred: boolean
+  tags: string[]
   status: ProjectStatus
   // The version that runs now. It can differ from the newest while a deploy runs or after one failed.
   currentVersion: number | null
@@ -449,7 +453,15 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 export const api = {
   session: () => request<Session>('GET', '/api/session'),
   signOut: () => request<void>('POST', '/auth/logout'),
-  projects: () => request<ProjectSummary[]>('GET', '/api/projects'),
+  projects: (q = '') => request<ProjectSummary[]>('GET', `/api/projects${query({ q: q.trim() || undefined })}`),
+  starProject: (project: string, starred: boolean) =>
+    request<{ starred: boolean }>('PUT', `/api/projects/${encodeURIComponent(project)}/starred`, { starred }),
+  setProjectTags: (project: string, tags: string[]) =>
+    request<{ tags: string[] }>('PUT', `/api/projects/${encodeURIComponent(project)}/tags`, { tags }),
+  // Puts the project among the starred or other projects, before or after another one there, or else at the end.
+  moveProject: (project: string, to: { starred: boolean; before?: string; after?: string }) =>
+    request<void>('POST', `/api/projects/${encodeURIComponent(project)}/move`, to),
+  tags: () => request<{ tag: string; hobs: number }[]>('GET', '/api/tags'),
   project: (name: string) => request<ProjectDetail>('GET', `/api/projects/${encodeURIComponent(name)}`),
   deleteProject: (project: string, confirm: string) =>
     request<{ deleted: string; recoverableUntil: string; trashDays: number }>(

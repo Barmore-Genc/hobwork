@@ -131,12 +131,33 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'search',
       'set_ai_model',
       'show_hob',
+      'star_hob',
+      'tag_hob',
       'tail_logs',
       'unassign_secret',
       'write_file',
     ].sort(),
   )
   expect(client.getInstructions()).toContain('AGENTS.md')
+})
+
+test('stars, tags and searches hobs', async () => {
+  for (const name of ['alarms', 'bins']) await ok('create_hob', { name })
+  expect(JSON.parse(await ok('star_hob', { hob: 'bins', starred: true }))).toEqual({ hob: 'bins', starred: true })
+  expect(JSON.parse(await ok('tag_hob', { hob: 'alarms', add: ['Morning', 'bedroom'] }))).toEqual({
+    hob: 'alarms',
+    tags: ['bedroom', 'morning'],
+  })
+  expect(JSON.parse(await ok('tag_hob', { hob: 'alarms', remove: ['bedroom'] })).tags).toEqual(['morning'])
+  expect(JSON.parse(await ok('list_hobs'))).toMatchObject([
+    { name: 'bins', starred: true, tags: [] },
+    { name: 'alarms', starred: false, tags: ['morning'] },
+  ])
+  expect(JSON.parse(await ok('list_hobs', { query: 'tag:morning' })).map((h: { name: string }) => h.name)).toEqual(['alarms'])
+  expect(JSON.parse(await ok('list_hobs', { query: 'is:starred' })).map((h: { name: string }) => h.name)).toEqual(['bins'])
+  expect(await fails('list_hobs', { query: 'color:red' })).toContain('Unknown filter')
+  expect(await fails('tag_hob', { hob: 'alarms', add: ['two words'] })).toContain('Invalid tag')
+  expect(await fails('star_hob', { hob: 'nope', starred: true })).toContain('does not exist')
 })
 
 test('creates a project, edits files on a branch and commits as the agent', async () => {

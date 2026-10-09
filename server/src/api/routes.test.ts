@@ -84,11 +84,57 @@ test('projects overview shows status and the current version', async () => {
     {
       name: 'filament',
       defaultBranch: 'main',
+      starred: false,
+      tags: [],
       status: 'ready',
       currentVersion: expect.objectContaining({ number: 2, summary: 'Track spools', by: null, restoredFrom: null }),
       iconUrl: '/api/projects/filament/icon',
     },
   ])
+})
+
+function put(path: string, body: unknown) {
+  return fetch(`${app.base}${path}`, { method: 'PUT', headers: writeHeaders(cookie), body: JSON.stringify(body) })
+}
+
+test('hobs can be starred, tagged, moved and searched', async () => {
+  for (const name of ['alarms', 'bins', 'coffee']) await createProject(host, name)
+  const list = async (q = '') =>
+    (await jsonOf(await get(`/api/projects${q ? `?q=${encodeURIComponent(q)}` : ''}`))).map(
+      (p: { name: string; starred: boolean; tags: string[] }) => [p.name, p.starred, p.tags],
+    )
+
+  expect(await jsonOf(await put('/api/projects/coffee/starred', { starred: true }))).toEqual({ starred: true })
+  expect(await jsonOf(await put('/api/projects/bins/tags', { tags: ['Outside', 'weekly'] }))).toEqual({
+    tags: ['outside', 'weekly'],
+  })
+  expect((await post('/api/projects/alarms/move', { starred: false, after: 'bins' })).status).toBe(204)
+  expect(await list()).toEqual([
+    ['coffee', true, []],
+    ['bins', false, ['outside', 'weekly']],
+    ['alarms', false, []],
+  ])
+  expect(await list('tag:weekly')).toEqual([['bins', false, ['outside', 'weekly']]])
+  expect(await list('-is:starred name:a*')).toEqual([['alarms', false, []]])
+  expect(await jsonOf(await get('/api/tags'))).toEqual([
+    { tag: 'outside', hobs: 1 },
+    { tag: 'weekly', hobs: 1 },
+  ])
+  expect(await jsonOf(await get('/api/projects/bins'))).toMatchObject({ starred: false, tags: ['outside', 'weekly'] })
+})
+
+test('bad stars, tags, moves and searches are refused', async () => {
+  await createProject(host, 'alarms')
+  const error = async (res: Response) => [res.status, (await jsonOf(res)).error]
+  expect(await error(await get('/api/projects?q=color:red'))).toEqual([400, expect.stringContaining('Unknown filter')])
+  expect(await error(await put('/api/projects/alarms/starred', { starred: 'yes' }))).toEqual([400, 'starred must be true or false'])
+  expect(await error(await put('/api/projects/alarms/tags', { tags: ['a b'] }))).toEqual([400, expect.stringContaining('Invalid tag')])
+  expect(await error(await put('/api/projects/alarms/tags', { tags: 'a' }))).toEqual([400, 'tags must be a list of tags'])
+  expect(await error(await post('/api/projects/alarms/move', { starred: true, before: 'nope' }))).toEqual([
+    400,
+    expect.stringContaining('not one of the starred hobs'),
+  ])
+  expect((await put('/api/projects/nope/starred', { starred: true })).status).toBe(404)
 })
 
 test('a project without a rendered icon gets its first letter', async () => {

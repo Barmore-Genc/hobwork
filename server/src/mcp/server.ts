@@ -17,7 +17,8 @@ import type { Host } from '../host.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import type { SecretStore } from '../secrets.ts'
 import type { StorageUsage } from '../storage.ts'
-import { createProject, DEFAULT_BRANCH, listProjects, ProjectError, requireProject } from '../projects.ts'
+import { changeTags, listHobs, MAX_TAG_LENGTH, MAX_TAGS, QUERY_HELP, setStarred } from '../project-list.ts'
+import { createProject, DEFAULT_BRANCH, ProjectError, requireProject } from '../projects.ts'
 import { relativePath } from '../committed-files.ts'
 import { branchExists, createBranch, diffBranch, listBranches, log, readFileAtRef } from '../repo.ts'
 import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
@@ -163,20 +164,53 @@ export function createMcpServer({
     'list_hobs',
     {
       description:
-        'List the hobs you have access to, with the disk space each uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
+        'List the hobs you have access to, starred ones first, in the order the user arranged them. Each has its tags and the disk space it uses in bytes (storage), measured every few minutes. storage is null until the first measurement.',
+      inputSchema: {
+        query: z.string().optional().describe(`Only list hobs that match. ${QUERY_HELP} Example: "tag:kitchen -is:starred name:sleep-*"`),
+      },
       annotations: { readOnlyHint: true },
     },
-    () =>
+    ({ query }) =>
       json(
-        listProjects(host)
+        listHobs(host, query)
           .filter(({ name }) => allowsProject(agent.access, name))
           .map((p) => ({
             name: p.name,
+            starred: p.starred,
+            tags: p.tags,
             defaultBranch: p.defaultBranch,
             createdAt: p.createdAt,
             ...(storage ? { storage: storage.get(p) } : {}),
           })),
       ),
+  )
+
+  server.registerTool(
+    'star_hob',
+    {
+      description: 'Star a hob so it shows at the top of hob lists, or unstar it.',
+      inputSchema: {
+        hob,
+        starred: z.boolean().describe('true to star the hob, false to unstar it'),
+      },
+    },
+    ({ hob, starred }) => {
+      setStarred(host, hob, starred)
+      return json({ hob, starred })
+    },
+  )
+
+  server.registerTool(
+    'tag_hob',
+    {
+      description: `Add tags to a hob or remove them. Tags group hobs so people and agents can find them, e.g. "kitchen" or "notifications". Tags use lowercase letters, digits and single hyphens, at most ${MAX_TAG_LENGTH} characters, and a hob has at most ${MAX_TAGS}. Returns the hob's tags. Use list_hobs to see the tags other hobs use.`,
+      inputSchema: {
+        hob,
+        add: z.array(z.string()).optional().describe('Tags to add'),
+        remove: z.array(z.string()).optional().describe('Tags to remove'),
+      },
+    },
+    ({ hob, add, remove }) => json({ hob, tags: changeTags(host, hob, { add, remove }) }),
   )
 
   server.registerTool(

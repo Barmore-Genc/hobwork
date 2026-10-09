@@ -130,6 +130,15 @@ test('updates keep the value or the hosts when left out, and change the fingerpr
   expect(store.forSandbox('filament')).toEqual({})
 })
 
+test('a new value changes the fingerprint even within the same millisecond', () => {
+  const secret = store.create({ name: 'Token', value: 'v1', hosts: [], assign: { project: 'filament', envName: 'TOKEN' } }, HOST)
+  const stamp = host.db.prepare('SELECT updated_at FROM secrets WHERE id = ?').get(secret.id)!.updated_at as string
+  const before = store.fingerprint('filament')
+  store.update(secret.id, { value: 'v2' }, HOST)
+  host.db.prepare('UPDATE secrets SET updated_at = ? WHERE id = ?').run(stamp, secret.id)
+  expect(store.fingerprint('filament')).not.toBe(before)
+})
+
 test('agents can assign, but never create, change or delete secrets', () => {
   const { agent } = createAgentToken(host.db, 'claude')
   const actor: Actor = { kind: 'agent', id: agent.id, name: agent.name }

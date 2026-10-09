@@ -13,7 +13,8 @@ import type { Host } from '../host.ts'
 import { HttpError, json, readJson } from '../http.ts'
 import { listConnections, revokeGrant } from '../oauth/grants.ts'
 import { latestRun } from '../pipeline/runner.ts'
-import { getProject, getProjectOrRenamed, listProjects, ProjectError, renamedProject, type Project } from '../projects.ts'
+import { allTags, hobTags, isStarred, listHobs, moveHob, setStarred, setTags } from '../project-list.ts'
+import { getProject, getProjectOrRenamed, ProjectError, renamedProject, type Project } from '../projects.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
 import { nextRun, parseCron } from '../runtime/cron.ts'
@@ -235,6 +236,15 @@ export function createApiRoutes(options: {
     return options.secrets
   }
 
+  function projectCall<T>(fn: () => T): T {
+    try {
+      return fn()
+    } catch (err) {
+      if (err instanceof ProjectError) throw new HttpError(400, err.message)
+      throw err
+    }
+  }
+
   function secretCall<T>(fn: () => T): T {
     try {
       return fn()
@@ -289,15 +299,17 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects$/,
-      handle: ({ res }) =>
+      handle: ({ res, query }) =>
         json(
           res,
           200,
-          listProjects(host).map((project) => {
+          projectCall(() => listHobs(host, query.get('q') ?? '')).map((project) => {
             const { status, current } = projectState(project)
             return {
               name: project.name,
               defaultBranch: project.defaultBranch,
+              starred: project.starred,
+              tags: project.tags,
               status,
               currentVersion: current ? versionView(current) : null,
               iconUrl: iconUrl(project.name),
@@ -305,6 +317,51 @@ export function createApiRoutes(options: {
             }
           }),
         ),
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/projects\/([^/]+)\/starred$/,
+      handle: async ({ req, res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const { starred } = await readObject(req)
+        if (typeof starred !== 'boolean') throw new HttpError(400, 'starred must be true or false')
+        setStarred(host, project.name, starred)
+        json(res, 200, { starred })
+      },
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/projects\/([^/]+)\/tags$/,
+      handle: async ({ req, res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const { tags } = await readObject(req)
+        if (!Array.isArray(tags) || !tags.every((t) => typeof t === 'string')) {
+          throw new HttpError(400, 'tags must be a list of tags')
+        }
+        json(res, 200, { tags: projectCall(() => setTags(host, project.name, tags)) })
+      },
+    },
+    {
+      // Puts the hob among the starred or other hobs, before or after another hob there.
+      method: 'POST',
+      pattern: /^\/api\/projects\/([^/]+)\/move$/,
+      handle: async ({ req, res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const { starred, before, after } = await readObject(req)
+        if (typeof starred !== 'boolean') throw new HttpError(400, 'starred must be true or false')
+        for (const [field, value] of [['before', before], ['after', after]] as const) {
+          if (value !== undefined && typeof value !== 'string') throw new HttpError(400, `${field} must be a hob name`)
+        }
+        projectCall(() =>
+          moveHob(host, project.name, { starred, before: before as string | undefined, after: after as string | undefined }),
+        )
+        res.writeHead(204).end()
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/tags$/,
+      handle: ({ res }) => json(res, 200, allTags(host)),
     },
     {
       method: 'GET',
@@ -316,6 +373,8 @@ export function createApiRoutes(options: {
         json(res, 200, {
           name: project.name,
           createdAt: project.createdAt,
+          starred: isStarred(host, project.id),
+          tags: hobTags(host, project.id),
           status,
           currentVersion: current?.number ?? null,
           iconUrl: iconUrl(project.name),

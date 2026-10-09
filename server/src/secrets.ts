@@ -778,11 +778,15 @@ export function createSecretStore(host: Host, key: Buffer) {
       return [...new Set(assigned(project).flatMap(({ row }) => row.hosts))].sort()
     },
 
-    // Changes whenever forSandbox would return something else.
+    // Changes whenever forSandbox would return something else. Hashes the
+    // ciphertext rather than updated_at, which two writes in the same
+    // millisecond share; every write encrypts with a new IV.
     fingerprint(project: string): string {
       const hash = createHash('sha256')
       for (const { assignment, row } of assigned(project)) {
-        hash.update(`${row.id}\0${assignment.envName}\0${row.hosts.join(',')}\0${row.headers.join(',')}\0${row.updatedAt}\n`)
+        hash.update(`${row.id}\0${assignment.envName}\0${row.hosts.join(',')}\0${row.headers.join(',')}\0`)
+        hash.update(row.value)
+        hash.update('\n')
       }
       return hash.digest('hex')
     },

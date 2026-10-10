@@ -2,7 +2,7 @@ import { call } from './bridge.ts'
 
 export type ImpactStyle = 'light' | 'medium' | 'heavy' | 'soft' | 'rigid'
 
-// Haptic feedback on iPhone. Not on macOS: has('haptics') is false there.
+// Haptic feedback on iPhone. Not on iPad or macOS: has('haptics') is false there.
 export const haptics = {
   // Picking something up, e.g. the start of a drag.
   lift: () => call<void>('haptics', 'lift'),

@@ -105,7 +105,7 @@ Built in `relay/` (Push relay in `docs/architecture.md`) and running at `relay.b
 - The content key comes from an X25519 exchange between the app and the sidecar, so only they hold it. The payload carries a key ID so keys can rotate with pushes in flight.
 - Encrypted: everything in `hobwork` today, plus title, body, `thread-id`, category, interruption level, sound, and a sent-at time and expiry. The plaintext is compressed with raw deflate (`zlib.deflateRawSync`, `COMPRESSION_ZLIB` in the app), padded to 256-byte buckets, and encrypted with ChaCha20-Poly1305 with the grant ID as associated data. About 2.9 KB of compressed plaintext fits in APNs' 4 KB; `too_large` checks the encrypted size.
 - The notification service extension decrypts every push, rebuilds the notification, and handles actions and commands as today. Prompt pushes (NFC) become `mutable-content` too. It rejects pushes that fail to decrypt, are stale, or repeat one already seen, including one that came over the socket.
-- The app's `willPresent` (`apple/Hobwork/Notifications/Notifier.swift`) returns no presentation options for a push whose ID the app already showed from the socket. Today `willPresent` always returns `[.banner, .list, .sound]`.
+- The app's `willPresent` (`apple/Hobwork/Notifications/Notifier.swift`) returns no presentation options for a push whose ID the app already showed from the socket. Otherwise it shows a banner and plays the sound as the background would: passive notifications and updates only go to the list, and `sound: "none"` plays none.
 - The relay and Apple still see the APNs token, which grants belong to one device, and the timing, size bucket, kind and priority of pushes.
 
 ### Configuration

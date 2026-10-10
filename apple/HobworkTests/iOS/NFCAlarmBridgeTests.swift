@@ -65,6 +65,7 @@ struct NFCBridgeTests {
         let reply = await call(router, "write", #"{"url":"https://example.com/spool/78"}"#)
         #expect(reply["value"] == json(#"{"url":"https://example.com/spool/78","uid":"04a2245a8b6380","verified":true}"#))
         #expect(prompter.questions == ["Let “filament” write NFC tags?"])
+        #expect(prompter.messages == ["It can then write links to tags you hold near your \(DeviceModel.name)."])
 
         session.failure = .tooSmall
         let failed = await call(router, "write", #"{"url":"https://example.com/spool/78"}"#)
@@ -89,6 +90,7 @@ struct NFCBridgeTests {
         #expect(sent.first?.0 == "filament")
         #expect(sent.first?.1 == "lastActive")
         #expect(sent.first?.3 == json(#"{"url":"https://example.com/bin/4","alertMessage":"Bin 4"}"#))
+        #expect(prompter.messages == ["It can then write links to tags with your other devices that read NFC."])
         #expect(await call(router, "read")["error"]?["code"] == .string("unavailable"))
     }
 
@@ -180,6 +182,7 @@ struct AlarmsBridgeTests {
         #expect(records.read().first?.hob == "filament")
         #expect(records.read().first?.repeatSeconds == 900)
         #expect(prompter.questions == ["Let “filament” set alarms and timers?"])
+        #expect(prompter.messages == ["They ring on this \(DeviceModel.name) even in silent mode and Focus."])
 
         #expect(await call(router, "sleep", "list")["value"] == .array([]))
         #expect(await call(router, "filament", "list")["value"]?.arrayValue?.count == 1)

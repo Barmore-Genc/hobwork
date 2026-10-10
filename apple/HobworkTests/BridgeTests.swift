@@ -24,6 +24,7 @@ final class FakePresenter: BridgePresenter {
 final class FakePrompter: BridgePrompter {
     var answer: Bool?
     var questions: [String] = []
+    var messages: [String] = []
     var delay: Duration = .zero
 
     init(answer: Bool?) {
@@ -32,6 +33,7 @@ final class FakePrompter: BridgePrompter {
 
     func ask(title: String, message: String, presenter: any BridgePresenter) async -> Bool? {
         questions.append(title)
+        messages.append(message)
         if delay > .zero { try? await Task.sleep(for: delay) }
         return answer
     }

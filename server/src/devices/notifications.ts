@@ -434,6 +434,12 @@ export function claimDue(db: DatabaseSync, now: number): (NotificationRow & { ta
     .map((row) => ({ ...row, deliverAt: null, target: row.target! }))
 }
 
+// Unix milliseconds of the earliest notification waiting for deliverAt.
+export function nextDelivery(db: DatabaseSync): number | undefined {
+  const row = db.prepare('SELECT min(deliver_at) AS at FROM notifications WHERE deliver_at IS NOT NULL AND withdrawn_at IS NULL').get()
+  return row?.at == null ? undefined : Date.parse(String(row.at))
+}
+
 // The tap on this device's copy of the current revision. False when it was
 // handled before: the app may send an action twice (over the socket and by
 // HTTP after a reconnect), and the hob must see it once.
@@ -469,6 +475,8 @@ export type NotificationsDeps = {
   // with the HTTP status the handler answered.
   invokeRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<number>
   withdrawWaitMs?: number
+  // A notification now waits for deliverAt.
+  onScheduled?: () => void
 }
 
 export type Notifications = ReturnType<typeof createNotifications>
@@ -619,6 +627,7 @@ export function createNotifications(deps: NotificationsDeps) {
       { projectId: id, ...(key !== undefined ? { key } : {}), content, ...(deliverAt !== undefined ? { deliverAt, target } : {}) },
       now(),
     )
+    if (deliverAt !== undefined) deps.onScheduled?.()
     await withdrawFrom(row, heldBy(row, deliverAt === undefined ? targets.map((d) => d.id) : []))
     return row
   }

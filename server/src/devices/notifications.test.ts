@@ -163,8 +163,8 @@ test('sending to a person needs a known person with a device that shows notifica
 })
 
 test('a device that fails is reported and the others still get it', async () => {
-  pair('kaan-iphone')
-  pair('kaan-mac')
+  pair('kaan-iphone', { activeAt: clock - 1000 })
+  pair('kaan-mac', { activeAt: clock - 5000 })
   relay.answer((r) => (r.path.includes('kaan-mac') ? { status: 502, body: { error: 'apns', message: 'APNs is down' } } : { status: 200 }))
   const sent = await devices.notifyPerson('filament', userId, { title: 'Hi' })
   expect(sent.devices).toEqual([
@@ -376,4 +376,13 @@ test('workspaces cannot notify, update or withdraw', async () => {
     access: 'full',
   })
   expect(await res.json()).toMatchObject({ ok: true, result: { scheduled: false, devices: [{ device: 'kaan-iphone', delivery: 'push' }] } })
+})
+
+test('the host sends a scheduled notification on its own when the time comes', async () => {
+  pair('kaan-iphone')
+  await devices.sendNotification('filament', 'kaan-iphone', { title: 'Morning', deliverAt: new Date(clock + 200).toISOString() })
+  clock += 200
+  const deadline = Date.now() + 3000
+  while (!relay.received.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+  expect(relay.received[0]?.plaintext.aps.alert).toEqual({ title: 'Morning' })
 })

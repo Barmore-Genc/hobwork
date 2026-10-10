@@ -15,7 +15,7 @@ import type { Host } from '../host.ts'
 import { getPerson, listPeople } from '../people.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
-import { createNotifications } from './notifications.ts'
+import { createNotifications, nextDelivery } from './notifications.ts'
 import { MAX_PAYLOAD_BYTES, PayloadTooLarge, pushSize, type PushInfo, type PushMessage, type PushSender } from './push/relay.ts'
 import { commandSpec, fallbackBody, HEALTH_TYPES, knownMethods, promptAlert } from './commands.ts'
 import {
@@ -82,8 +82,9 @@ const MAX_SCANNED_RECORDS = 16
 const MAX_SCANNED_RECORD_BYTES = 8192
 const NFC_RECORD_TYPES = ['url', 'text', 'other']
 const MAX_LOGGED_RESULT = 500
-// How often notifications waiting for deliverAt are checked.
-export const SCHEDULE_INTERVAL_MS = 5_000
+// Notifications waiting for deliverAt are checked at least this often, so a
+// clock that jumps cannot delay them by much.
+const MAX_SCHEDULE_WAIT_MS = 60_000
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -235,16 +236,23 @@ export function createDevices(options: {
     }
   }, EXPIRY_INTERVAL_MS)
   expiry.unref()
-  let delivering = false
-  const schedule = setInterval(() => {
-    if (delivering) return
-    delivering = true
-    notifications
-      .deliverDue()
-      .catch((err: unknown) => console.error('Sending scheduled notifications failed', err))
-      .finally(() => (delivering = false))
-  }, SCHEDULE_INTERVAL_MS)
-  schedule.unref()
+  // Wakes up for the next notification waiting for deliverAt, if any.
+  let schedule: NodeJS.Timeout | undefined
+  function scheduleNext() {
+    clearTimeout(schedule)
+    const next = nextDelivery(host.db)
+    if (next === undefined) return
+    schedule = setTimeout(
+      () => {
+        notifications
+          .deliverDue()
+          .catch((err: unknown) => console.error('Sending scheduled notifications failed', err))
+          .finally(scheduleNext)
+      },
+      Math.min(Math.max(next - now(), 0), MAX_SCHEDULE_WAIT_MS),
+    )
+    schedule.unref()
+  }
 
   function ownerAllowed(device: Device): boolean {
     if (!options.allowlist) return true
@@ -338,7 +346,9 @@ export function createDevices(options: {
     projectLog,
     ...(options.invokeRoute ? { invokeRoute: options.invokeRoute } : {}),
     ...(options.withdrawWaitMs !== undefined ? { withdrawWaitMs: options.withdrawWaitMs } : {}),
+    onScheduled: () => scheduleNext(),
   })
+  scheduleNext()
 
   const CAPABILITY_NAMES: Record<string, string> = {
     alarms: 'alarms',
@@ -791,7 +801,7 @@ export function createDevices(options: {
     },
     close() {
       clearInterval(expiry)
-      clearInterval(schedule)
+      clearTimeout(schedule)
       for (const waiter of waiters.values()) {
         forget(waiter)
         waiter.reject(new DeviceError('unreachable', 'Hobwork is shutting down'))

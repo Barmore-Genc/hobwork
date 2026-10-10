@@ -24,6 +24,8 @@ struct Hello: Codable, Equatable, Sendable {
     var platform: String
     var capabilities: [String]
     var push: PushRegistration?
+    /// IANA identifier. Hobs use it for the owner's local time unless they chose one on the host.
+    var timeZone: String?
 }
 
 struct DeviceCall: Codable, Equatable, Sendable {

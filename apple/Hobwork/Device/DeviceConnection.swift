@@ -84,6 +84,14 @@ final class DeviceConnection {
         start()
     }
 
+    /// Says hello again on an open connection, so the host sees the app in use and its
+    /// current time zone. Connecting says hello anyway.
+    func sayHello() {
+        guard state == .connected, let socket else { return }
+        let message = hello()
+        Task { try? await socket.send(DeviceMessage.hello(message).encoded()) }
+    }
+
     /// Sends the event now when connected, otherwise on the next connect.
     func send(_ event: DeviceEvent) {
         queue.append(event)

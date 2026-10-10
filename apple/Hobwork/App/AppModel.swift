@@ -98,7 +98,7 @@ final class AppModel {
                 Task { await scanTag() }
             }
         #endif
-        if connection?.state != .connected { connection?.reconnect() }
+        if connection?.state == .connected { connection?.sayHello() } else { connection?.reconnect() }
         web.checkSession()
         Task { await refreshCapabilities() }
     }
@@ -249,7 +249,8 @@ final class AppModel {
             appVersion: Self.appVersion,
             platform: Hello.platform,
             capabilities: capabilities.reported,
-            push: pushToken.map { PushRegistration(token: $0, environment: Self.pushEnvironment) }
+            push: pushToken.map { PushRegistration(token: $0, environment: Self.pushEnvironment) },
+            timeZone: TimeZone.current.identifier
         )
     }
 

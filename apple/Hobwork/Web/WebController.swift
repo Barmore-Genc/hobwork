@@ -1,6 +1,7 @@
 #if os(macOS)
     import AppKit
 #else
+    import SafariServices
     import UIKit
 #endif
 import Observation
@@ -74,6 +75,14 @@ final class WebController: NSObject {
     var linkPolicy: LinkPolicy? {
         policy
     }
+
+    #if os(iOS)
+        /// In-app Safari, which never hands the link back to the app as a universal link would.
+        func openInSafari(_ url: URL) {
+            guard let parent = bridgeViewController else { return Self.openOutside(url) }
+            parent.present(SFSafariViewController(url: url), animated: true)
+        }
+    #endif
 
     func goHome() {
         Task { await open(path: "/") }

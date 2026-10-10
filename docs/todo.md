@@ -190,6 +190,20 @@ See Web bridge in `docs/architecture.md`.
 - Hand-off only covers `nfc.read` and `nfc.write`; alarms ring on the device that set them, as the filament hob wants.
 - `alarm-states.json` keeps one entry per alarm ID that ever rang; hobs that make new IDs for every timer grow it slowly.
 
+## Live Activities, widgets and intents
+
+See Live Activities and Widgets and intents in `docs/architecture.md`.
+
+- **Deploy the relay** with activity tokens and the `liveactivity` push kind. Until then the relay refuses the token registrations and Live Activity pushes, and activities only start, update and end while the app is open on its socket (or from the bridge).
+- **Check on a device** (only unit tests and the simulator so far): that ActivityKit decodes the sealed `content-state` and `attributes` through `HobworkActivityAttributes`' decoder in the widget extension (Apple documents no process for it; if the system decodes elsewhere, the content shows the placeholder and pushes have to carry plain content instead, which the relay and Apple could then read); push-to-start with `input-push-token`, and that iOS wakes the app to report the new activity's token; the real budget for priority 10 pushes and how late priority 5 ones arrive; the restart at 7 h 45 min ending the old activity and the "Still running" form after 8 hours; the button intent waking the app on a locked phone; background widget reload pushes.
+- The progress budget is the host's guess (2 percentage points or 5 minutes). If iOS throttles anyway, the host could count priority 10 pushes per device and hour and fall back to 5.
+- A device that dismissed an activity is skipped until the run ends. The app cannot tell a swipe from other ends on every iOS version (`ActivityState.dismissed` vs `.ended`); check which one a swipe reports.
+- Activities started by push while the relay or the app's grant changes lose their update token (the relay keeps tokens per grant); they show their last content until they end.
+- No Live Activities on Macs (ActivityKit is iOS only); the host never targets macOS devices.
+- Widgets: no macOS widget extension, and the widget shows text, swatches and lines only (no charts or images). Widget reloads by background push are best effort.
+- Intents: parameters are text, number or boolean, at most 4, asked one after another. Siri phrases name only the action entity, so "Hey Siri, where is spool 78" needs Siri keyword routing or Siri AI app schemas, which can run through `POST /api/devices/intents`; for now the person runs the action and Siri asks for the number.
+- Agents cannot see Live Activities, widgets or intents of a hob in the MCP tools beyond `hobwork.json`; the web UI does not list running Live Activities.
+
 ## Share links
 
 See Share links in `docs/architecture.md`.

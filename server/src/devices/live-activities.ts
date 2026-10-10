@@ -817,17 +817,24 @@ export function createLiveActivities(deps: LiveActivitiesDeps) {
 
   async function pastLimit(device: Device, row: ActivityRow, current: DeviceRow): Promise<void> {
     const canRestart = registry.connected(device.id) || Boolean(relay && device.push && device.liveActivityStartToken)
+    // The new activity starts before the old one ends, so a failed start
+    // leaves the old one to show "Still running". The app ends an activity
+    // with the same ID itself when it starts one.
     if (row.pastLimit === 'restart' && canRestart) {
+      let delivery: 'app' | 'push' | undefined
       try {
-        if (current.token || registry.connected(device.id)) await endOn(device, row, current, Math.floor(now() / 1000))
-        await startOn(device, row)
-        return
+        delivery = await startOn(device, row)
       } catch (err) {
         deps.projectLog(row.project, 'warn', `Restarting Live Activity ${JSON.stringify(row.key)} on ${device.name} before iOS's 8 hour limit failed: ${(err as Error).message}. It shows "Still running" instead`)
-        const now = deviceRow(db, row.id, device.id)
-        if (!now) return
-        current = now
-        if (current.state === 'ended' && current.activity !== null) setDeviceState(db, row.id, device.id, 'active')
+      }
+      if (delivery) {
+        if (delivery === 'push' && current.token) {
+          const state = deviceState(row.content, false)
+          await push(device, row, { event: 'end', token: current.token, state, priority: 10, dismissalDate: Math.floor(now() / 1000), ttlS: 12 * 60 * 60 }).catch(
+            (err: unknown) => deps.projectLog(row.project, 'warn', `Ending the old Live Activity ${JSON.stringify(row.key)} on ${device.name} failed: ${(err as Error).message}`),
+          )
+        }
+        return
       }
     }
     db.prepare('UPDATE live_activity_devices SET still_running = 1 WHERE activity_id = ? AND device_id = ?').run(row.id, device.id)

@@ -283,7 +283,7 @@ test('before the 8 hour limit it restarts with push-to-start', async () => {
   expect(pushes('kaan-iphone')).toHaveLength(1)
   clock += 60_000
   await devices.liveActivities.tick()
-  const [, end, start] = pushes('kaan-iphone')
+  const [, start, end] = pushes('kaan-iphone')
   expect(end!.body).toMatchObject({ event: 'end', activity: 'update-kaan-iphone', dismissalDate: clock / 1000 })
   expect(start!.body).toMatchObject({ event: 'start', activity: 'start-kaan-iphone' })
   expect((start!.plaintext.hobwork.liveActivity as { state: unknown }).state).toEqual(dryerState)

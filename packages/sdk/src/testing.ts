@@ -4,8 +4,10 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
-import type { Device } from './devices.ts'
+import type { Device, DeviceInfo, NotificationControl, PersonNotifications } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
+import type { LiveActivityControl, PersonLiveActivities } from './live-activities.ts'
+import type { Widgets } from './widgets.ts'
 import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
 import { checkFilePath, FilesError } from './runner/files-client.ts'
@@ -107,11 +109,13 @@ function unstubbedHa(): HomeAssistant {
 
 const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
   notifications: ['send'],
-  alarms: ['set', 'timer', 'cancel', 'list'],
+  alarms: ['set', 'timer', 'reschedule', 'cancel', 'list'],
   screenTime: ['sets', 'block', 'unblock', 'schedule', 'removeSchedule', 'limit', 'removeLimit', 'status'],
   focus: ['status'],
   nfc: ['write', 'read'],
   health: ['query'],
+  liveActivities: ['start', 'update', 'end'],
+  widgets: ['reload'],
 }
 
 // What a test fake of ctx.device may return: any capabilities and methods.
@@ -138,24 +142,75 @@ function stubbedDevice(name: string, stub: DeviceStub = {}): Device {
   return device as unknown as Device
 }
 
-export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
+// Most recently used first, as the host orders a person's devices.
+function byLastActive(a: DeviceInfo, b: DeviceInfo): number {
+  return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? '')
+}
+
+export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device' | 'notifications' | 'liveActivities'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
   device?: (name: string) => DeviceStub
+  notifications?: Partial<NotificationControl>
+  // ctx.person(id).notifications.
+  personNotifications?: (id: number) => Partial<PersonNotifications>
+  // ctx.person(id).liveActivities and ctx.person(id).widgets.
+  personLiveActivities?: (id: number) => Partial<PersonLiveActivities>
+  personWidgets?: (id: number) => Partial<Widgets>
+  liveActivities?: Partial<LiveActivityControl>
+}
+
+function unstubbed(what: string, hint: string) {
+  return () => Promise.reject(new Error(`${what} is not stubbed in this test. Pass ${hint} to createTestContext`))
 }
 
 // A handler context for tests. `db` defaults to a fresh test DB and `files` to
 // empty test files; `fetch`, `ha` and devices reject until a test stubs them,
 // since tests should not reach the network, change the home or notify anyone.
+// `caller` defaults to null. ctx.person(id) reads the stubbed ctx.devices(),
+// so stub devices with ownerId and lastActiveAt to test who gets notified.
 export function createTestContext(overrides: TestContextOverrides = {}): Context {
+  const devices =
+    overrides.devices ?? (() => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')))
+  const personDevices = async (id: number) => (await devices()).filter((d) => d.ownerId === id).sort(byLastActive)
   return {
     invocation: { id: 1, kind: 'route', name: 'test', manual: true },
     params: {},
+    caller: null,
     fetch: () => Promise.reject(new Error('ctx.fetch is not stubbed in this test. Pass fetch to createTestContext')),
     log: silent,
     secrets: {},
-    devices: () => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')),
+    people: () => Promise.reject(new Error('ctx.people is not stubbed in this test. Pass people to createTestContext')),
+    person: (id) => ({
+      devices: () => personDevices(id),
+      lastActiveDevice: async () => (await personDevices(id))[0],
+      notifications: {
+        send: unstubbed(`ctx.person(${id}).notifications.send`, 'personNotifications: (id) => ({ send })'),
+        ...overrides.personNotifications?.(id),
+      },
+      liveActivities: {
+        start: unstubbed(`ctx.person(${id}).liveActivities.start`, 'personLiveActivities: (id) => ({ start })'),
+        update: unstubbed(`ctx.person(${id}).liveActivities.update`, 'personLiveActivities: (id) => ({ update })'),
+        end: unstubbed(`ctx.person(${id}).liveActivities.end`, 'personLiveActivities: (id) => ({ end })'),
+        ...overrides.personLiveActivities?.(id),
+      },
+      widgets: {
+        reload: unstubbed(`ctx.person(${id}).widgets.reload`, 'personWidgets: (id) => ({ reload })'),
+        ...overrides.personWidgets?.(id),
+      },
+    }),
     ...overrides,
+    notifications: {
+      update: unstubbed('ctx.notifications.update', 'notifications: { update }'),
+      withdraw: unstubbed('ctx.notifications.withdraw', 'notifications: { withdraw }'),
+      ...overrides.notifications,
+    },
+    liveActivities: {
+      update: unstubbed('ctx.liveActivities.update', 'liveActivities: { update }'),
+      end: unstubbed('ctx.liveActivities.end', 'liveActivities: { end }'),
+      ...overrides.liveActivities,
+    },
+    devices,
     ha: { ...unstubbedHa(), ...overrides.ha },
     device: (name) => stubbedDevice(name, overrides.device?.(name)),
     db: overrides.db ?? createTestDb(),

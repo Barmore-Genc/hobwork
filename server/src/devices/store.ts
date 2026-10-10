@@ -1,12 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { publishChange } from '../changes.ts'
 import { hashSecret, newSecret, s256 } from '../oauth/secrets.ts'
 
 export const DEVICE_TOKEN_PREFIX = 'hwd_'
 export const PAIRING_CODE_TTL_MS = 5 * 60 * 1000
 export const WEB_SESSION_LINK_TTL_MS = 60 * 1000
-export const NOTIFICATION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_DEVICE_NAME = 40
 // Custom-scheme redirect of apps that were not built with the host's domain in
 // Associated Domains.
@@ -21,8 +20,7 @@ export function pairedUniversalLink(publicUrl: string): string {
 
 export const PLATFORMS = ['ios', 'macos'] as const
 export type Platform = (typeof PLATFORMS)[number]
-export type PushEnvironment = 'sandbox' | 'production'
-export type Push = { token: string; environment: PushEnvironment }
+export type Push = { grant: string; key: string }
 
 export type Device = {
   id: number
@@ -34,8 +32,11 @@ export type Device = {
   capabilities: string[]
   appVersion: string | null
   push: Push | null
+  // The relay's ID of the app's push-to-start token for Live Activities.
+  liveActivityStartToken: string | null
   createdAt: string
   lastSeenAt: string | null
+  lastActiveAt: string | null
 }
 
 // Names scripts use: ctx.device("kaan-iphone").
@@ -100,12 +101,11 @@ function toDevice(row: Record<string, unknown>): Device {
     platform: String(row.platform) as Platform,
     capabilities: JSON.parse(String(row.capabilities)) as string[],
     appVersion: row.app_version === null ? null : String(row.app_version),
-    push:
-      row.push_token === null
-        ? null
-        : { token: String(row.push_token), environment: String(row.push_environment) as PushEnvironment },
+    push: row.push_grant === null ? null : { grant: String(row.push_grant), key: String(row.push_key) },
+    liveActivityStartToken: row.live_activity_start_token == null ? null : String(row.live_activity_start_token),
     createdAt: String(row.created_at),
     lastSeenAt: row.last_seen_at === null ? null : String(row.last_seen_at),
+    lastActiveAt: row.last_active_at === null ? null : String(row.last_active_at),
   }
 }
 
@@ -192,7 +192,7 @@ export function renameDevice(db: DatabaseSync, id: number, name: string): Device
 // web view's session goes too, and with it the app sessions made from it.
 export function revokeDevice(db: DatabaseSync, id: number, now = Date.now()): boolean {
   const result = db
-    .prepare('UPDATE devices SET revoked_at = ?, push_token = NULL, push_environment = NULL WHERE id = ? AND revoked_at IS NULL')
+    .prepare('UPDATE devices SET revoked_at = ?, push_grant = NULL, push_key = NULL WHERE id = ? AND revoked_at IS NULL')
     .run(iso(now), id)
   if (Number(result.changes) === 0) return false
   db.prepare('DELETE FROM device_sign_in_links WHERE device_id = ?').run(id)
@@ -213,7 +213,7 @@ export function recordHello(
     iso(now),
     id,
   )
-  if (hello.push !== undefined) setPushToken(db, id, hello.push)
+  if (hello.push !== undefined) setPush(db, id, hello.push)
   publishChange(db, { kind: 'devices' })
 }
 
@@ -221,18 +221,47 @@ export function touchDevice(db: DatabaseSync, id: number, now = Date.now()) {
   db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(iso(now), id)
 }
 
-// null turns push off for the device, for example when APNs says the token is
-// gone. A token belongs to one app install, so a device paired again on the
-// same phone takes it over from the old record.
-export function setPushToken(db: DatabaseSync, id: number, push: Push | null) {
+// last_active_at is written at most this often, since every hob API request
+// from the app's web view counts.
+export const ACTIVE_INTERVAL_MS = 10_000
+
+// App events that mean someone has the device in hand. Health samples and
+// Focus changes arrive without that.
+const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned', 'alarms/stopped', 'alarms/repeated', 'liveActivities/action'])
+
+export function isUserEvent(capability: unknown, name: unknown): boolean {
+  return USER_EVENTS.has(`${String(capability)}/${String(name)}`)
+}
+
+// The person used the device. Counts as seen too.
+export function markDeviceActive(db: DatabaseSync, id: number, now = Date.now()) {
+  db.prepare(
+    `UPDATE devices SET last_active_at = ?1, last_seen_at = ?1
+     WHERE id = ?2 AND revoked_at IS NULL AND (last_active_at IS NULL OR last_active_at <= ?3)`,
+  ).run(iso(now), id, iso(now - ACTIVE_INTERVAL_MS))
+}
+
+// null turns push off for the device, for example when the relay says the
+// grant is gone. A grant belongs to one app install, so a device paired again
+// on the same phone takes it over from the old record.
+// The relay keeps Live Activity tokens per grant, so they go with it.
+export function setPush(db: DatabaseSync, id: number, push: Push | null) {
   if (push) {
-    db.prepare('UPDATE devices SET push_token = NULL, push_environment = NULL WHERE push_token = ? AND id != ?').run(push.token, id)
+    for (const row of db.prepare('SELECT id FROM devices WHERE push_grant = ? AND id != ?').all(push.grant, id)) clearActivityTokens(db, Number(row.id))
+    db.prepare('UPDATE devices SET push_grant = NULL, push_key = NULL WHERE push_grant = ? AND id != ?').run(push.grant, id)
   }
-  db.prepare('UPDATE devices SET push_token = ?, push_environment = ? WHERE id = ?').run(
-    push?.token ?? null,
-    push?.environment ?? null,
-    id,
-  )
+  const current = db.prepare('SELECT push_grant FROM devices WHERE id = ?').get(id)
+  if ((current?.push_grant ?? null) !== (push?.grant ?? null)) clearActivityTokens(db, id)
+  db.prepare('UPDATE devices SET push_grant = ?, push_key = ? WHERE id = ?').run(push?.grant ?? null, push?.key ?? null, id)
+}
+
+function clearActivityTokens(db: DatabaseSync, id: number) {
+  db.prepare('UPDATE devices SET live_activity_start_token = NULL WHERE id = ?').run(id)
+  db.prepare('UPDATE live_activity_devices SET token = NULL WHERE device_id = ?').run(id)
+}
+
+export function setLiveActivityStartToken(db: DatabaseSync, id: number, token: string | null) {
+  db.prepare('UPDATE devices SET live_activity_start_token = ? WHERE id = ?').run(token, id)
 }
 
 export function createWebSessionLink(
@@ -266,62 +295,6 @@ export function redeemWebSessionLink(
     .get(hashSecret(token), iso(now))
   const device = row && getDevice(db, Number(row.device_id))
   return device && { device, returnTo: String(row.return_to) }
-}
-
-export type NotificationRecord = {
-  id: string
-  deviceId: number
-  project: string
-  actions: string[]
-  data: unknown
-}
-
-export function recordNotification(
-  db: DatabaseSync,
-  record: { deviceId: number; projectId: number; actions: string[]; data: unknown },
-  now = Date.now(),
-): string {
-  db.prepare('DELETE FROM device_notifications WHERE created_at <= ?').run(iso(now - NOTIFICATION_TTL_MS))
-  const id = randomUUID()
-  db.prepare('INSERT INTO device_notifications (id, device_id, project_id, actions, data, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id,
-    record.deviceId,
-    record.projectId,
-    JSON.stringify(record.actions),
-    record.data === undefined ? null : JSON.stringify(record.data),
-    iso(now),
-  )
-  return id
-}
-
-// An unanswered notification of this device that has this action.
-export function findNotification(db: DatabaseSync, id: string, deviceId: number, action: string): NotificationRecord | undefined {
-  const row = db
-    .prepare(
-      `SELECT n.id, n.device_id, p.name AS project, n.actions, n.data FROM device_notifications n
-       JOIN projects p ON p.id = n.project_id
-       WHERE n.id = ? AND n.device_id = ? AND n.answered_at IS NULL
-         AND EXISTS (SELECT 1 FROM json_each(n.actions) WHERE value = ?)`,
-    )
-    .get(id, deviceId, action)
-  if (!row) return undefined
-  return {
-    id: String(row.id),
-    deviceId: Number(row.device_id),
-    project: String(row.project),
-    actions: JSON.parse(String(row.actions)) as string[],
-    data: row.data === null ? undefined : JSON.parse(String(row.data)),
-  }
-}
-
-// Marks the notification answered. False when it was answered before: the
-// app may send an action twice (over the socket and by HTTP after a
-// reconnect), and the project must see it once.
-export function answerNotification(db: DatabaseSync, id: string, now = Date.now()): boolean {
-  const result = db
-    .prepare('UPDATE device_notifications SET answered_at = ? WHERE id = ? AND answered_at IS NULL')
-    .run(iso(now), id)
-  return Number(result.changes) > 0
 }
 
 export const COMMAND_TTL_MS = 10 * 60 * 1000

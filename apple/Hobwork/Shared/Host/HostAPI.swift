@@ -39,9 +39,22 @@ enum HostURL {
         let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") { return true }
         if host.contains(":") { return true }
+        if insecureHTTPDomains.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 4 && parts.allSatisfy { UInt8($0) != nil }
     }
+
+    /// Domains App Transport Security lets this build reach over plain http. Debug builds add
+    /// development hosts here (HOBWORK_INSECURE_HTTP_DOMAINS); Release only has localhost.
+    static let insecureHTTPDomains: [String] = {
+        let ats = Bundle.main.object(forInfoDictionaryKey: "NSAppTransportSecurity") as? [String: Any]
+        let domains = ats?["NSExceptionDomains"] as? [String: [String: Any]] ?? [:]
+        return domains.compactMap { name, settings in
+            settings["NSExceptionAllowsInsecureHTTPLoads"] as? Bool == true && settings["NSIncludesSubdomains"] as? Bool == true
+                ? name.lowercased()
+                : nil
+        }
+    }()
 
     static func webSocketURL(for host: URL, path: String) -> URL {
         var components = URLComponents(url: host.appending(path: path), resolvingAgainstBaseURL: false)!
@@ -78,6 +91,37 @@ struct DeviceCredentials: Codable, Equatable, Sendable {
     var token: String
 }
 
+struct DeviceSelf: Decodable, Equatable, Sendable {
+    struct Person: Decodable, Equatable, Sendable {
+        var id: Int
+        var name: String
+    }
+
+    var id: Int
+    var name: String
+    var person: Person
+}
+
+/// The token exchange's answer: the credentials and the host's push keys.
+struct PairingExchange: Decodable, Equatable, Sendable {
+    var credentials: DeviceCredentials
+    var push: HostPushKeys?
+
+    private enum CodingKeys: String, CodingKey {
+        case push
+    }
+
+    init(credentials: DeviceCredentials, push: HostPushKeys?) {
+        self.credentials = credentials
+        self.push = push
+    }
+
+    init(from decoder: Decoder) throws {
+        credentials = try DeviceCredentials(from: decoder)
+        push = try decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(HostPushKeys.self, forKey: .push)
+    }
+}
+
 /// The host's HTTP endpoints for devices.
 struct HostAPI: Sendable {
     let host: URL
@@ -96,8 +140,8 @@ struct HostAPI: Sendable {
         return try HostInfo.parse(status: (response as? HTTPURLResponse)?.statusCode ?? 0, data: data)
     }
 
-    func exchange(code: String, verifier: String) async throws -> DeviceCredentials {
-        try await decode(DeviceCredentials.self, exchangeRequest(code: code, verifier: verifier))
+    func exchange(code: String, verifier: String) async throws -> PairingExchange {
+        try await decode(PairingExchange.self, exchangeRequest(code: code, verifier: verifier))
     }
 
     /// A one-time URL that signs the web view in and then opens `returnTo`.
@@ -108,9 +152,9 @@ struct HostAPI: Sendable {
         return url
     }
 
-    /// Sets the APNs token, or turns push off with nil.
-    func updatePush(_ push: PushRegistration?) async throws {
-        _ = try await send(pushRequest(push))
+    /// Tells the host this pairing's relay grant, or that there is none.
+    func updatePush(_ grant: HostPushGrant?) async throws {
+        _ = try await send(pushRequest(grant))
     }
 
     func send(_ event: DeviceEvent) async throws {
@@ -120,6 +164,37 @@ struct HostAPI: Sendable {
     /// Answers a command outside the socket. The host ignores all but the first result.
     func send(_ result: DeviceCallResult) async throws {
         _ = try await send(resultRequest(result))
+    }
+
+    /// This device and its owner, as the host knows them.
+    func describeSelf() async throws -> DeviceSelf {
+        try await decode(DeviceSelf.self, request(method: "GET", path: "api/devices/self"))
+    }
+
+    /// Runs a command on another device of the same person, such as an NFC write from an iPad
+    /// on their iPhone, and returns `{ ok, device?, value? | error? }` once that device answered.
+    func handoff(hob: String, device: String, capability: String, method: String, args: JSONValue) async throws -> JSONValue {
+        try await decode(JSONValue.self, handoffRequest(hob: hob, device: device, capability: capability, method: method, args: args))
+    }
+
+    func handoffRequest(hob: String, device: String, capability: String, method: String, args: JSONValue) -> URLRequest {
+        var request = request(method: "POST", path: "api/devices/handoff", body: JSONValue.object([
+            "hob": .string(hob), "device": .string(device), "capability": .string(capability),
+            "method": .string(method), "args": args,
+        ]))
+        // The host waits up to two minutes for the other device's person to tap and hold a tag.
+        request.timeoutInterval = 150
+        return request
+    }
+
+    /// The hob that wrote a Hobwork tag of this host, or nil for other links.
+    func nfcTagHob(url: URL) async throws -> String? {
+        struct Response: Decodable { var hob: String }
+        do {
+            return try await decode(Response.self, request(method: "POST", path: "api/devices/nfc/lookup", body: ["url": url.absoluteString])).hob
+        } catch HostError.failed(status: 404, _) {
+            return nil
+        }
     }
 
     /// Removes this device from the host, as removing it in the web UI does.
@@ -139,8 +214,8 @@ struct HostAPI: Sendable {
         request(method: "POST", path: "api/devices/web-session", body: ["returnTo": returnTo])
     }
 
-    func pushRequest(_ push: PushRegistration?) -> URLRequest {
-        let body: any Encodable = push ?? JSONValue.object(["token": .null])
+    func pushRequest(_ grant: HostPushGrant?) -> URLRequest {
+        let body: any Encodable = grant ?? JSONValue.object(["grant": .null])
         return request(method: "PUT", path: "api/devices/push", body: body)
     }
 
@@ -158,7 +233,7 @@ struct HostAPI: Sendable {
         return request
     }
 
-    private func request(method: String, path: String, body: (any Encodable)? = nil) -> URLRequest {
+    func request(method: String, path: String, body: (any Encodable)? = nil) -> URLRequest {
         var request = URLRequest(url: host.appending(path: path))
         request.httpMethod = method
         request.timeoutInterval = 15
@@ -183,7 +258,7 @@ struct HostAPI: Sendable {
         }
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await load(request)
         switch response.statusCode {
         case 200 ..< 300: return data
@@ -195,7 +270,7 @@ struct HostAPI: Sendable {
         }
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ request: URLRequest) async throws -> T {
+    func decode<T: Decodable>(_ type: T.Type, _ request: URLRequest) async throws -> T {
         let data = try await send(request)
         do {
             return try JSONDecoder().decode(type, from: data)

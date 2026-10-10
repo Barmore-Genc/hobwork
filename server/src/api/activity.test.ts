@@ -32,7 +32,7 @@ const HOBWORK_JSON = {
       handler: 'src/desk.ts',
     },
   },
-  egress: ['api.spools.example'],
+  egress: ['api.spools.example', '100.66.127.125:7912', '192.168.1.9:80'],
 }
 
 // Stands in for `vite build`: a UI page, a hashed asset, a public file and a handler bundle.
@@ -59,7 +59,7 @@ beforeEach(async () => {
   secrets = createSecretStore(host, randomBytes(32))
   data = createProjectData(host)
   runtime = createRuntime(host, { startBuildVm: startHostPipelineVm, data, secrets })
-  app = await startTestApp(host, { runtime, data, secrets })
+  app = await startTestApp(host, { runtime, data, secrets, web: { privateEgress: [{ host: '100.66.127.125', port: 7912 }] } })
   cookie = signedIn(host).cookie
   await createProject(host, 'filament')
   await createProject(host, 'sleep')
@@ -191,18 +191,25 @@ test('the project page shows entry points, reachable hosts, the DB and the app',
       {
         name: 'weigh',
         schedule: '30 7 * * *',
+        timeZone: null,
         nextRun: expect.any(String),
         lastRun: { id: failed, status: 'error', startedAt: expect.any(String) },
       },
     ],
     webhooks: [{ name: 'scanned', tokenCreatedAt: null, lastRun: null }],
     triggers: [
-      { name: 'desk-button', homeassistant: { trigger: 'state', entity_id: 'input_button.desk' }, device: null, lastRun: null },
+      { name: 'desk-button', homeassistant: { trigger: 'state', entity_id: 'input_button.desk' }, device: null, upload: null, lastRun: null },
     ],
+    uploads: [],
   })
   const next = new Date(body.entryPoints.crons[0].nextRun)
   expect([next.getHours(), next.getMinutes()]).toEqual([7, 30])
-  expect(body.egress).toEqual(['api.spools.example', 'auth.spools.example'])
+  expect(body.egress).toEqual([
+    { target: '100.66.127.125:7912', private: true, allowed: true },
+    { target: '192.168.1.9:80', private: true, allowed: false },
+    { target: 'api.spools.example', private: false, allowed: true },
+    { target: 'auth.spools.example', private: false, allowed: true },
+  ])
   expect(body.database).toMatchObject({ sizeBytes: expect.any(Number), slowQueries: { count: 0 } })
   // Not built yet: it is built when opened.
   expect(body.app).toBe(true)

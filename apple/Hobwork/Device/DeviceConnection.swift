@@ -29,6 +29,8 @@ final class DeviceConnection {
     private(set) var state: State = .stopped
 
     @ObservationIgnored var onUnauthorized: (() -> Void)?
+    /// The host's push keys, sent after every `hello`.
+    @ObservationIgnored var onPush: ((HostPushKeys?) -> Void)?
 
     @ObservationIgnored private let request: URLRequest
     @ObservationIgnored private let makeSocket: @MainActor (URLRequest) -> any DeviceSocket
@@ -82,6 +84,14 @@ final class DeviceConnection {
     func reconnect() {
         stop()
         start()
+    }
+
+    /// Says hello again on an open connection, so the host sees the app in use and its
+    /// current time zone. Connecting says hello anyway.
+    func sayHello() {
+        guard state == .connected, let socket else { return }
+        let message = hello()
+        Task { try? await socket.send(DeviceMessage.hello(message).encoded()) }
     }
 
     /// Sends the event now when connected, otherwise on the next connect.
@@ -165,6 +175,8 @@ final class DeviceConnection {
                 try await socket.send(DeviceMessage.pong.encoded())
             case let .call(call):
                 Task { await respond(to: call, on: socket) }
+            case let .push(keys):
+                onPush?(keys)
             default:
                 break
             }

@@ -103,6 +103,58 @@ struct AlarmsTests {
         }
     }
 
+    @Test func parsesTimerLooksAndTheRepeatButton() throws {
+        let args = ##"{"title":"Dehydrator","seconds":21600,"subtitle":"4 spools","tint":"#ff9500","repeat":{"seconds":7200},"hob":"filament"}"##
+        let record = try AlarmsCapability.timer(from: Arguments(json(args), call: "alarms.timer"))
+        #expect(record.subtitle == "4 spools")
+        #expect(record.tint == "#FF9500")
+        #expect(record.repeatSeconds == 7200)
+        #expect(record.repeatLabel == "+2 h")
+        #expect(record.hob == "filament")
+        #expect(AlarmRecord.interval(900) == "+15 min")
+        #expect(AlarmRecord.interval(5400) == "+1 h 30 min")
+        #expect(throws: CallError.self) {
+            try AlarmsCapability.timer(from: Arguments(json(#"{"title":"x","seconds":60,"tint":"orange"}"#), call: "t"))
+        }
+        #expect(throws: CallError.self) {
+            try AlarmsCapability.timer(from: Arguments(json(#"{"title":"x","seconds":60,"repeat":{"seconds":0}}"#), call: "t"))
+        }
+    }
+
+    @Test func reschedulesTimersInPlace() async throws {
+        let capability = makeCapability()
+        let uuid = UUID(uuidString: id)!
+        _ = try await capability.handle(method: "timer", args: json(#"{"title":"Oven","seconds":2700,"repeat":{"seconds":900},"id":"\#(id)"}"#))
+        scheduler.endsAt[uuid] = now.addingTimeInterval(600)
+
+        // Without seconds the timer keeps what it has left.
+        _ = try await capability.handle(method: "reschedule", args: json(#"{"id":"\#(id)","repeat":null,"subtitle":"Cap reached"}"#))
+        let changed = try #require(scheduler.scheduled.last)
+        #expect(changed.seconds == 600)
+        #expect(changed.repeatSeconds == nil)
+        #expect(changed.subtitle == "Cap reached")
+        #expect(changed.title == "Oven")
+
+        _ = try await capability.handle(method: "reschedule", args: json(#"{"id":"\#(id)","seconds":7200}"#))
+        #expect(scheduler.scheduled.last?.seconds == 7200)
+        #expect(records.read().count == 1)
+
+        await #expect {
+            try await capability.handle(method: "reschedule", args: json(#"{"id":"0a1d3b3e-8a55-4f4c-9d6f-0a2f5b0c7e11","seconds":60}"#))
+        } throws: { ($0 as? CallError)?.code == "unknown_alarm" }
+    }
+
+    @Test func listsTimerDetails() async throws {
+        let capability = makeCapability()
+        _ = try await capability.handle(
+            method: "timer",
+            args: json(##"{"title":"Oven","seconds":2700,"subtitle":"Beads","tint":"#FF9500","repeat":{"seconds":900,"title":"+15 min"},"id":"\##(id)"}"##)
+        )
+        scheduler.endsAt[UUID(uuidString: id)!] = isoDate("2026-05-04T07:45:00Z")
+        let list = try await capability.handle(method: "list", args: nil)
+        #expect(list == json(##"[{"id":"\##(id)","title":"Oven","state":"countdown","seconds":2700,"subtitle":"Beads","tint":"#FF9500","repeat":{"seconds":900,"title":"+15 min"},"endsAt":"2026-05-04T07:45:00Z"}]"##))
+    }
+
     @Test func needsPermission() async {
         scheduler.isAuthorized = false
         await #expect {

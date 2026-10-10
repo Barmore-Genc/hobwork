@@ -402,6 +402,9 @@ export function createProjectData(host: Host, options: ProjectDataOptions = {}) 
           ),
           ...(notStrict.length ? [notStrictMessage(notStrict)] : []),
         ]
+      } catch (err) {
+        // A view that calls a function SQLite does not know is only found here.
+        return { status: 'failed', output: `The migrated DB cannot be read: ${(err as Error).message}` }
       } finally {
         after.close()
       }

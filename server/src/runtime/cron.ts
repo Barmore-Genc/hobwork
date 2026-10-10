@@ -1,8 +1,10 @@
 // Standard 5-field cron (minute hour day-of-month month day-of-week) in the
-// host's local time zone. Fields take `*`, numbers, ranges (`1-5`), lists
+// host's local time zone, or in an IANA time zone given to nextRun. Fields take `*`, numbers, ranges (`1-5`), lists
 // (`1,15`), steps (`*/10`, `8-18/2`) and English month and weekday names
 // (`jan`, `mon-fri`). Day-of-week 0 and 7 are Sunday. As in Vixie cron, when
 // both day fields are restricted a day matches if either one does.
+
+import { localTime, zonedInstant } from '../../../packages/sdk/src/time.ts'
 
 export class CronError extends Error {}
 
@@ -105,7 +107,8 @@ function dayMatches(cron: Cron, date: Date): boolean {
 // The first run strictly after `after`, or undefined if the expression never
 // matches. Runs are wall-clock times: a time skipped by a DST change does not
 // run, and a time that happens twice runs once.
-export function nextRun(cron: Cron, after: Date): Date | undefined {
+export function nextRun(cron: Cron, after: Date, timeZone?: string): Date | undefined {
+  if (timeZone !== undefined) return nextZonedRun(cron, after, timeZone)
   const start = new Date(after.getFullYear(), after.getMonth(), after.getDate())
   const minutes = [...cron.minutes].sort((a, b) => a - b)
   const hours = [...cron.hours].sort((a, b) => a - b)
@@ -126,4 +129,33 @@ export function nextRun(cron: Cron, after: Date): Date | undefined {
     }
   }
   return undefined
+}
+
+function nextZonedRun(cron: Cron, after: Date, timeZone: string): Date | undefined {
+  const wall = localTime(timeZone, after)
+  const minutes = [...cron.minutes].sort((a, b) => a - b)
+  const hours = [...cron.hours].sort((a, b) => a - b)
+  for (let offset = 0; offset < SEARCH_YEARS * 366; offset++) {
+    // Calendar arithmetic only, so UTC dates stand in for the zone's days.
+    const day = new Date(Date.UTC(wall.year, wall.month - 1, wall.day + offset))
+    const date = { year: day.getUTCFullYear(), month: day.getUTCMonth() + 1, day: day.getUTCDate() }
+    if (!cron.months.has(date.month) || !zonedDayMatches(cron, date.day, day.getUTCDay())) continue
+    const sameDay = offset === 0
+    for (const hour of hours) {
+      if (sameDay && hour < wall.hour) continue
+      for (const minute of minutes) {
+        if (sameDay && hour === wall.hour && minute <= wall.minute) continue
+        const candidate = zonedInstant(timeZone, { ...date, hour, minute })
+        if (candidate && candidate.getTime() > after.getTime()) return candidate
+      }
+    }
+  }
+  return undefined
+}
+
+function zonedDayMatches(cron: Cron, dayOfMonth: number, dayOfWeek: number): boolean {
+  const dom = cron.daysOfMonth.has(dayOfMonth)
+  const dow = cron.daysOfWeek.has(dayOfWeek)
+  if (cron.anyDayOfMonth || cron.anyDayOfWeek) return dom && dow
+  return dom || dow
 }

@@ -23,6 +23,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub enum PushType {
     Alert,
     Background,
+    LiveActivity,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +97,13 @@ fn origin(environment: Environment) -> &'static str {
     }
 }
 
+pub fn topic(bundle_id: &str, push_type: PushType) -> String {
+    match push_type {
+        PushType::LiveActivity => format!("{bundle_id}.push-type.liveactivity"),
+        PushType::Alert | PushType::Background => bundle_id.to_owned(),
+    }
+}
+
 /// ES256 JWT for token-based APNs auth.
 pub fn provider_token(key: &SigningKey, key_id: &str, team_id: &str, issued_at: u64) -> String {
     let header = URL_SAFE_NO_PAD.encode(serde_json::json!({ "alg": "ES256", "kid": key_id }).to_string());
@@ -151,12 +159,13 @@ impl ApnsClient {
         let push_type = match request.push_type {
             PushType::Alert => "alert",
             PushType::Background => "background",
+            PushType::LiveActivity => "liveactivity",
         };
         let mut builder = self
             .http()
             .post(url)
             .header("authorization", format!("bearer {}", self.token()))
-            .header("apns-topic", &self.topic)
+            .header("apns-topic", topic(&self.topic, request.push_type))
             .header("apns-push-type", push_type)
             .header("apns-priority", request.priority.to_string())
             .header("apns-expiration", request.expiration.to_string())
@@ -229,6 +238,16 @@ mod tests {
         key.verifying_key()
             .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
             .unwrap();
+    }
+
+    #[test]
+    fn live_activities_have_their_own_topic() {
+        assert_eq!(topic("dev.bgenc.hobwork", PushType::Alert), "dev.bgenc.hobwork");
+        assert_eq!(topic("dev.bgenc.hobwork", PushType::Background), "dev.bgenc.hobwork");
+        assert_eq!(
+            topic("dev.bgenc.hobwork", PushType::LiveActivity),
+            "dev.bgenc.hobwork.push-type.liveactivity"
+        );
     }
 
     /// Talks to Apple's sandbox with a key Apple does not know, to check that

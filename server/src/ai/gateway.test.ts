@@ -9,8 +9,8 @@ import { projectUsage, pruneAiRequests } from './usage.ts'
 
 const URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DECISIONS = 'https://openrouter.ai/api/alpha/decisions'
-const MODELS: AiModels = { model: 'openai/gpt-5-mini', decisionModel: 'typesafe/jev-1.13', embeddingModel: 'openai/text-embedding-3-small' }
-const DEFAULT: ModelOverrides = { model: null, decisionModel: null, embeddingModel: null }
+const MODELS: AiModels = { model: 'openai/gpt-5-mini', decisionModel: 'typesafe/jev-1.13', embeddingModel: 'openai/text-embedding-3-small', visionModel: 'google/gemini-3.1-flash-lite' }
+const DEFAULT: ModelOverrides = { model: null, decisionModel: null, embeddingModel: null, visionModel: null }
 const START = Date.parse('2026-09-01T12:00:00Z')
 
 let host: ReturnType<typeof createTestHost>
@@ -93,10 +93,10 @@ test('sends every request with the model Hobwork picks, not the one the hob name
   await call(intercept, { ...chat('anthropic/claude-opus-4.1'), models: ['anthropic/claude-opus-4.1'] })
   await call(intercept, { messages: [] })
 
-  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, limits: DEFAULT_LIMITS }, null)
+  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, visionModel: null, limits: DEFAULT_LIMITS }, null)
   await call(intercept, chat())
   // A hob's own model wins over the host-wide one.
-  saveProjectAiSettings(host.db, projectId, { model: 'deepseek/deepseek-v4.1-flash', decisionModel: null, embeddingModel: null, limits: null }, null)
+  saveProjectAiSettings(host.db, projectId, { model: 'deepseek/deepseek-v4.1-flash', decisionModel: null, embeddingModel: null, visionModel: null, limits: null }, null)
   await call(intercept, chat())
 
   expect(sent.map((s) => s.body.model)).toEqual([
@@ -111,6 +111,17 @@ test('sends every request with the model Hobwork picks, not the one the hob name
   expect(models).toEqual(sent.map((s) => s.body.model))
 })
 
+test('sends requests for the vision role to the vision model', async () => {
+  const intercept = gateway()
+  await call(intercept, chat('vision'))
+  saveProjectAiSettings(host.db, projectId, { model: null, decisionModel: null, embeddingModel: null, visionModel: 'qwen/qwen3-vl-8b-instruct', limits: null }, null)
+  await call(intercept, chat('vision'))
+  await call(intercept, chat('Vision'))
+  expect(sent.map((s) => s.body.model)).toEqual(['google/gemini-3.1-flash-lite', 'qwen/qwen3-vl-8b-instruct', 'openai/gpt-5-mini'])
+  const models = host.db.prepare('SELECT model FROM ai_requests ORDER BY id').all().map((row) => row.model)
+  expect(models).toEqual(sent.map((s) => s.body.model))
+})
+
 test('sends decisions to the decision model', async () => {
   const answer = { model: 'typesafe/jev-1.13-20260917', answers: { bill: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 30, output_tokens: 2, cost: 0.000001 } }
   const res = await call(gateway(), { model: 'x/y', state: 'Invoice due', questions: { bill: noul } }, fakeOpenRouter(() => Response.json(answer)), DECISIONS)
@@ -120,13 +131,13 @@ test('sends decisions to the decision model', async () => {
   ])
   expect(host.db.prepare('SELECT path, model, cost FROM ai_requests').get()).toEqual({ path: '/api/alpha/decisions', model: 'typesafe/jev-1.13', cost: 0.000001 })
 
-  saveProjectAiSettings(host.db, projectId, { model: null, decisionModel: 'respan/span-01-lite', embeddingModel: null, limits: null }, null)
+  saveProjectAiSettings(host.db, projectId, { model: null, decisionModel: 'respan/span-01-lite', embeddingModel: null, visionModel: null, limits: null }, null)
   await call(gateway(), { state: 'x', questions: { bill: noul } }, fakeOpenRouter(() => Response.json(answer)), DECISIONS)
   expect(sent[1]!.body.model).toBe('respan/span-01-lite')
 })
 
 test('answers decisions with the chat model when decision models are off', async () => {
-  saveHostAiSettings(host.db, { model: null, decisionModel: false, embeddingModel: null, limits: DEFAULT_LIMITS }, null)
+  saveHostAiSettings(host.db, { model: null, decisionModel: false, embeddingModel: null, visionModel: null, limits: DEFAULT_LIMITS }, null)
   const reply = { bill: true, team: 'payments', urgency: 2 }
   const upstream = fakeOpenRouter(() =>
     Response.json({
@@ -182,7 +193,7 @@ test('answers decisions with the chat model when decision models are off', async
 
 test('leaves reasoning alone for chat models that cannot turn it off', async () => {
   const upstream = fakeOpenRouter(() => Response.json({ choices: [{ message: { content: '{"bill":false}' } }] }))
-  const res = await call(gateway(undefined, { model: 'some/new-model', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small' }), { state: 'x', questions: { bill: noul } }, upstream, DECISIONS)
+  const res = await call(gateway(undefined, { model: 'some/new-model', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small', visionModel: 'google/gemini-3.1-flash-lite' }), { state: 'x', questions: { bill: noul } }, upstream, DECISIONS)
   expect(await res.json()).toMatchObject({ answers: { bill: { type: 'noul', noul: 0 } } })
   expect(sent[0]!.body).not.toHaveProperty('reasoning')
 })
@@ -436,7 +447,7 @@ test('estimates the cost from tokens and the model price when OpenRouter reports
 test('estimates with a high price for models it has no price for, and from sizes when there are no tokens', async () => {
   const bare = fakeOpenRouter(() => Response.json({ model: 'some/new-model', choices: [{ message: { content: 'x'.repeat(400) } }] }))
   const body = chat('some/new-model')
-  await call(gateway(undefined, { model: 'some/new-model', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small' }), body, bare)
+  await call(gateway(undefined, { model: 'some/new-model', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small', visionModel: 'google/gemini-3.1-flash-lite' }), body, bare)
   const row = host.db.prepare('SELECT prompt_tokens, completion_tokens, cost FROM ai_requests').get()!
   const promptTokens = Math.ceil(JSON.stringify(body).length / 4)
   expect(row.prompt_tokens).toBe(promptTokens)

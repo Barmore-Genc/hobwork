@@ -26,19 +26,25 @@ export function draftModel(draft: ModelDraft): string | false | null {
   return draft.mode === 'inherit' ? null : draft.text.trim()
 }
 
-export type ModelsDraft = { model: ModelDraft; decisionModel: ModelDraft; embeddingModel: ModelDraft }
+export type ModelsDraft = { model: ModelDraft; decisionModel: ModelDraft; embeddingModel: ModelDraft; visionModel: ModelDraft }
 
 export function modelsDraft(settings: ModelChoice): ModelsDraft {
   return {
     model: modelDraft(settings.model),
     decisionModel: modelDraft(settings.decisionModel),
     embeddingModel: modelDraft(settings.embeddingModel),
+    visionModel: modelDraft(settings.visionModel),
   }
 }
 
 export function draftModels(draft: ModelsDraft): ModelChoice {
   const text = (field: ModelDraft) => (field.mode === 'inherit' ? null : field.text.trim())
-  return { model: text(draft.model), decisionModel: draftModel(draft.decisionModel), embeddingModel: text(draft.embeddingModel) }
+  return {
+    model: text(draft.model),
+    decisionModel: draftModel(draft.decisionModel),
+    embeddingModel: text(draft.embeddingModel),
+    visionModel: text(draft.visionModel),
+  }
 }
 
 type LimitField = Exclude<keyof AiLimits, 'throttle'>

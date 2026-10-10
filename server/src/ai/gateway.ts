@@ -36,6 +36,9 @@ const WHERE_TO_CHANGE = "People change this on the hob's AI page in Hobwork"
 const USAGE_PATHS = /\/(chat\/)?completions$/
 
 const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
+// A hob asks for a role, never a model ID: `model: 'vision'` picks the hob's
+// vision model. Any other `model` is replaced with the chat model.
+export const VISION_ROLE = 'vision'
 const DECISIONS_PATH = '/api/alpha/decisions'
 
 // Paths hobs use. Everything else on OpenRouter (API keys, credits, account
@@ -252,7 +255,12 @@ export function createAiGateway(
 
           const settings = effectiveAiSettings(host.db, projectId, defaults)
           const decisionModel = kind === 'decide' ? settings.models.decisionModel : null
-          const model = kind === 'embed' ? settings.models.embeddingModel : (decisionModel ?? settings.models.model)
+          const model =
+            kind === 'embed'
+              ? settings.models.embeddingModel
+              : kind === 'generate' && body.model === VISION_ROLE
+                ? settings.models.visionModel
+                : (decisionModel ?? settings.models.model)
           const started = now()
           const hit = limitHit(host.db, projectId, settings.limits, started)
           const refusal = hit && limitRefusal(hit)

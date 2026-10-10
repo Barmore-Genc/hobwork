@@ -6,6 +6,7 @@ import type { HomeAssistant } from '../homeassistant/client.ts'
 import { haResponse } from '../homeassistant/internal.ts'
 import type { Host } from '../host.ts'
 import { appendLog } from '../runtime/logs.ts'
+import { blockedEgressMessage } from '../sandbox/egress.ts'
 import type { SecretStore } from '../secrets.ts'
 import { dbResponse } from './internal.ts'
 import { readMigrationsFromWorkspace } from './migrations.ts'
@@ -42,14 +43,14 @@ export function createWorkspaceEnvironment(
           if (!data) return Response.json({ error: 'This Hobwork host has no hob DBs' }, { status: 503 })
           return dbResponse(body, (dbRequest) => data.executeOnBranch(project, branch, () => readMigrationsFromWorkspace(vm), dbRequest))
         },
-        onEgressBlocked: ({ hostname, ip, port }) => {
+        onEgressBlocked: (blocked) => {
           try {
             appendLog(host, {
               project,
               source: 'runtime',
               level: 'warn',
               event: 'egress-blocked',
-              message: `Workspace ${branch}: blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json and commit to allow it, or assign a secret that may be sent to it`,
+              message: `Workspace ${branch}: ${blockedEgressMessage(blocked, true)}`,
             })
           } catch (err) {
             console.error(`Could not record blocked egress for ${project}`, err)

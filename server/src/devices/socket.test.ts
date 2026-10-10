@@ -10,6 +10,7 @@ import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 import { createDevices, type Devices } from './devices.ts'
 import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_PROTOCOL_ERROR, CLOSE_REVOKED, CLOSE_TIMEOUT, createDeviceRegistry } from './registry.ts'
 import { createDeviceSockets, type DeviceSockets } from './socket.ts'
+import { setTimeZone, timeZoneSetting } from '../people.ts'
 import { getDevice } from './store.ts'
 import { pairDevice } from './test-devices.ts'
 
@@ -134,11 +135,12 @@ test('refuses connections without a valid device token', async () => {
   await expect(agent.opened()).rejects.toThrow('401')
 })
 
-test('hello registers capabilities, push token and connection', async () => {
+test('hello registers capabilities, push grant and connection, and the host answers with its push setup', async () => {
   const device = await pairDevice(app.base, cookie)
   const client = await connect(device.token)
   expect(devices.list()[0]).toMatchObject({ connected: false })
-  await client.hello({ push: { token: 'aabbccddeeff00112233', environment: 'production' } })
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
+  await client.hello({ push })
   expect(devices.list()[0]).toMatchObject({
     name: 'kaan-iphone',
     connected: true,
@@ -147,10 +149,40 @@ test('hello registers capabilities, push token and connection', async () => {
     push: false,
     lastSeenAt: expect.any(String),
   })
-  expect(getDevice(host.db, device.deviceId)?.push).toEqual({ token: 'aabbccddeeff00112233', environment: 'production' })
+  expect(getDevice(host.db, device.deviceId)?.push).toEqual(push)
+  expect(await client.next((m) => m.type === 'push')).toEqual({ type: 'push', relay: null })
 
   client.ws.close()
   await until(() => !devices.list()[0]!.connected)
+})
+
+test('hello reports the time zone and counts as use; background events do not', async () => {
+  const device = await pairDevice(app.base, cookie)
+  const userId = getDevice(host.db, device.deviceId)!.userId
+  const client = await connect(device.token)
+  await client.hello({ timeZone: 'Europe/Istanbul' })
+  expect(timeZoneSetting(host.db, userId)).toEqual({ timeZone: 'Europe/Istanbul', manual: false })
+  const active = getDevice(host.db, device.deviceId)!.lastActiveAt
+  expect(active).toEqual(expect.any(String))
+
+  // Health samples arrive in the background, a tag scan needs the person.
+  host.db.prepare('UPDATE devices SET last_active_at = NULL WHERE id = ?').run(device.deviceId)
+  client.send({ type: 'event', capability: 'health', name: 'samples', data: { type: 'steps', samples: [] } })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(getDevice(host.db, device.deviceId)!.lastActiveAt).toBeNull()
+  client.send({ type: 'event', capability: 'nfc', name: 'scanned', data: { url: 'https://example.com' } })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(getDevice(host.db, device.deviceId)!.lastActiveAt).toEqual(expect.any(String))
+
+  // A zone the person chose stays, and unknown zones are ignored.
+  setTimeZone(host.db, userId, 'Asia/Tokyo')
+  client.send({ type: 'hello', appVersion: '1.0 (1)', platform: 'ios', capabilities: [], timeZone: 'Europe/Berlin' })
+  client.send({ type: 'hello', appVersion: '1.0 (1)', platform: 'ios', capabilities: [], timeZone: 'Mars/Olympus' })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(timeZoneSetting(host.db, userId)).toEqual({ timeZone: 'Asia/Tokyo', manual: true })
 })
 
 test('notifications go over the socket when the app is connected', async () => {
@@ -360,7 +392,7 @@ test('a device whose owner is off the allowlist gets 403 not_allowed, and works 
 
   const calls: [string, string, unknown][] = [
     ['/api/devices/web-session', 'POST', { returnTo: '/' }],
-    ['/api/devices/push', 'PUT', { token: null }],
+    ['/api/devices/push', 'PUT', { grant: null }],
     ['/api/devices/events', 'POST', { capability: 'notifications', name: 'action', data: {} }],
     ['/api/devices/self', 'DELETE', undefined],
   ]
@@ -371,19 +403,32 @@ test('a device whose owner is off the allowlist gets 403 not_allowed, and works 
   }
   await expect(new AppClient(app.base, device.token).opened()).rejects.toThrow('403')
   // An unknown token is still a 401, which the app takes as removed.
-  expect((await deviceRequest('/api/devices/push', 'PUT', 'hwd_wrong', { token: null })).status).toBe(401)
+  expect((await deviceRequest('/api/devices/push', 'PUT', 'hwd_wrong', { grant: null })).status).toBe(401)
   await expect(new AppClient(app.base, 'hwd_wrong').opened()).rejects.toThrow('401')
   expect(getDevice(host.db, device.deviceId)).toBeDefined()
 
   allowlist.emails = ['kaan@example.com']
-  expect((await deviceRequest('/api/devices/push', 'PUT', device.token, { token: null })).status).toBe(204)
+  expect((await deviceRequest('/api/devices/push', 'PUT', device.token, { grant: null })).status).toBe(204)
   const client = await connect(device.token)
   await client.hello()
 })
 
+test('the app reads its own device and owner', async () => {
+  const device = await pairDevice(app.base, cookie)
+  const res = await deviceRequest('/api/devices/self', 'GET', device.token)
+  expect(res.status).toBe(200)
+  const self = (await res.json()) as { id: number; name: string; platform: string; person: { id: number; name: string } }
+  expect(self).toMatchObject({ id: device.deviceId, name: device.name, platform: 'ios' })
+  expect(self.person.id).toBe(getDevice(host.db, device.deviceId)!.userId)
+  expect((await deviceRequest('/api/devices/self', 'GET', 'hwd_wrong')).status).toBe(401)
+  const put = await deviceRequest('/api/devices/self', 'PUT', device.token)
+  expect(put.status).toBe(405)
+  expect(put.headers.get('allow')).toBe('GET, DELETE')
+})
+
 test('the app removes its own device when signing out', async () => {
   const device = await pairDevice(app.base, cookie)
-  const push = { token: 'ab'.repeat(32), environment: 'sandbox' }
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
   expect((await deviceRequest('/api/devices/push', 'PUT', device.token, push)).status).toBe(204)
   const link = await deviceRequest('/api/devices/web-session', 'POST', device.token, { returnTo: '/' })
   const url = new URL(((await link.json()) as { url: string }).url)
@@ -395,7 +440,7 @@ test('the app removes its own device when signing out', async () => {
   expect((await deviceRequest('/api/devices/self', 'DELETE', device.token)).status).toBe(204)
   expect((await client.closed).code).toBe(CLOSE_REVOKED)
   expect(getDevice(host.db, device.deviceId)).toBeUndefined()
-  expect(host.db.prepare('SELECT push_token FROM devices WHERE id = ?').get(device.deviceId)).toEqual({ push_token: null })
+  expect(host.db.prepare('SELECT push_grant FROM devices WHERE id = ?').get(device.deviceId)).toEqual({ push_grant: null })
   const session = (await (await fetch(`${app.base}/api/session`, { headers: { cookie: webView } })).json()) as { user: unknown }
   expect(session.user).toBeNull()
   expect((await deviceRequest('/api/devices/self', 'DELETE', device.token)).status).toBe(401)

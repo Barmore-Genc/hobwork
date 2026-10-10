@@ -127,6 +127,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'request_secret_hosts',
       'restore_version',
       'revoke_ssh_key',
+      'rotate_upload_token',
       'rotate_webhook_token',
       'search',
       'set_ai_model',

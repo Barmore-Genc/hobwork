@@ -18,6 +18,7 @@ import { getProject, getProjectOrRenamed, ProjectError, renamedProject, type Pro
 import type { ProjectData } from '../data/project-data.ts'
 import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
 import { nextRun, parseCron } from '../runtime/cron.ts'
+import { PERSON_TIME_ZONE } from '../runtime/scheduler.ts'
 import {
   branchFilter,
   getInvocation,
@@ -31,7 +32,9 @@ import {
   type LogFilter,
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import { rotateUploadToken, uploadFilesUrl, uploadTokenCreatedAt } from '../runtime/uploads.ts'
 import { rotateWebhookToken, webhookTokenCreatedAt, webhookUrl } from '../runtime/webhooks.ts'
+import { describeEgress, type PrivateEgressRule } from '../sandbox/egress.ts'
 import { fileStats, sendFile } from '../static.ts'
 import {
   SecretConflictError,
@@ -140,9 +143,11 @@ export function invocationView(invocation: InvocationRecord, full: boolean) {
   return { ...rest, error: error && error.length > LIST_ERROR_CHARS ? `${error.slice(0, LIST_ERROR_CHARS)}…` : error }
 }
 
-function nextCronRun(schedule: string): string | null {
+// A per-person cron has no single next run.
+function nextCronRun(schedule: string, timeZone: string | undefined): string | null {
+  if (timeZone === PERSON_TIME_ZONE) return null
   try {
-    return nextRun(parseCron(schedule), new Date())?.toISOString() ?? null
+    return nextRun(parseCron(schedule), new Date(), timeZone)?.toISOString() ?? null
   } catch {
     return null
   }
@@ -168,6 +173,7 @@ export function createApiRoutes(options: {
   data?: ProjectData
   secrets?: SecretStore
   storage?: StorageUsage
+  privateEgress?: PrivateEgressRule[]
 }) {
   const { host, auth, delivery, runtime } = options
 
@@ -201,10 +207,11 @@ export function createApiRoutes(options: {
     }
     const entryPoints = config && {
       routes: Object.keys(config.routes).map((key) => ({ key, lastRun: lastRun('route', key) })),
-      crons: Object.entries(config.crons).map(([name, { schedule }]) => ({
+      crons: Object.entries(config.crons).map(([name, { schedule, timeZone }]) => ({
         name,
         schedule,
-        nextRun: nextCronRun(schedule),
+        timeZone: timeZone ?? null,
+        nextRun: nextCronRun(schedule, timeZone),
         lastRun: lastRun('cron', name),
       })),
       webhooks: Object.keys(config.webhooks).map((name) => ({
@@ -216,14 +223,20 @@ export function createApiRoutes(options: {
         name,
         homeassistant: entry.homeassistant ?? null,
         device: entry.device ?? null,
+        upload: entry.upload ?? null,
         lastRun: lastRun('trigger', name),
+      })),
+      uploads: Object.entries(config.uploads).map(([name, entry]) => ({
+        name,
+        ...entry,
+        tokenCreatedAt: uploadTokenCreatedAt(host, project.name, name) ?? null,
       })),
     }
     const secretHosts = options.secrets?.hosts(project.name) ?? []
     return {
       entryPoints: entryPoints ?? null,
       ...(configError ? { configError } : {}),
-      egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort(),
+      egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort().map((entry) => describeEgress(entry, options.privateEgress ?? [])),
       database: options.data?.status(project.name) ?? null,
       ...(options.storage ? { storage: options.storage.get(project) } : {}),
       app: config ? await hasApp(project.name) : false,
@@ -475,6 +488,21 @@ export function createApiRoutes(options: {
         if (!origin) throw new HttpError(409, `${project.name} has no app address, so it has no webhook URL`)
         const token = rotateWebhookToken(host, project.name, name)
         json(res, 200, { url: webhookUrl(origin, name, token) })
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/projects\/([^/]+)\/uploads\/([^/]+)\/token$/,
+      handle: async ({ res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const name = params[1]!
+        const config = await deployedConfig(project.name)
+        const entry = config?.uploads[name]
+        if (!entry) throw new HttpError(404, `${project.name} has no upload called "${name}"`)
+        const origin = options.appOrigin?.({ project: project.name })
+        if (!origin) throw new HttpError(409, `${project.name} has no app address, so it takes no uploads`)
+        const token = rotateUploadToken(host, project.name, name)
+        json(res, 200, { token, url: uploadFilesUrl(origin, entry.prefix) })
       },
     },
     {

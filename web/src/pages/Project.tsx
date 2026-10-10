@@ -120,6 +120,7 @@ function EntryRow({ children, aside }: { children: ReactNode; aside: ReactNode }
 }
 
 function triggerSummary(trigger: EntryPoints['triggers'][number]): string {
+  if (trigger.upload) return `When a file arrives through ${trigger.upload}`
   if (trigger.device) {
     const on = trigger.device.device ? ` on ${trigger.device.device}` : ''
     const summaries: Record<string, string> = {
@@ -171,6 +172,114 @@ function NewWebhookUrl({ name, url, onDone }: { name: string; url: string; onDon
   )
 }
 
+function uploadSummary(upload: EntryPoints['uploads'][number]): string {
+  const kinds = upload.types.length ? `, only ${upload.types.join(', ')}` : ''
+  return `Into ${upload.prefix}, files up to ${bytes(upload.maxBytes)}${kinds}`
+}
+
+function NewUploadToken({ token, url, onDone }: { token: string; url: string; onDone: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const command = `curl -T <file> -H "Authorization: Bearer ${token}" ${url}<file name>`
+  return (
+    <div className="mt-3 rounded-lg border-2 border-accent bg-surface-raised p-4">
+      <p className="font-semibold">New upload token</p>
+      <p className="mt-1 text-sm text-muted">Copy it now. Hobwork shows it only once. A script sends each file like this:</p>
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-stretch">
+        <code className="min-w-0 flex-1 rounded-md border border-border bg-bg px-3 py-2.5 font-mono text-sm break-all select-all">
+          {command}
+        </code>
+        <Button
+          variant="primary"
+          onClick={async () => {
+            await navigator.clipboard.writeText(token)
+            setCopied(true)
+          }}
+        >
+          {copied ? 'Copied' : 'Copy token'}
+        </Button>
+      </div>
+      <Button variant="quiet" className="mt-3" onClick={onDone}>
+        I saved the token
+      </Button>
+    </div>
+  )
+}
+
+function UploadsGroup({ project, reload }: { project: ProjectDetail; reload: () => void }) {
+  const [replacing, setReplacing] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<{ name: string; error: string } | null>(null)
+  const [created, setCreated] = useState<{ name: string; token: string; url: string } | null>(null)
+  const uploads = project.entryPoints?.uploads ?? []
+
+  async function rotate(name: string) {
+    setBusy(true)
+    setFailed(null)
+    try {
+      const { token, url } = await api.rotateUploadToken(project.name, name)
+      setCreated({ name, token, url })
+      setReplacing(null)
+      reload()
+    } catch (err) {
+      setFailed({ name, error: message(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <EntryGroup title="Uploads" description="Take files from the hob's app, and from scripts with a token.">
+        {uploads.map((upload) => (
+          <li key={upload.name} className="py-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+              <div className="min-w-0">
+                <p className="font-semibold break-words">{upload.name}</p>
+                <p className="text-sm break-words text-muted">{uploadSummary(upload)}</p>
+                <p className="text-sm text-muted">
+                  {upload.tokenCreatedAt ? (
+                    <span title={exactTime(upload.tokenCreatedAt)}>Token created {shortDate(upload.tokenCreatedAt)}</span>
+                  ) : (
+                    'No token yet, so only the app can upload'
+                  )}
+                </p>
+              </div>
+              <Button
+                onClick={() => {
+                  setFailed(null)
+                  if (upload.tokenCreatedAt) setReplacing(upload.name)
+                  else void rotate(upload.name)
+                }}
+                disabled={busy}
+              >
+                {upload.tokenCreatedAt ? 'Replace token' : 'Create token'}
+              </Button>
+            </div>
+            {created?.name === upload.name && <NewUploadToken token={created.token} url={created.url} onDone={() => setCreated(null)} />}
+            {failed?.name === upload.name && replacing === null && (
+              <div className="mt-3">
+                <Notice tone="error">{failed.error}</Notice>
+              </div>
+            )}
+          </li>
+        ))}
+      </EntryGroup>
+      <ConfirmDialog
+        open={replacing !== null}
+        title={`Replace the upload token of ${replacing}?`}
+        confirmLabel="Replace token"
+        variant="danger"
+        busy={busy}
+        error={failed?.name === replacing ? failed.error : null}
+        onConfirm={() => replacing && rotate(replacing)}
+        onCancel={() => setReplacing(null)}
+      >
+        <p>The current token stops working right away. Scripts that use it need the new one.</p>
+      </ConfirmDialog>
+    </>
+  )
+}
+
 function EntryPointsSection({ project, reload }: { project: ProjectDetail; reload: () => void }) {
   const [replacing, setReplacing] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -198,7 +307,8 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
     !entries.crons.length &&
     !entries.routes.length &&
     !entries.webhooks.length &&
-    !entries.triggers.length
+    !entries.triggers.length &&
+    !entries.uploads.length
 
   return (
     <section className="mt-10" aria-labelledby="entry-points">
@@ -219,7 +329,9 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
                 <EntryRow key={cron.name} aside={<LastRunLink project={project.name} run={cron.lastRun} />}>
                   <p className="font-semibold break-words">{cron.name}</p>
                   <p className="text-sm text-muted">
-                    {cron.nextRun ? (
+                    {cron.timeZone === 'person' ? (
+                      "Runs for each person in their own time zone"
+                    ) : cron.nextRun ? (
                       <>
                         Next run <span title={exactTime(cron.nextRun)}>{dayTime(cron.nextRun)}</span>,{' '}
                         {timeAgo(cron.nextRun)}
@@ -228,6 +340,7 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
                       'Never runs'
                     )}
                     <span className="ml-2 font-mono text-[0.8rem]">{cron.schedule}</span>
+                    {cron.timeZone && cron.timeZone !== 'person' && <span className="ml-2 text-[0.8rem]">{cron.timeZone}</span>}
                   </p>
                 </EntryRow>
               ))}
@@ -284,6 +397,7 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
               ))}
             </EntryGroup>
           )}
+          {entries.uploads.length > 0 && <UploadsGroup project={project} reload={reload} />}
           {entries.routes.length > 0 && (
             <EntryGroup title="App requests" description="Answer the hob's app and agents.">
               {entries.routes.map((route) => (
@@ -338,13 +452,25 @@ function HealthSection({ project }: { project: ProjectDetail }) {
         <dt className="font-semibold">Can reach</dt>
         <dd className="min-w-0">
           {project.egress.length ? (
-            <ul className="flex flex-wrap gap-2">
-              {project.egress.map((host) => (
-                <li key={host} className="rounded-sm border border-border bg-surface px-2 py-0.5 font-mono text-sm break-all">
-                  {host}
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="flex flex-wrap gap-2">
+                {project.egress.map(({ target, private: home, allowed }) => (
+                  <li
+                    key={target}
+                    title={home ? (allowed ? 'On your home network' : 'On your home network, and this server does not allow it') : undefined}
+                    className={`rounded-sm border px-2 py-0.5 text-sm break-all ${allowed ? 'border-border' : 'border-danger/40 text-muted'} bg-surface`}
+                  >
+                    <span className={`font-mono ${allowed ? '' : 'line-through'}`}>{target}</span>
+                    {home && <span className="ml-1.5 text-xs text-muted">{allowed ? 'home network' : 'blocked'}</span>}
+                  </li>
+                ))}
+              </ul>
+              {project.egress.some((entry) => !entry.allowed) && (
+                <p className="mt-2 text-sm text-muted">
+                  Crossed-out addresses are on your home network, and this server does not let hobs reach them. Whoever runs Hobwork can allow them.
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-muted">No sites on the internet</p>
           )}

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { PushInfo } from './push/relay.ts'
 
 // Codes the host itself answers with. Apps answer failed calls with their own.
 export type DeviceErrorCode =
@@ -26,6 +27,7 @@ export type HostMessage =
   | { type: 'call'; id: string; capability: string; method: string; args: unknown; expiresAt?: string }
   | { type: 'ping' }
   | { type: 'pong' }
+  | ({ type: 'push' } & (PushInfo | { relay: null }))
 
 // WebSocket close codes the host uses. 4000-4999 are for applications.
 export const CLOSE_REPLACED = 4000

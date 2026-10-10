@@ -12,18 +12,30 @@ struct DeviceMessageTests {
             appVersion: "0.1.0 (1)",
             platform: "ios",
             capabilities: ["notifications"],
-            push: PushRegistration(token: "abc123", environment: .sandbox)
+            push: HostPushGrant(grant: "g1", key: "a2V5")
         )
         #expect(try json(.hello(hello)) == .object([
             "type": .string("hello"),
             "appVersion": .string("0.1.0 (1)"),
             "platform": .string("ios"),
             "capabilities": .array([.string("notifications")]),
-            "push": .object(["token": .string("abc123"), "environment": .string("sandbox")]),
+            "push": .object(["grant": .string("g1"), "key": .string("a2V5")]),
         ]))
     }
 
-    @Test func leavesOutPushWithoutAToken() throws {
+    @Test func decodesThePushMessage() throws {
+        let keys = try DeviceMessage.decode(#"{"type":"push","relay":"https://relay.bgenc.dev","signingKey":"cw==","encryptionKey":"ZQ==","keyId":"k1"}"#)
+        #expect(keys == .push(HostPushKeys(relay: "https://relay.bgenc.dev", signingKey: "cw==", encryptionKey: "ZQ==", keyId: "k1")))
+        #expect(try DeviceMessage.decode(#"{"type":"push","relay":null}"#) == .push(nil))
+    }
+
+    @Test func encodesTheTimeZone() throws {
+        let hello = Hello(appVersion: "1", platform: "ios", capabilities: [], push: nil, timeZone: "Europe/Istanbul")
+        #expect(try json(.hello(hello))["timeZone"] == .string("Europe/Istanbul"))
+        #expect(try json(.hello(Hello(appVersion: "1", platform: "ios", capabilities: [])))["timeZone"] == nil)
+    }
+
+    @Test func leavesOutPushWithoutAGrant() throws {
         let hello = Hello(appVersion: "1", platform: "ios", capabilities: [], push: nil)
         #expect(try json(.hello(hello))["push"] == nil)
     }

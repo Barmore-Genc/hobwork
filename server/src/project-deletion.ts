@@ -47,6 +47,7 @@ export type TrashInfo = {
     assignedAt: string
   }[]
   webhookTokens?: { name: string; tokenHash: string; createdAt: string }[]
+  uploadTokens?: { name: string; tokenHash: string; createdAt: string }[]
   nfcTags?: { id: string; createdAt: string }[]
   // Agent tokens and OAuth connections limited to a list of projects that included this one.
   access?: { tokens: number[]; grants: number[] }
@@ -56,6 +57,7 @@ export type TrashInfo = {
     model?: string | null
     decisionModel?: string | null
     embeddingModel?: string | null
+    visionModel?: string | null
     limits: string | null
     updatedByUserId: number | null
     updatedByAgentId?: number | null
@@ -165,7 +167,7 @@ async function deleteNow(
 function restorableRows(
   host: Host,
   projectId: number,
-): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access' | 'ai' | 'starred' | 'tags'> {
+): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'uploadTokens' | 'nfcTags' | 'access' | 'ai' | 'starred' | 'tags'> {
   const all = (sql: string) => host.db.prepare(sql).all(projectId)
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
@@ -196,6 +198,9 @@ function restorableRows(
     webhookTokens: all('SELECT name, token_hash, created_at FROM webhook_tokens WHERE project_id = ? ORDER BY name').map(
       (row) => ({ name: String(row.name), tokenHash: String(row.token_hash), createdAt: String(row.created_at) }),
     ),
+    uploadTokens: all('SELECT name, token_hash, created_at FROM upload_tokens WHERE project_id = ? ORDER BY name').map(
+      (row) => ({ name: String(row.name), tokenHash: String(row.token_hash), createdAt: String(row.created_at) }),
+    ),
     nfcTags: all('SELECT id, created_at FROM nfc_tags WHERE project_id = ? ORDER BY id').map((row) => ({
       id: String(row.id),
       createdAt: String(row.created_at),
@@ -206,12 +211,13 @@ function restorableRows(
     },
     ai:
       all(
-        `SELECT model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at
+        `SELECT model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at
          FROM project_ai_settings WHERE project_id = ?`,
       ).map((row) => ({
         model: row.model === null ? null : String(row.model),
         decisionModel: row.decision_model === null ? null : String(row.decision_model),
         embeddingModel: row.embedding_model === null ? null : String(row.embedding_model),
+        visionModel: row.vision_model === null ? null : String(row.vision_model),
         limits: row.limits === null ? null : String(row.limits),
         updatedByUserId: nullable(row.updated_by_user_id),
         updatedByAgentId: nullable(row.updated_by_agent_id),
@@ -398,6 +404,8 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     }
     const token = db.prepare('INSERT OR IGNORE INTO webhook_tokens (project_id, name, token_hash, created_at) VALUES (?, ?, ?, ?)')
     for (const t of info.webhookTokens ?? []) token.run(projectId, t.name, t.tokenHash, t.createdAt)
+    const uploadToken = db.prepare('INSERT OR IGNORE INTO upload_tokens (project_id, name, token_hash, created_at) VALUES (?, ?, ?, ?)')
+    for (const t of info.uploadTokens ?? []) uploadToken.run(projectId, t.name, t.tokenHash, t.createdAt)
     const tag = db.prepare('INSERT OR IGNORE INTO nfc_tags (id, project_id, created_at) VALUES (?, ?, ?)')
     for (const t of info.nfcTags ?? []) tag.run(t.id, projectId, t.createdAt)
     const hobTag = db.prepare('INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES (?, ?)')
@@ -411,16 +419,18 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     )
     for (const id of info.access?.grants ?? []) grantAccess.run(projectId, id)
     const ai = info.ai
-    if (ai && (ai.model != null || ai.decisionModel != null || ai.embeddingModel != null || ai.limits !== null)) {
+    const hasModels = ai && (ai.model != null || ai.decisionModel != null || ai.embeddingModel != null || ai.visionModel != null)
+    if (ai && (hasModels || ai.limits !== null)) {
       db.prepare(
         `INSERT INTO project_ai_settings
-           (project_id, model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (project_id, model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         projectId,
         ai.model ?? null,
         ai.decisionModel ?? null,
         ai.embeddingModel ?? null,
+        ai.visionModel ?? null,
         ai.limits,
         existing('users', ai.updatedByUserId),
         existing('agents', ai.updatedByAgentId),

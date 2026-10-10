@@ -8,7 +8,8 @@ import type { Allowlist } from '../config.ts'
 import { refuseUpgrade } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_PROTOCOL_ERROR, CLOSE_REVOKED, CLOSE_TIMEOUT, type DeviceConnection, type HostMessage } from './registry.ts'
-import { getDevice, recordHello, touchDevice, verifyDeviceToken, type Device, type Push } from './store.ts'
+import { reportTimeZone } from '../people.ts'
+import { getDevice, isUserEvent, markDeviceActive, recordHello, touchDevice, verifyDeviceToken, type Device, type Push } from './store.ts'
 
 export const DEVICE_SOCKET_PATH = '/api/devices/ws'
 export const PING_INTERVAL_MS = 30_000
@@ -23,14 +24,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// undefined for anything else, including the APNs tokens older apps send.
 export function parsePush(value: unknown): Push | null | undefined {
   if (value === undefined) return undefined
   if (value === null) return null
   if (!isObject(value)) return undefined
-  const { token, environment } = value
-  if (typeof token !== 'string' || !/^[0-9A-Fa-f]{16,200}$/.test(token)) return undefined
-  if (environment !== 'sandbox' && environment !== 'production') return undefined
-  return { token: token.toLowerCase(), environment }
+  const { grant, key } = value
+  if (typeof grant !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(grant)) return undefined
+  if (typeof key !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(key)) return undefined
+  return { grant, key }
 }
 
 export type DeviceAuth = { device: Device } | { refused: { status: 401 | 403; error: string } }
@@ -134,9 +136,14 @@ export function createDeviceSockets(options: {
         },
         lastTouch,
       )
+      // The app says hello when it connects and again when it comes to the
+      // foreground on an open connection.
+      markDeviceActive(db, deviceId, lastTouch)
+      reportTimeZone(db, device.userId, message.timeZone)
       clearTimeout(helloTimer)
       if (!helloed) devices.registry.attach(connection)
       helloed = true
+      send(devices.pushMessage())
       devices.resendPending(deviceId)
     }
 
@@ -156,6 +163,7 @@ export function createDeviceSockets(options: {
           if (devices.registry.result(connection, message as { id: unknown; ok: unknown })) return
           return void devices.handleResult(deviceId, message)
         case 'event':
+          if (isUserEvent(message.capability, message.name)) markDeviceActive(db, deviceId, now())
           return void devices
             .handleEvent(deviceId, { capability: message.capability, name: message.name, data: message.data })
             .catch((err: unknown) => console.error(`Handling an event from device ${deviceId} failed`, err))

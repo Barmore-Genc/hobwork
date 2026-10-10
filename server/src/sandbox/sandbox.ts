@@ -1,3 +1,5 @@
+import type { PrivateEgressRule } from './egress.ts'
+
 // Hostname that guests use to reach the host (SDK calls). Requests to it never
 // leave the host: the sandbox answers them with `SandboxOptions.internal`.
 export const INTERNAL_HOST = 'hobwork.internal'
@@ -37,7 +39,8 @@ export type InternalHandler = (request: Request) => Response | Promise<Response>
 // A request Hobwork refused to send because a secret was in a header it may not go in, or the URL was http.
 export type SecretRefused = { hostname: string, message: string }
 
-export type EgressBlocked = { hostname: string, ip: string, port: number }
+// `private`: the address is private and the host's HOBWORK_PRIVATE_EGRESS does not list it.
+export type EgressBlocked = { hostname: string, ip: string, port: number, private?: boolean }
 
 // Sends a request on to where it was going, with secrets filled in like any
 // other guest request.
@@ -67,8 +70,12 @@ export type SandboxOptions = {
   // Guest path -> host directory.
   mounts?: Record<string, Mount>
   env?: Record<string, string>
-  // Hosts the guest may reach over HTTP(S). Everything else gets a 403.
+  // Hosts the guest may reach over HTTP(S), as `host` (any port) or
+  // `host:port`. Everything else gets a 403.
   egress?: string[]
+  // Private targets the host's operator allows. Private addresses are blocked
+  // unless both these and `egress` allow them.
+  privateEgress?: PrivateEgressRule[]
   // Env var name -> secret. The guest only ever sees a placeholder.
   secrets?: Record<string, Secret>
   internal?: InternalHandler

@@ -1,9 +1,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createAgentToken } from '../agents.ts'
+import { createAgentToken, verifyAgentToken } from '../agents.ts'
 import { startFakeOidcProvider, type FakeOidcProvider } from '../auth/fake-oidc.ts'
-import { findSessionRecord } from '../auth/sessions.ts'
+import { createSession, findSessionRecord } from '../auth/sessions.ts'
+import { createPairingCode, exchangePairingCode, getDevice } from '../devices/store.ts'
+import { pkce } from '../devices/test-devices.ts'
+import { hostTimeZone, reportTimeZone } from '../people.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, requireProject } from '../projects.ts'
 import { projectFilesDir } from '../runtime/files.ts'
@@ -15,6 +18,7 @@ import { appSessionCookie, sendTo, signedIn, startTestApp, TEST_PUBLIC_URL, type
 import { recordVersion } from '../versions.ts'
 import { appReturnPath, CALLBACK_PATH } from './http.ts'
 import { createAppCode, CODE_TTL_MS } from './sessions.ts'
+import { createShareLink } from './share-links.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 
@@ -23,7 +27,11 @@ const SLEEP = 'http://sleep.apps.hobwork.test'
 const FRAME_ANCESTORS = `frame-ancestors ${TEST_PUBLIC_URL}`
 
 const HOBWORK_JSON = {
-  routes: { 'GET /spools': { handler: 'src/spools.ts' }, 'POST /spools': { handler: 'src/add.ts' } },
+  routes: {
+    'GET /spools': { handler: 'src/spools.ts' },
+    'POST /spools': { handler: 'src/add.ts' },
+    'GET /me': { handler: 'src/me.ts' },
+  },
 }
 
 // Stands in for `vite build`: a UI page, a hashed asset and two handlers.
@@ -33,6 +41,7 @@ const BUILD = [
   `printf 'console.log(1)' > dist/assets/index-abc123.js`,
   `printf 'export default async (ctx) => ({ spools: 3, cookie: ctx.request.headers.get("cookie") })' > dist/handlers/src/spools.js`,
   `printf 'export default async (ctx) => ({ added: await ctx.request.text() })' > dist/handlers/src/add.js`,
+  `printf 'export default async (ctx) => ({ caller: ctx.caller })' > dist/handlers/src/me.js`,
 ].join(' && ')
 
 let host: ReturnType<typeof createTestHost>
@@ -232,6 +241,37 @@ test('an app session works only on its own origin and never on Hobwork', async (
   // And a Hobwork session is not an app session.
   expect((await send(`${FILAMENT}/api/spools`, { headers: { cookie } })).status).toBe(401)
   expect((await send(`${FILAMENT}/api/spools`, { headers: { cookie: `hobwork_app=${cookie.split('=')[1]}` } })).status).toBe(401)
+})
+
+test('routes know who calls them and from which device, never from headers', async () => {
+  const { user, cookie } = signedIn(host)
+  const spoof = { 'x-hobwork-caller': JSON.stringify({ person: { id: 99 } }) }
+  const me = async (headers: Record<string, string>) => {
+    const res = await send(`${FILAMENT}/api/me`, { headers: { ...spoof, ...headers } })
+    expect(res.status, res.body).toBe(200)
+    return (JSON.parse(res.body) as { caller: unknown }).caller
+  }
+  const person = { id: user.id, name: 'Kaan', email: 'kaan@example.com', timeZone: hostTimeZone() }
+  expect(await me({ cookie: appSessionCookie(host, cookie, 'filament') })).toEqual({ person, device: null })
+
+  // The app's web view signs in with a session of its device.
+  const { verifier, challenge } = pkce()
+  const code = createPairingCode(host.db, { userId: user.id, name: 'kaan-iphone', platform: 'ios', codeChallenge: challenge })
+  const { device } = exchangePairingCode(host.db, code, verifier)
+  reportTimeZone(host.db, user.id, 'Europe/Istanbul')
+  const deviceCookie = `hobwork_session=${createSession(host.db, user.id, Date.now(), device.id)}`
+  expect(getDevice(host.db, device.id)?.lastActiveAt).toBeNull()
+  expect(await me({ cookie: appSessionCookie(host, deviceCookie, 'filament') })).toEqual({
+    person: { ...person, timeZone: 'Europe/Istanbul' },
+    device: { name: 'kaan-iphone', platform: 'ios' },
+  })
+  expect(getDevice(host.db, device.id)?.lastActiveAt).toEqual(expect.any(String))
+
+  // Share links are not a person.
+  const { token } = createAgentToken(host.db, 'claude')
+  const scope = { projectId: requireProject(host, 'filament').id, branch: null }
+  const shared = createShareLink(host.db, verifyAgentToken(host.db, token)!, scope)
+  expect(await me({ authorization: `Bearer ${shared.token}` })).toBeNull()
 })
 
 test('signing out of Hobwork ends its app sessions', async () => {

@@ -22,20 +22,28 @@ export const DEFAULT_LIMITS: AiLimits = {
 export const DEFAULT_MODEL = 'deepseek/deepseek-v4.1-flash'
 export const DEFAULT_DECISION_MODEL = 'typesafe/jev-1.13'
 export const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small'
+export const DEFAULT_VISION_MODEL = 'google/gemini-3.1-flash-lite'
 
 // The models hobs get. decisionModel null: decision models are off, and
-// check and pick run on `model` instead.
-export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string }
+// check and pick run on `model` instead. visionModel answers chat requests
+// that ask for the vision role.
+export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string; visionModel: string }
 
 export const DEFAULT_MODELS: AiModels = {
   model: DEFAULT_MODEL,
   decisionModel: DEFAULT_DECISION_MODEL,
   embeddingModel: DEFAULT_EMBEDDING_MODEL,
+  visionModel: DEFAULT_VISION_MODEL,
 }
 
 // null: the level above applies (a hob's settings the host's, the host's its
 // environment). decisionModel false: off.
-export type ModelOverrides = { model: string | null; decisionModel: string | false | null; embeddingModel: string | null }
+export type ModelOverrides = {
+  model: string | null
+  decisionModel: string | false | null
+  embeddingModel: string | null
+  visionModel: string | null
+}
 
 // A person in the web UI or an agent over MCP. null in tests and scripts.
 export type Changer = { userId: number } | { agentId: number } | null
@@ -75,6 +83,7 @@ export function parseModelOverrides(body: Record<string, unknown>): ModelOverrid
     model: parseModel(body.model),
     decisionModel: parseDecisionModel(body.decisionModel),
     embeddingModel: parseModel(body.embeddingModel, 'embeddingModel'),
+    visionModel: parseModel(body.visionModel, 'visionModel'),
   }
 }
 
@@ -83,12 +92,13 @@ export function parseModelOverrides(body: Record<string, unknown>): ModelOverrid
 export type AiConfig = { models: AiModels; catalog?: CatalogSource }
 
 export async function checkModels(config: AiConfig, overrides: Partial<ModelOverrides>): Promise<void> {
-  if (!config.catalog || (!overrides.model && !overrides.decisionModel && !overrides.embeddingModel)) return
+  if (!config.catalog || (!overrides.model && !overrides.decisionModel && !overrides.embeddingModel && !overrides.visionModel)) return
   const catalog = await config.catalog()
   const problem =
     (overrides.model && modelProblem(catalog, overrides.model, 'chat')) ||
     (overrides.decisionModel && modelProblem(catalog, overrides.decisionModel, 'decisions')) ||
-    (overrides.embeddingModel && modelProblem(catalog, overrides.embeddingModel, 'embeddings'))
+    (overrides.embeddingModel && modelProblem(catalog, overrides.embeddingModel, 'embeddings')) ||
+    (overrides.visionModel && modelProblem(catalog, overrides.visionModel, 'vision'))
   if (problem) throw new AiSettingsError(problem)
 }
 
@@ -98,6 +108,7 @@ export function applyOverrides(base: AiModels, overrides: ModelOverrides): AiMod
     model: overrides.model ?? base.model,
     decisionModel: decisionModel === false ? null : (decisionModel ?? base.decisionModel),
     embeddingModel: overrides.embeddingModel ?? base.embeddingModel,
+    visionModel: overrides.visionModel ?? base.visionModel,
   }
 }
 
@@ -133,6 +144,7 @@ function overridesOf(row: Record<string, unknown> | undefined): ModelOverrides {
     model: typeof row?.model === 'string' ? row.model : null,
     decisionModel: decision === '' ? false : typeof decision === 'string' ? decision : null,
     embeddingModel: typeof row?.embedding_model === 'string' ? row.embedding_model : null,
+    visionModel: typeof row?.vision_model === 'string' ? row.vision_model : null,
   }
 }
 
@@ -151,7 +163,7 @@ const UPDATED_BY = `COALESCE(u.name, a.name) AS updated_by
 
 export function hostAiSettings(db: DatabaseSync): HostAiSettings {
   const row = db
-    .prepare(`SELECT s.model, s.decision_model, s.embedding_model, s.limits, s.updated_at, ${UPDATED_BY.replace('%TABLE%', 'ai_settings')} WHERE s.id = 1`)
+    .prepare(`SELECT s.model, s.decision_model, s.embedding_model, s.vision_model, s.limits, s.updated_at, ${UPDATED_BY.replace('%TABLE%', 'ai_settings')} WHERE s.id = 1`)
     .get()
   return {
     ...overridesOf(row),
@@ -163,16 +175,17 @@ export function hostAiSettings(db: DatabaseSync): HostAiSettings {
 
 export function saveHostAiSettings(db: DatabaseSync, settings: ModelOverrides & { limits: AiLimits }, by: Changer) {
   db.prepare(
-    `INSERT INTO ai_settings (id, model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
-     VALUES (1, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `INSERT INTO ai_settings (id, model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
      ON CONFLICT (id) DO UPDATE SET model = excluded.model, decision_model = excluded.decision_model,
-       embedding_model = excluded.embedding_model, limits = excluded.limits,
+       embedding_model = excluded.embedding_model, vision_model = excluded.vision_model, limits = excluded.limits,
        updated_by_user_id = excluded.updated_by_user_id, updated_by_agent_id = excluded.updated_by_agent_id,
        updated_at = excluded.updated_at`,
   ).run(
     settings.model,
     storedDecision(settings.decisionModel),
     settings.embeddingModel,
+    settings.visionModel,
     JSON.stringify(settings.limits),
     ...changerIds(by),
   )
@@ -189,13 +202,14 @@ function withChanges<T extends ModelOverrides>(current: T, changes: Partial<Mode
     ...(changes.model !== undefined && { model: changes.model }),
     ...(changes.decisionModel !== undefined && { decisionModel: changes.decisionModel }),
     ...(changes.embeddingModel !== undefined && { embeddingModel: changes.embeddingModel }),
+    ...(changes.visionModel !== undefined && { visionModel: changes.visionModel }),
   }
 }
 
 export function projectAiSettings(db: DatabaseSync, projectId: number): ProjectAiSettings {
   const row = db
     .prepare(
-      `SELECT s.model, s.decision_model, s.embedding_model, s.limits, s.updated_at, ${UPDATED_BY.replace('%TABLE%', 'project_ai_settings')}
+      `SELECT s.model, s.decision_model, s.embedding_model, s.vision_model, s.limits, s.updated_at, ${UPDATED_BY.replace('%TABLE%', 'project_ai_settings')}
        WHERE s.project_id = ?`,
     )
     .get(projectId)
@@ -209,15 +223,16 @@ export function saveProjectAiSettings(
   settings: ModelOverrides & { limits: AiLimits | null },
   by: Changer,
 ) {
-  if (settings.model === null && settings.decisionModel === null && settings.embeddingModel === null && settings.limits === null) {
+  const noModels = settings.model === null && settings.decisionModel === null && settings.embeddingModel === null && settings.visionModel === null
+  if (noModels && settings.limits === null) {
     db.prepare('DELETE FROM project_ai_settings WHERE project_id = ?').run(projectId)
     return
   }
   db.prepare(
-    `INSERT INTO project_ai_settings (project_id, model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `INSERT INTO project_ai_settings (project_id, model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
      ON CONFLICT (project_id) DO UPDATE SET model = excluded.model, decision_model = excluded.decision_model,
-       embedding_model = excluded.embedding_model,
+       embedding_model = excluded.embedding_model, vision_model = excluded.vision_model,
        limits = excluded.limits, updated_by_user_id = excluded.updated_by_user_id,
        updated_by_agent_id = excluded.updated_by_agent_id, updated_at = excluded.updated_at`,
   ).run(
@@ -225,6 +240,7 @@ export function saveProjectAiSettings(
     settings.model,
     storedDecision(settings.decisionModel),
     settings.embeddingModel,
+    settings.visionModel,
     settings.limits && JSON.stringify(settings.limits),
     ...changerIds(by),
   )
@@ -234,7 +250,7 @@ export function updateProjectModels(db: DatabaseSync, projectId: number, changes
   saveProjectAiSettings(db, projectId, withChanges(projectAiSettings(db, projectId), changes), by)
 }
 
-// `defaults` are the host's environment: HOBWORK_AI_MODEL, HOBWORK_AI_DECISION_MODEL and HOBWORK_AI_EMBEDDING_MODEL.
+// `defaults` are the host's environment: HOBWORK_AI_MODEL, HOBWORK_AI_DECISION_MODEL, HOBWORK_AI_EMBEDDING_MODEL and HOBWORK_AI_VISION_MODEL.
 export function hostModels(db: DatabaseSync, defaults: AiModels): AiModels {
   return applyOverrides(defaults, hostAiSettings(db))
 }

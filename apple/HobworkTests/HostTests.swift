@@ -69,12 +69,26 @@ struct HostRequestTests {
         #expect(try body(request) == .object(["returnTo": .string("/auth/app?project=filament")]))
     }
 
-    @Test func updatesAndClearsThePushToken() throws {
-        let set = api.pushRequest(PushRegistration(token: "abcd", environment: .sandbox))
+    @Test func updatesAndClearsThePushGrant() throws {
+        let set = api.pushRequest(HostPushGrant(grant: "g1", key: "a2V5"))
         #expect(set.httpMethod == "PUT")
         #expect(set.url?.path == "/api/devices/push")
-        #expect(try body(set) == .object(["token": .string("abcd"), "environment": .string("sandbox")]))
-        #expect(try body(api.pushRequest(nil)) == .object(["token": .null]))
+        #expect(try body(set) == .object(["grant": .string("g1"), "key": .string("a2V5")]))
+        #expect(try body(api.pushRequest(nil)) == .object(["grant": .null]))
+    }
+
+    @Test func decodesThePushKeysOfTheExchange() throws {
+        let withPush = try JSONDecoder().decode(PairingExchange.self, from: Data(#"""
+        {"deviceId":7,"name":"kaans-iphone","token":"hwd_x","push":{"relay":"https://relay.bgenc.dev","signingKey":"cw==","encryptionKey":"ZQ==","keyId":"k1"}}
+        """#.utf8))
+        #expect(withPush == PairingExchange(
+            credentials: DeviceCredentials(deviceId: 7, name: "kaans-iphone", token: "hwd_x"),
+            push: HostPushKeys(relay: "https://relay.bgenc.dev", signingKey: "cw==", encryptionKey: "ZQ==", keyId: "k1")
+        ))
+        let off = try JSONDecoder().decode(PairingExchange.self, from: Data(#"{"deviceId":7,"name":"n","token":"hwd_x","push":null}"#.utf8))
+        #expect(off.push == nil)
+        let older = try JSONDecoder().decode(PairingExchange.self, from: Data(#"{"deviceId":7,"name":"n","token":"hwd_x"}"#.utf8))
+        #expect(older.push == nil)
     }
 
     @Test func removesItself() {

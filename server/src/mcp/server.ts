@@ -77,6 +77,8 @@ Rules:
 - Changes to egress in hobwork.json apply in the workspace from the next bash command after you commit them.
 - Hob UIs run under a strict Content-Security-Policy (no inline scripts, no scripts from other origins) and refuse requests from other hobs' apps. hobwork.json can add sources with csp and allow other hobs with crossAppRequests.
 - Webhooks are called at <hob app address>/_hobwork/hooks/<name>/<token>. rotate_webhook_token shows the URL.
+- Large files (photos, 3MF) go through "uploads" in hobwork.json, not routes: the UI calls files.upload from @hobwork/sdk/browser, scripts use a token from rotate_upload_token.
+- In the Hobwork app, hob UIs reach haptics, printing, the share sheet, the clipboard and local notifications through native from @hobwork/sdk/native, which feature-detects and rejects with code "unavailable" in a browser.
 - To show the user a hob's UI, or a branch preview after committing, call show_hob. It embeds the app in the chat where the client can, and returns a link that also lets you open the app.`
 
 const MAX_READ_LINES = 2000
@@ -235,7 +237,7 @@ export function createMcpServer({
     const { lastMinute, lastHour, day, month } = projectUsage(host.db, projectId, Date.now())
     return {
       models,
-      ownModels: { model: own.model, decisionModel: own.decisionModel, embeddingModel: own.embeddingModel },
+      ownModels: { model: own.model, decisionModel: own.decisionModel, embeddingModel: own.embeddingModel, visionModel: own.visionModel },
       limits,
       usage: { requestsLastMinute: lastMinute, requestsLastHour: lastHour, last24Hours: day, last30Days: month },
     }

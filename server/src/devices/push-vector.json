@@ -1,0 +1,29 @@
+{
+  "hostEncryptionPrivateKey": "ERERERERERERERERERERERERERERERERERERERERERE=",
+  "hostEncryptionKey": "e06Qm75//kTEZaIgA31gjuNYl9Me+XLwf3SJLLD3PxM=",
+  "appPrivateKey": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+  "appKey": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+  "keyId": "0Zvz8IJ4LIc",
+  "grant": "Z3JhbnQtaWQtZm9yLXRlc3Q",
+  "sharedSecret": "ngBAmO/AkdTsJmO06fXP1NcGRXFpC0vql6sUarnzUFY=",
+  "contentKey": "rkrgCqq7YsTftFDa/yIWze2zrArEsBX9f9abYHEHkdc=",
+  "ciphertext": "AAECAwQFBgcICQoLLHu9M6b9QKMJFdDbFojcpzd0M43rV9z5zM9Eio4dv2Id7sesw2GdUXS61ncthZ9aw2VRBgxL6564jJ7CBe119PcMDxNn6n3G4Fh8NhmkyxU2XNjSZS7Qa2Q1ZFJC4O3S0c/QBS/BxyBdraCkKceHKea8mnMJs6NG1y7lloo9jIiVDIEz/zAhzUuKTW8GVpHPbHI0TIc9TdTbXs9Giljr00K50p4fiFOn6/eqF139j4z2o7dEWxdJvbTx8T8IGieWq1rgpzamXiLMoCcYu0GR8ugXwEsViPfbssATievL3/WTL6QtCQCDiJ1PepLftz8e9cENQ9+/SLKZbr+TeWtgm55OEoioUjRiC7MIZvOGMEY=",
+  "plaintext": {
+    "v": 1,
+    "sentAt": 1790841600,
+    "expiresAt": 1790928000,
+    "aps": {
+      "alert": {
+        "title": "Kitchen",
+        "body": "The dishwasher is done."
+      },
+      "sound": "default",
+      "thread-id": "kitchen"
+    },
+    "hobwork": {
+      "id": "6f1c2b0e-8d3a-4b5c-9e7f-0a1b2c3d4e5f",
+      "project": "kitchen",
+      "actions": []
+    }
+  }
+}

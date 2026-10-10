@@ -140,6 +140,34 @@ smoke host name="": generate
     TEST_RUNNER_HOBWORK_SMOKE_HOST='{{host}}' xcodebuild -scheme HobworkUITests -destination "id=$udid" \
         -derivedDataPath {{derived}} -only-testing:HobworkUITests test
 
+# Drive the Debug app on a connected iPhone or iPad, e.g. `just drive start <device>`,
+# `just drive screenshot out.png`. See "Device driver" in README.md.
+[positional-arguments]
+drive *args:
+    @scripts/drive "$@"
+
+# Build for iOS in Release and check that no device driver code and no Debug-only ATS
+# exception is in it. The Debug build is checked too, so the check finds what it looks for.
+check-release: generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for configuration in Debug Release; do
+        xcodebuild -scheme Hobwork -configuration "$configuration" -destination 'generic/platform=iOS' \
+            -derivedDataPath {{derived}} CODE_SIGNING_ALLOWED=NO build -quiet
+        app="{{derived}}/Build/Products/$configuration-iphoneos/Hobwork.app"
+        code=no
+        ats=no
+        if grep -rqaE 'DriverHook|DriverServer|hobworkDriverHookPort' "$app"; then code=yes; fi
+        if /usr/libexec/PlistBuddy -c 'Print :NSAppTransportSecurity:NSExceptionDomains:sslip.io' \
+            "$app/Info.plist" >/dev/null 2>&1; then ats=yes; fi
+        expected="$([ "$configuration" = Debug ] && echo yes || echo no)"
+        if [ "$code" != "$expected" ] || [ "$ats" != "$expected" ]; then
+            echo "$configuration: driver code $code, sslip.io exception $ats, expected $expected" >&2
+            exit 1
+        fi
+    done
+    echo 'Release has no device driver and no sslip.io exception'
+
 # Build the macOS app, signed with team 63QQLP356Q or with `sign="local"` for this Mac only
 build-mac sign="team": generate
     xcodebuild -scheme Hobwork -destination '{{mac_destination}}' -derivedDataPath {{derived}} \

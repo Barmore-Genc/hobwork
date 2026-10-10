@@ -5,7 +5,7 @@ import { createAgentToken } from '../agents.ts'
 import { createAiGateway, OPENROUTER_HOSTS } from '../ai/gateway.ts'
 import { DEFAULT_LIMITS, saveHostAiSettings } from '../ai/settings.ts'
 import { createApp } from '../app.ts'
-import { onChange, type Change } from '../changes.ts'
+import { onChange, publishChange, type Change } from '../changes.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
@@ -27,6 +27,7 @@ import { createSecretStore, type Actor } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
+import { callRoute } from './http.ts'
 import { getInvocation, listInvocations, queryLogs, startInvocation } from './logs.ts'
 import { createRuntime, type Runtime, type RuntimeOptions } from './runtime.ts'
 import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
@@ -226,6 +227,30 @@ test('runs crons by hand with their log lines', async () => {
   expect(lines.map((l) => l.message)).toEqual(['tick true', 'done'])
   expect(runtime.crons('filament')).toEqual([expect.objectContaining({ name: 'tick', schedule: '0 8 * * *' })])
   await expect(runtime.invoke('filament', { kind: 'cron', name: 'nope', manual: true })).rejects.toThrow('has no cron "nope"')
+})
+
+test('a per-person cron runs at the time in each person’s zone, with the person as payload', async () => {
+  const people = [{ id: 7, name: 'Kaan', email: null, timeZone: 'Europe/Istanbul' }]
+  start({ people: () => people })
+  const hobwork = { crons: { morning: { schedule: '0 8 * * *', timeZone: 'person', handler: 'src/morning.ts' } } }
+  await deploy(
+    projectFiles({
+      hobwork,
+      handlers: { 'handlers/morning.js': 'export default async (ctx) => { console.log("morning", ctx.payload.person.name) }' },
+    }),
+  )
+  expect(runtime.crons('filament')).toEqual([expect.objectContaining({ name: 'morning', timeZone: 'person' })])
+  // Half a second before 08:00 in Istanbul. A people change reschedules from then.
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true, now: new Date('2026-10-09T04:59:59.500Z') })
+  try {
+    publishChange(host.db, { kind: 'people' })
+    await until(() => listInvocations(host, { project: 'filament', kind: 'cron', limit: 1 }).some((i) => i.status === 'ok'))
+  } finally {
+    vi.useRealTimers()
+  }
+  const [run] = listInvocations(host, { project: 'filament', kind: 'cron', limit: 1 })
+  expect(run).toMatchObject({ name: 'morning', manual: false })
+  expect(queryLogs(host, { project: 'filament', invocationId: run!.id, limit: 10 }).map((l) => l.message)).toEqual(['morning Kaan'])
 })
 
 test('webhooks need their current token', async () => {
@@ -598,7 +623,7 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
 })
 
 test('runtime VMs send OpenRouter requests through the AI gateway', async () => {
-  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, limits: { ...DEFAULT_LIMITS, requestsPerMinute: 1 } }, null)
+  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, visionModel: null, limits: { ...DEFAULT_LIMITS, requestsPerMinute: 1 } }, null)
   start({ ai: createAiGateway(host) })
   await deploy()
   const intercept = sandboxes.created[0]?.intercept
@@ -758,6 +783,65 @@ test('handlers notify devices, and a tapped notification action runs the device 
   ])
 })
 
+test('a notification action runs its route as the person and device that tapped', async () => {
+  const devices = createDevices({
+    host,
+    invokeRoute: async (project, request, caller) => {
+      const outcome = await callRoute(runtime, project, { ...request, url: `http://filament.apps.test/api${request.path}`, caller })
+      return outcome.ok ? outcome.response.status : 500
+    },
+  })
+  start({ devices })
+  const { user } = signedIn(host)
+  const { verifier, challenge } = pkce()
+  const code = createPairingCode(host.db, { userId: user.id, name: 'kaan-iphone', platform: 'ios', codeChallenge: challenge })
+  const { device } = exchangePairingCode(host.db, code, verifier)
+  recordHello(host.db, device.id, { appVersion: '1.0', capabilities: ['notifications'] })
+  const shown: { id: string }[] = []
+  const app: DeviceConnection = {
+    deviceId: device.id,
+    send(message) {
+      if (message.type !== 'call') return
+      shown.push(message.args as { id: string })
+      queueMicrotask(() => devices.registry.result(app, { id: message.id, ok: true, value: null }))
+    },
+    close() {},
+  }
+  devices.registry.attach(app)
+
+  await deploy(
+    projectFiles({
+      hobwork: { ...HOBWORK_JSON, routes: { ...HOBWORK_JSON.routes, 'POST /jobs/:id/claim': { handler: 'src/claim.ts' } } },
+      handlers: {
+        'handlers/spools.js': `export default async (ctx) => {
+          const person = (await ctx.people())[0]
+          return ctx.person(person.id).notifications.send({ id: 'print:42', title: 'Gojira stopped', actions: [{ id: 'claim', title: "I'm on it", route: '/jobs/42/claim' }] })
+        }`,
+        'handlers/claim.js': `export default async (ctx) => {
+          console.log(JSON.stringify({ job: ctx.params.id, body: await ctx.request.json(), caller: ctx.caller }))
+          await ctx.notifications.withdraw('print:42')
+          return { ok: true }
+        }`,
+      },
+    }),
+  )
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  expect(bodyOf(outcome)).toEqual({ id: 'print:42', scheduled: false, devices: [{ device: 'kaan-iphone', delivery: 'app' }] })
+
+  await devices.handleEvent(device.id, { capability: 'notifications', name: 'action', data: { id: shown[0]!.id, action: 'claim' } })
+  const runs = () => listInvocations(host, { project: 'filament', kind: 'route', limit: 5 }).filter((r) => r.name === 'POST /jobs/:id/claim')
+  await until(() => runs()[0]?.status === 'ok')
+  const logged = queryLogs(host, { project: 'filament', invocationId: runs()[0]!.id, limit: 5 }).map((l) => l.message)
+  expect(logged).toContain('Withdrew notification "print:42"')
+  expect(JSON.parse(logged.find((m) => m.startsWith('{'))!)).toEqual({
+    job: '42',
+    body: { notificationId: 'print:42', action: 'claim' },
+    caller: { person: expect.objectContaining({ id: user.id, name: 'Kaan' }), device: { name: 'kaan-iphone', platform: 'ios' } },
+  })
+  await until(() => shown.length === 2)
+  expect(shown[1]).toEqual({ ids: [shown[0]!.id] })
+})
+
 test('handlers run device commands and get the answer', async () => {
   const devices = createDevices({ host })
   start({ devices })
@@ -792,7 +876,7 @@ test('handlers run device commands and get the answer', async () => {
   )
   const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
   expect(bodyOf(outcome)).toEqual({ set: { id: 'alarm-1' }, refused: ['DeviceError', 'bad_request'] })
-  expect(calls).toEqual([{ capability: 'alarms', method: 'set', args: { title: 'Print done', time: '07:00' } }])
+  expect(calls).toEqual([{ capability: 'alarms', method: 'set', args: { title: 'Print done', time: '07:00', hob: 'filament' } }])
   expect(queryLogs(host, { project: 'filament', invocationId: outcome.invocationId, limit: 10 }).map((l) => l.message)).toContain(
     'Device kaan-iphone: alarms.set answered {"id":"alarm-1"}',
   )

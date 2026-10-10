@@ -1,15 +1,5 @@
 import Foundation
 
-struct PushRegistration: Codable, Equatable, Sendable {
-    enum Environment: String, Codable, Sendable {
-        case sandbox
-        case production
-    }
-
-    var token: String
-    var environment: Environment
-}
-
 struct Hello: Codable, Equatable, Sendable {
     /// `platform` in pairing and `hello`.
     static var platform: String {
@@ -23,7 +13,10 @@ struct Hello: Codable, Equatable, Sendable {
     var appVersion: String
     var platform: String
     var capabilities: [String]
-    var push: PushRegistration?
+    /// Left out while there is no grant.
+    var push: HostPushGrant?
+    /// IANA identifier. Hobs use it for the owner's local time unless they chose one on the host.
+    var timeZone: String?
 }
 
 struct DeviceCall: Codable, Equatable, Sendable {
@@ -99,13 +92,15 @@ enum DeviceMessage: Equatable, Sendable {
     case event(DeviceEvent)
     case ping
     case pong
+    /// The host's push keys, nil when it has no relay.
+    case push(HostPushKeys?)
     /// A message type this app version does not know. Ignored, so the host can add types.
     case unknown(String)
 }
 
 extension DeviceMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, id, ok, value, error
+        case type, id, ok, value, error, relay
     }
 
     init(from decoder: Decoder) throws {
@@ -117,6 +112,12 @@ extension DeviceMessage: Codable {
         case "event": self = try .event(DeviceEvent(from: decoder))
         case "ping": self = .ping
         case "pong": self = .pong
+        case "push":
+            if try !container.contains(.relay) || container.decodeNil(forKey: .relay) {
+                self = .push(nil)
+            } else {
+                self = try .push(HostPushKeys(from: decoder))
+            }
         case "result":
             let id = try container.decode(JSONValue.self, forKey: .id)
             if try container.decode(Bool.self, forKey: .ok) {
@@ -146,6 +147,9 @@ extension DeviceMessage: Codable {
             try container.encode("ping", forKey: .type)
         case .pong:
             try container.encode("pong", forKey: .type)
+        case let .push(keys):
+            try container.encode("push", forKey: .type)
+            if let keys { try keys.encode(to: encoder) } else { try container.encodeNil(forKey: .relay) }
         case let .result(result):
             try container.encode("result", forKey: .type)
             try result.encode(to: encoder)

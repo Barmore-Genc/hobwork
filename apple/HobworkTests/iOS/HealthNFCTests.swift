@@ -146,24 +146,29 @@ struct NFCTests {
             NFCRecord(type: .url, value: "https://hobwork.example.com/nfc/abc"),
             NFCRecord(type: .url, value: "https://hobwork.example.com/nfc/def"),
         ]
-        #expect(NFCCapability.readResult(records, host: host).tag == "abc")
-        #expect(NFCCapability.readResult([NFCRecord(type: .url, value: "https://example.com/nfc/abc")], host: host).tag == nil)
+        #expect(NFCCapability.readResult(NFCTagRead(records: records), host: host).tag == "abc")
+        #expect(NFCCapability.readResult(NFCTagRead(records: [NFCRecord(type: .url, value: "https://example.com/nfc/abc")]), host: host).tag == nil)
     }
 
     @Test func readsAndWritesThroughTheSession() async throws {
         let session = FakeNFCSession()
         session.records = [NFCRecord(type: .url, value: "https://hobwork.example.com/nfc/abc")]
         let capability = NFCCapability(session: session, host: { self.host })
-        #expect(try await capability.handle(method: "read", args: nil)
-            == json(#"{"records":[{"type":"url","value":"https://hobwork.example.com/nfc/abc"}],"tag":"abc"}"#))
+        #expect(try await capability.handle(method: "read", args: json(#"{"alertMessage":"Hold it near bin 4"}"#))
+            == json(#"{"records":[{"type":"url","value":"https://hobwork.example.com/nfc/abc"}],"tag":"abc","uid":"04a2245a8b6380"}"#))
+        #expect(session.sheets.last == NFCSheet(alertMessage: "Hold it near bin 4"))
 
-        let written = try await capability.handle(method: "write", args: json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc","text":"Kitchen"}"#))
-        #expect(written == json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc"}"#))
+        let written = try await capability.handle(
+            method: "write",
+            args: json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc","text":"Kitchen","successMessage":"Bin 4 is ready"}"#)
+        )
+        #expect(written == json(#"{"tag":"abc","url":"https://hobwork.example.com/nfc/abc","uid":"04a2245a8b6380","verified":true}"#))
+        #expect(session.sheets.last == NFCSheet(successMessage: "Bin 4 is ready"))
         #expect(session.written.first?.0.absoluteString == "https://hobwork.example.com/nfc/abc")
         #expect(session.written.first?.1 == "Kitchen")
 
         #expect(try await capability.handle(method: "write", args: json(#"{"url":"mailto:kaan@example.com"}"#))
-            == json(#"{"url":"mailto:kaan@example.com"}"#))
+            == json(#"{"url":"mailto:kaan@example.com","uid":"04a2245a8b6380","verified":true}"#))
         #expect(session.written.last?.0.absoluteString == "mailto:kaan@example.com")
         await #expect { try await capability.handle(method: "write", args: json(#"{"url":"javascript:alert(1)"}"#)) } throws: {
             ($0 as? CallError)?.code == "bad_request"
@@ -191,7 +196,7 @@ struct NFCTests {
     @Test func mapsSessionErrors() async {
         let session = FakeNFCSession()
         let capability = NFCCapability(session: session, host: { nil })
-        for (error, code) in [(NFCSessionError.cancelled, "cancelled"), (.notWritable, "not_writable"), (.tooSmall, "too_small")] {
+        for (error, code) in [(NFCSessionError.cancelled, "cancelled"), (.timeout, "cancelled"), (.notWritable, "not_writable"), (.tooSmall, "too_small"), (.verifyFailed, "verify_failed")] {
             session.failure = error
             await #expect { try await capability.handle(method: "read", args: nil) } throws: { ($0 as? CallError)?.code == code }
         }
@@ -205,13 +210,25 @@ struct NFCTests {
 
     @Test func buildsAndReadsNDEFRecords() throws {
         let url = URL(string: "https://hobwork.example.com/nfc/abc")!
-        let message = try #require(NDEFTagSession.message(url: url, text: "Kitchen"))
-        #expect(message.records.map(NDEFTagSession.record) == [
+        let message = try #require(CoreNFCTagSession.message(url: url, text: "Kitchen"))
+        #expect(message.records.map(CoreNFCTagSession.record) == [
             NFCRecord(type: .url, value: url.absoluteString),
             NFCRecord(type: .text, value: "Kitchen"),
         ])
-        #expect(NDEFTagSession.message(url: url, text: nil)?.records.count == 1)
+        #expect(CoreNFCTagSession.message(url: url, text: nil)?.records.count == 1)
         let raw = NFCNDEFPayload(format: .nfcExternal, type: Data("x:y".utf8), identifier: Data(), payload: Data([1, 2, 3]))
-        #expect(NDEFTagSession.record(raw) == NFCRecord(type: .other, value: "AQID"))
+        #expect(CoreNFCTagSession.record(raw) == NFCRecord(type: .other, value: "AQID"))
+        #expect(CoreNFCTagSession.hex(Data([0x04, 0xA2, 0x0F])) == "04a20f")
+    }
+
+    @Test func comparesWhatWasWrittenWithWhatWasReadBack() throws {
+        let url = URL(string: "https://example.com/spool/78")!
+        let written = try #require(CoreNFCTagSession.message(url: url, text: "Spool 78"))
+        let same = try #require(CoreNFCTagSession.message(url: url, text: "Spool 78"))
+        let other = try #require(CoreNFCTagSession.message(url: URL(string: "https://example.com/spool/79")!, text: "Spool 78"))
+        let shorter = try #require(CoreNFCTagSession.message(url: url, text: nil))
+        #expect(CoreNFCTagSession.sameMessage(written, same))
+        #expect(!CoreNFCTagSession.sameMessage(written, other))
+        #expect(!CoreNFCTagSession.sameMessage(written, shorter))
     }
 }

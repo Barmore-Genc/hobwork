@@ -13,6 +13,11 @@ export const MAX_NFC_URL_BYTES = 2048
 // universal links. Other schemes would only do something in an app that reads the tag.
 export const NFC_URL_SCHEMES = ['http', 'https', 'mailto', 'tel', 'sms', 'facetime', 'facetime-audio', 'shortcuts'] as const
 const MAX_TITLE = 100
+const MAX_SUBTITLE = 200
+const MAX_REPEAT_TITLE = 20
+// What the NFC scan sheet shows; it has room for a few lines.
+const MAX_ALERT_MESSAGE = 200
+const TINT = /^#[0-9a-fA-F]{6}$/
 const MAX_TIMER_SECONDS = 24 * 60 * 60
 const MAX_LIMIT_MINUTES = 24 * 60 - 1
 // ISO 8601 with a time zone, so "07:00" means the same on the host and the phone.
@@ -24,8 +29,9 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/
 type Args = Record<string, unknown>
 
 export type CommandSpec = {
-  // Needs the app in the foreground (the NFC scan sheet), so it is sent as a
-  // push the person taps rather than one the notification service extension runs.
+  // Needs the app (the NFC scan sheet, or AlarmKit, which only the app may
+  // use), so it is sent as a push the person taps rather than one the
+  // notification service extension runs.
   foreground?: boolean
   // Checks the handler's arguments and returns what goes to the device.
   parse(args: Args, now: number): Args
@@ -48,6 +54,42 @@ function title(args: Args): string {
   if (typeof value !== 'string' || !value.trim()) bad('title must be a non-empty string')
   if (value.length > MAX_TITLE) bad(`title must be at most ${MAX_TITLE} characters`)
   return value
+}
+
+function optionalText(args: Args, key: string, max: number): string | undefined {
+  const value = args[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !value.trim()) bad(`${key} must be a non-empty string`)
+  if (value.length > max) bad(`${key} must be at most ${max} characters`)
+  return value
+}
+
+function tint(args: Args): string | undefined {
+  const value = args.tint
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !TINT.test(value)) bad('tint must be a color like "#FF9500"')
+  return value.toUpperCase()
+}
+
+// The alert's second button: a new countdown of seconds with the same ID. null
+// (reschedule only) removes it.
+function repeat(args: Args, allowNull: boolean): { seconds: number; title?: string } | null | undefined {
+  const value = args.repeat
+  if (value === undefined) return undefined
+  if (value === null && allowNull) return null
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    bad(`repeat must be { seconds, title? }${allowNull ? ', or null to remove the button' : ''}`)
+  }
+  const object = value as Args
+  only(object, 'repeat', ['seconds', 'title'])
+  return defined({
+    seconds: integer(object, 'seconds', 1, MAX_TIMER_SECONDS, 'repeat.seconds'),
+    title: optionalText(object, 'title', MAX_REPEAT_TITLE),
+  }) as { seconds: number; title?: string }
+}
+
+function looks(args: Args) {
+  return { subtitle: optionalText(args, 'subtitle', MAX_SUBTITLE), tint: tint(args) }
 }
 
 function slug(args: Args, key: string): string {
@@ -92,10 +134,10 @@ function days(args: Args): (typeof DAYS)[number][] | undefined {
   return value as (typeof DAYS)[number][]
 }
 
-function integer(args: Args, key: string, min: number, max: number): number {
+function integer(args: Args, key: string, min: number, max: number, name = key): number {
   const value = args[key]
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
-    bad(`${key} must be a whole number from ${min} to ${max}`)
+    bad(`${name} must be a whole number from ${min} to ${max}`)
   }
   return value
 }
@@ -127,6 +169,14 @@ function nfcUrl(value: unknown): string {
   return url.href
 }
 
+// What the system scan sheet says while it waits and once the tag is done.
+function sheetMessages(args: Args) {
+  return {
+    alertMessage: optionalText(args, 'alertMessage', MAX_ALERT_MESSAGE),
+    successMessage: optionalText(args, 'successMessage', MAX_ALERT_MESSAGE),
+  }
+}
+
 const noArgs = (method: string): CommandSpec => ({
   parse(args) {
     only(args, method, [])
@@ -137,8 +187,9 @@ const noArgs = (method: string): CommandSpec => ({
 export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
   alarms: {
     set: {
+      foreground: true,
       parse(args, now) {
-        only(args, 'alarms.set', ['title', 'at', 'time', 'days', 'id'])
+        only(args, 'alarms.set', ['title', 'at', 'time', 'days', 'id', 'subtitle', 'tint'])
         if ((args.at === undefined) === (args.time === undefined)) {
           bad('alarms.set needs exactly one of at (a date-time, for one alarm) or time ("HH:MM", repeating on days)')
         }
@@ -148,24 +199,49 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
           at: args.at === undefined ? undefined : futureDateTime(args, 'at', now),
           time: args.time === undefined ? undefined : time(args, 'time'),
           days: days(args),
+          ...looks(args),
           ...optionalId(args),
         })
       },
     },
     timer: {
+      foreground: true,
       parse(args) {
-        only(args, 'alarms.timer', ['title', 'seconds', 'id'])
-        return { title: title(args), seconds: integer(args, 'seconds', 1, MAX_TIMER_SECONDS), ...optionalId(args) }
+        only(args, 'alarms.timer', ['title', 'seconds', 'id', 'subtitle', 'tint', 'repeat'])
+        return defined({
+          title: title(args),
+          seconds: integer(args, 'seconds', 1, MAX_TIMER_SECONDS),
+          ...looks(args),
+          repeat: repeat(args, false),
+          ...optionalId(args),
+        })
+      },
+    },
+    // Changes a timer in place: its time left, its repeat button or its text.
+    reschedule: {
+      foreground: true,
+      parse(args) {
+        only(args, 'alarms.reschedule', ['id', 'seconds', 'title', 'subtitle', 'tint', 'repeat'])
+        if (args.id === undefined) bad('alarms.reschedule needs the id that alarms.timer returned')
+        const changes = defined({
+          seconds: args.seconds === undefined ? undefined : integer(args, 'seconds', 1, MAX_TIMER_SECONDS),
+          title: args.title === undefined ? undefined : title(args),
+          ...looks(args),
+        })
+        const button = repeat(args, true)
+        if (!Object.keys(changes).length && button === undefined) bad('alarms.reschedule needs something to change: seconds, title, subtitle, tint or repeat')
+        return { ...optionalId(args), ...changes, ...(button === undefined ? {} : { repeat: button }) }
       },
     },
     cancel: {
+      foreground: true,
       parse(args) {
         only(args, 'alarms.cancel', ['id'])
         if (args.id === undefined) bad('alarms.cancel needs the id that alarms.set or alarms.timer returned')
         return optionalId(args)
       },
     },
-    list: noArgs('alarms.list'),
+    list: { foreground: true, ...noArgs('alarms.list') },
   },
   screenTime: {
     sets: noArgs('screenTime.sets'),
@@ -223,15 +299,22 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
     write: {
       foreground: true,
       parse(args) {
-        only(args, 'nfc.write', ['url', 'text'])
+        only(args, 'nfc.write', ['url', 'text', 'alertMessage', 'successMessage'])
         const url = args.url === undefined ? undefined : nfcUrl(args.url)
-        if (args.text === undefined) return defined({ url })
+        const messages = sheetMessages(args)
+        if (args.text === undefined) return defined({ url, ...messages })
         if (typeof args.text !== 'string' || !args.text) bad('text must be a non-empty string')
         if (Buffer.byteLength(args.text) > MAX_NFC_TEXT_BYTES) bad(`text must be at most ${MAX_NFC_TEXT_BYTES} bytes as UTF-8`)
-        return defined({ url, text: args.text })
+        return defined({ url, text: args.text, ...messages })
       },
     },
-    read: { foreground: true, ...noArgs('nfc.read') },
+    read: {
+      foreground: true,
+      parse(args) {
+        only(args, 'nfc.read', ['alertMessage', 'successMessage'])
+        return defined(sheetMessages(args))
+      },
+    },
   },
   health: {
     query: {
@@ -276,7 +359,29 @@ export function fallbackBody(capability: string, method: string): string {
     : `${name} change for this device. Open Hobwork if it did not apply.`
 }
 
-// The prompt push for foreground commands.
-export function promptAlert(project: string, method: string): { title: string; body: string } {
+// The prompt push for foreground commands. from is the person's other device
+// that handed the command over (the bridge's "write on my iPhone").
+export function promptAlert(project: string, capability: string, method: string, args: Args, from?: string): { title: string; body: string } {
+  if (capability === 'nfc' && from) {
+    return {
+      title: method === 'write' ? 'Write an NFC tag' : 'Scan an NFC tag',
+      body: `${project} on ${from} is waiting. Tap to ${method === 'write' ? 'write the tag' : 'scan the tag'} with this device.`,
+    }
+  }
+  if (capability === 'alarms') {
+    const name = typeof args.title === 'string' ? `"${args.title}"` : undefined
+    switch (method) {
+      case 'set':
+        return { title: 'Set an alarm', body: `${project} wants to set the alarm ${name}. Tap to set it.` }
+      case 'timer':
+        return { title: 'Start a timer', body: `${project} wants to start the timer ${name}. Tap to start it.` }
+      case 'reschedule':
+        return { title: 'Change a timer', body: `${project} wants to change a timer. Tap to change it.` }
+      case 'cancel':
+        return { title: 'Cancel an alarm', body: `${project} wants to cancel an alarm. Tap to cancel it.` }
+      default:
+        return { title: 'Check alarms', body: `${project} wants to know which alarms are set. Tap to answer.` }
+    }
+  }
   return { title: method === 'write' ? 'Write an NFC tag' : 'Scan an NFC tag', body: `${project} is waiting. Tap to start.` }
 }

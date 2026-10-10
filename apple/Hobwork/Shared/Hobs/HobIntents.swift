@@ -5,6 +5,8 @@ import Foundation
 struct RunHobIntent: AppIntent {
     static let title: LocalizedStringResource = "Run Hob Action"
     static let description = IntentDescription("Runs an action of one of your hobs.")
+    // Runs without opening Hobwork unless the action opens a page.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
 
     @Parameter(title: "Action")
     var action: HobIntentEntity
@@ -60,9 +62,9 @@ struct RunHobIntent: AppIntent {
             }
         }
         let dialog = IntentDialog("\(outcome.say ?? "Done.")")
-        if definition.opensApp || outcome.open != nil, HobLink(hob: action.hob, path: outcome.open ?? definition.open) != nil {
-            let open = OpenHobPageIntent(hob: HobEntity(id: action.hob), path: outcome.open ?? definition.open)
-            return .result(opensIntent: open, dialog: dialog)
+        if definition.opensApp || outcome.open != nil, let link = HobLink(hob: action.hob, path: outcome.open ?? definition.open) {
+            try await continueInForeground(nil, alwaysConfirm: false)
+            await HobPageOpener.open(link)
         }
         return .result(dialog: dialog)
     }

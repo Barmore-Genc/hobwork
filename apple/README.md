@@ -45,7 +45,7 @@ The App Attest entitlement says `development`; TestFlight and App Store builds u
 
 Two build settings pick the iOS entitlements files:
 
-- `HOBWORK_FAMILY_CONTROLS` (default `YES`): `NO` signs every target without Family Controls (the `-NoFamilyControls` files). The development entitlement works for Xcode builds; TestFlight and the App Store need the distribution entitlement, which Apple approves on request. Until then `just testflight` archives with `NO`, and that build does not offer Screen Time.
+- `HOBWORK_FAMILY_CONTROLS` (default `YES`): `NO` signs every target without Family Controls (the `-NoFamilyControls` files). The development entitlement works for Xcode builds; TestFlight and the App Store need the distribution entitlement, which Apple approves on request. Until then `just upload` archives with `NO`, and that build does not offer Screen Time.
 - `HOBWORK_APPLINKS_HOST` (default empty): a host name such as `hobwork.example.com` adds `applinks:<host>` and `webcredentials:<host>` (the `-AppLinks` files), so NFC tags with `https://<host>/nfc/<tag>` open the app and pairing with that host finishes on the universal link `https://<host>/devices/paired`, which only this app can claim. Pairing with any other host falls back to `hobwork://paired`. The host serves the matching `apple-app-site-association`.
 
 - `HOBWORK_APPS_HOST` (default `apps.<HOBWORK_APPLINKS_HOST>`): with `HOBWORK_APPLINKS_HOST` set, adds `applinks:*.<apps host>`, so links to hob pages (`https://filament.apps.hobwork.example.com/spool/78`) open the app. Set it when hob apps live elsewhere, such as `apps.example.com` next to `hobwork.example.com`. The host serves the association file on the apps host and every hob origin; the app applies each hob's `appLinks` rules itself (see Links to hob pages in `docs/architecture.md`).
@@ -59,10 +59,10 @@ just build                # build for the simulator
 just run                  # newest iPhone simulator
 just run "iPhone 17"      # a named one
 just run-device           # first connected iPhone, signed with team 63QQLP356Q
-just testflight            # archive a release build and upload it to App Store Connect
+just upload                # archive a release build and upload it to App Store Connect
 ```
 
-`testflight` signs with the Apple account signed in to Xcode, without Family Controls, and uploads to the Hobwork app record on App Store Connect. The build number is the UTC time of the build, so every upload is higher than the last.
+`upload` (alias `testflight`) signs with the Apple account signed in to Xcode, without Family Controls, and uploads to the Hobwork app record on App Store Connect. The build number is the UTC time of the build, so every upload is higher than the last.
 
 On a device the first build needs the team's signing: open the project in Xcode once, or pass `-allowProvisioningUpdates` (the `install-device` recipe does). Automatic signing adds the capabilities from the entitlements files to the App IDs `dev.bgenc.hobwork`, `dev.bgenc.hobwork.NotificationService`, `dev.bgenc.hobwork.DeviceActivityMonitor` and `dev.bgenc.hobwork.Widgets`, and registers the app group `group.dev.bgenc.hobwork`, as long as an Apple account of team 63QQLP356Q is signed in to Xcode. If it can't, enable them in the developer portal (Certificates, Identifiers & Profiles): App Groups with `group.dev.bgenc.hobwork` on all four App IDs, HealthKit (with background delivery) and NFC Tag Reading on the app, HealthKit on the notification service extension, Family Controls (Development) on the app, the notification service extension and the monitor, and Associated Domains on the app when `HOBWORK_APPLINKS_HOST` is set.
 

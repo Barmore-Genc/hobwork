@@ -27,6 +27,7 @@ struct LiveActivityButtonIntent: LiveActivityIntent {
 struct LiveActivityOpenButtonIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Live Activity Button"
     static let isDiscoverable = false
+    static let supportedModes: IntentModes = .foreground(.immediate)
 
     @Parameter(title: "Activity")
     var id: String
@@ -45,10 +46,11 @@ struct LiveActivityOpenButtonIntent: LiveActivityIntent {
         self.path = path
     }
 
-    func perform() async throws -> some IntentResult & OpensIntent {
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if let link = HobLink(hob: hob, path: path) { HobPageOpener.open(link) }
         await LiveActivityEvents.action(id: id)
-        let link = HobLink(hob: hob, path: path)
-        return .result(opensIntent: OpenURLIntent(link?.url ?? URL(string: "hobwork://open")!))
+        return .result()
     }
 }
 

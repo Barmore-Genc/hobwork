@@ -39,3 +39,24 @@ struct HobLink: Equatable, Sendable {
         "/p/\(hob)\(path)"
     }
 }
+
+/// Opens hob pages for intents that bring the app to the front. iOS refuses to open the
+/// app's own `hobwork://` links from an intent, so the intent runs in the app and hands the
+/// link to the app model here. A link from before the model is ready waits for it.
+@MainActor
+enum HobPageOpener {
+    private static var handler: ((HobLink) -> Void)?
+    private static var pending: HobLink?
+
+    static func open(_ link: HobLink) {
+        if let handler { handler(link) } else { pending = link }
+    }
+
+    static func setHandler(_ handler: @escaping (HobLink) -> Void) {
+        self.handler = handler
+        if let pending {
+            self.pending = nil
+            handler(pending)
+        }
+    }
+}

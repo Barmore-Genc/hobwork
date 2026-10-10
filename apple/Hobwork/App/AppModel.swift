@@ -84,6 +84,7 @@ final class AppModel {
             health.start()
             watchAlarms()
             LiveActivityEvents.send = { [weak self] event in await self?.send(event) }
+            HobPageOpener.setHandler { [weak self] link in self?.open(link.url) }
             liveActivitySystem.watch(liveActivityTokens)
         #endif
         #if HOBWORK_DRIVER

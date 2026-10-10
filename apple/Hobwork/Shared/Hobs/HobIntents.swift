@@ -60,8 +60,9 @@ struct RunHobIntent: AppIntent {
             }
         }
         let dialog = IntentDialog("\(outcome.say ?? "Done.")")
-        if definition.opensApp || outcome.open != nil, let link = HobLink(hob: action.hob, path: outcome.open ?? definition.open) {
-            return .result(opensIntent: OpenURLIntent(link.url), dialog: dialog)
+        if definition.opensApp || outcome.open != nil, HobLink(hob: action.hob, path: outcome.open ?? definition.open) != nil {
+            let open = OpenHobPageIntent(hob: HobEntity(id: action.hob), path: outcome.open ?? definition.open)
+            return .result(opensIntent: open, dialog: dialog)
         }
         return .result(dialog: dialog)
     }
@@ -71,6 +72,7 @@ struct RunHobIntent: AppIntent {
 struct OpenHobPageIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Hob Page"
     static let description = IntentDescription("Opens a hob in Hobwork, at its start page or another page.")
+    static let supportedModes: IntentModes = .foreground(.immediate)
 
     @Parameter(title: "Hob")
     var hob: HobEntity
@@ -91,9 +93,11 @@ struct OpenHobPageIntent: AppIntent {
         self.path = path
     }
 
-    func perform() async throws -> some IntentResult & OpensIntent {
+    @MainActor
+    func perform() async throws -> some IntentResult {
         guard let link = HobLink(hob: hob.id, path: path) else { throw HobIntentError.unknownAction }
-        return .result(opensIntent: OpenURLIntent(link.url))
+        HobPageOpener.open(link)
+        return .result()
     }
 }
 

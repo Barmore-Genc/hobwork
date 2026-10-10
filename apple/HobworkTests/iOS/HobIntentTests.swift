@@ -28,6 +28,15 @@ struct HobLinkTests {
         #expect(HobLink(url: link.url) == link)
         #expect(HobLink(hob: "kitchen", path: nil)?.url.absoluteString == "hobwork://open?hob=kitchen")
     }
+
+    // iOS refuses `OpenURLIntent` with the app's own scheme, so the intent hands the page to the app.
+    @MainActor @Test func openHobPageOpensInTheApp() async throws {
+        #expect(OpenHobPageIntent.supportedModes == .foreground(.immediate))
+        var opened: [HobLink] = []
+        HobPageOpener.setHandler { opened.append($0) }
+        _ = try await OpenHobPageIntent(hob: HobEntity(id: "kitchen"), path: "timers").perform()
+        #expect(opened == [HobLink(hob: "kitchen", path: "/timers")])
+    }
 }
 
 struct HobCatalogTests {

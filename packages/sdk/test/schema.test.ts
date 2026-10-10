@@ -99,8 +99,28 @@ test.each([
   ['intent without route or open', { intents: [{ id: 'a', title: 'A' }] }],
   ['intent with a bad id', { intents: [{ id: 'a b', title: 'A', open: '/' }] }],
   ['intent parameter of an unknown type', { intents: [{ id: 'a', title: 'A', open: '/', parameters: [{ id: 'p', title: 'P', type: 'date' }] }] }],
+  ['share target without accepts', { share: [{ id: 'a', title: 'A', route: '/share' }] }],
+  ['share target that accepts nothing', { share: [{ id: 'a', title: 'A', accepts: {}, route: '/share' }] }],
+  ['share target without route', { share: [{ id: 'a', title: 'A', accepts: { urls: true } }] }],
+  ['share file type that is neither MIME type nor extension', { share: [{ id: 'a', title: 'A', accepts: { files: ['3mf'] }, upload: 'inbox', route: '/s' }] }],
+  ['share upload that is not a name', { share: [{ id: 'a', title: 'A', accepts: { urls: true }, upload: 'In Box', route: '/s' }] }],
+  ['appLinks path without a slash', { appLinks: { include: ['spool/*'] } }],
+  ['appLinks with a fragment', { appLinks: { exclude: ['/a#b'] } }],
+  ['appLinks with another key', { appLinks: { paths: ['/a'] } }],
 ])('rejects %s', (_, config) => {
   expect(validate(config)).toBe(false)
+})
+
+test('accepts share targets and app links', () => {
+  const config = {
+    uploads: { inbox: { prefix: 'inbox/', maxBytes: 209715200, types: ['model/3mf', '.3mf', 'image/*'] } },
+    share: [
+      { id: 'queue', title: 'Add to the queue', accepts: { urls: true, files: ['model/3mf', '.3mf', 'image/*'] }, upload: 'inbox', route: '/share' },
+      { id: 'note', title: 'Add a note', accepts: { text: true }, route: '/notes' },
+    ],
+    appLinks: { include: ['/spool/*', '/bin/?'], exclude: ['/print/*'] },
+  }
+  expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
 })
 
 test('accepts a widget and intents', () => {

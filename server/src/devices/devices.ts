@@ -16,6 +16,7 @@ import type { Host } from '../host.ts'
 import { getPerson, listPeople } from '../people.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
+import { createUploads, type Completed } from '../runtime/uploads.ts'
 import { createHobSurfaces, WIDGETS_CAPABILITY, type Declarations, type RouteAnswer } from './hob-surfaces.ts'
 import { createLiveActivities, type Scope } from './live-activities.ts'
 import { createNotifications, nextDelivery } from './notifications.ts'
@@ -245,8 +246,11 @@ export function createDevices(options: {
   invokeRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<number>
   // Runs a route of the deployed version for a widget or an intent, with its answer.
   callRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<RouteAnswer>
-  // The widget and intents the deployed version declares in hobwork.json.
+  // The widget, intents, share targets, uploads and link rules the deployed
+  // version declares in hobwork.json.
   declarations?: (project: string) => Promise<Declarations>
+  // Runs the triggers of an upload a shared file arrived through.
+  uploaded?: (project: string, done: Completed, caller: Caller) => Promise<void>
   // Tests shorten how long calls wait and move the clock.
   waitMs?: { background: number; foreground: number }
   socketFallbackMs?: number
@@ -403,6 +407,8 @@ export function createDevices(options: {
     now,
     ...(options.declarations ? { declarations: options.declarations } : {}),
     ...(options.callRoute ? { callRoute: options.callRoute } : {}),
+    ...(options.uploaded ? { uploaded: options.uploaded } : {}),
+    uploads: createUploads(host),
     projectLog,
   })
 

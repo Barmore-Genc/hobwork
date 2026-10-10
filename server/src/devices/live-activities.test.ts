@@ -431,6 +431,8 @@ test('widgets: the hob list, the content from the route, and reloads', async () 
         { id: 'scan', title: 'Open Scan', parameters: [], opensApp: false, open: '/scan', runs: false },
         { id: 'where', title: 'Where is a spool', parameters: [{ id: 'spool', title: 'Spool', type: 'number', optional: false }], opensApp: false, runs: true },
       ],
+      share: [],
+      appLinks: { include: ['/*'], exclude: ['/api/*', '/_hobwork/*', '/theme/*', '/.well-known/*'] },
     },
   ])
 

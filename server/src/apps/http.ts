@@ -19,9 +19,11 @@ import { getDevice, markDeviceActive } from '../devices/store.ts'
 import { personOf } from '../people.ts'
 import { findShareLink, isShareToken } from './share-links.ts'
 import { HttpError, readJson } from '../http.ts'
-import { createUploads, isUploadToken, uploadOfToken, type Completed, type UploadTarget } from '../runtime/uploads.ts'
-import { UPLOAD_FILES_PATH, UPLOADS_PATH, type UploadEvent } from '../../../packages/sdk/src/uploads.ts'
+import { createUploads, isUploadToken, runUploadTriggers, uploadOfToken, type Completed, type UploadTarget } from '../runtime/uploads.ts'
+import { UPLOAD_FILES_PATH, UPLOADS_PATH } from '../../../packages/sdk/src/uploads.ts'
 import { decodeFilePath } from '../runtime/files.ts'
+import { AASA_PATH, aasaFile, linkRules } from './app-links.ts'
+import { DEFAULT_APPLE_APP_ID } from '../config.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
 export const APP_AUTH_PATH = '/auth/app'
@@ -76,6 +78,7 @@ export function createAppHttp(options: {
   origins: AppOrigins
   publicUrl: string
   runtime?: Runtime
+  appleAppId?: string
   // Serves /theme/theme.css and its fonts, which project UIs load from their own origin.
   serveTheme: (req: IncomingMessage, res: ServerResponse, pathname: string) => boolean
 }) {
@@ -91,6 +94,18 @@ export function createAppHttp(options: {
   // frames the app elsewhere gets no session from it.
   const sharedFrameHeaders = uiHeaders('*')
   const uploads = createUploads(host)
+  const appleAppId = options.appleAppId ?? DEFAULT_APPLE_APP_ID
+
+  function sendAasa(res: ServerResponse, rules: ReturnType<typeof linkRules>) {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' })
+    res.end(JSON.stringify(aasaFile(appleAppId, rules)))
+  }
+
+  // Each hob's own rules. A version whose hobwork.json cannot be read gets the defaults.
+  async function appLinks(res: ServerResponse, app: Resolved) {
+    const declared = await runtime?.appLinks(app.target.project, app.target.branch).catch(() => undefined)
+    sendAasa(res, linkRules(declared?.appLinks, declared?.static ?? []))
+  }
 
   async function resolve(target: AppTarget): Promise<Resolved | undefined> {
     const project = getProject(host, target.project)
@@ -316,18 +331,8 @@ export function createAppHttp(options: {
     await serveWebhook(req, res, runtime, { project, branch, name, url })
   }
 
-  // Runs the triggers of the upload a file arrived through. The upload has
-  // already succeeded, so a failing trigger only shows in the hob's log.
   async function uploadTriggers(app: Resolved, done: Completed, caller: Caller | undefined) {
-    if (!runtime) return
-    const { triggers } = await runtime.uploads(app.target.project, app.target.branch)
-    const payload: UploadEvent = { upload: done.name, ...done.file, contentType: done.contentType }
-    for (const [name, entry] of Object.entries(triggers)) {
-      if (entry.upload !== done.name) continue
-      runtime
-        .invoke(app.target.project, { kind: 'trigger', name, manual: false, branch: app.target.branch, payload, ...(caller && { caller }) })
-        .catch((err: unknown) => console.error(`The upload trigger ${name} of ${app.target.project} failed to start`, err))
-    }
+    if (runtime) await runUploadTriggers(runtime, app.target.project, app.target.branch, done, caller)
   }
 
   // Uploads into the hob's files: <app origin>/_hobwork/uploads[/<id>] in
@@ -419,6 +424,7 @@ export function createAppHttp(options: {
     }
     const url = new URL(req.url ?? '/', app.origin)
     const { pathname, search } = url
+    if (pathname === AASA_PATH && SAFE_METHODS.has(req.method ?? 'GET')) return appLinks(res, app)
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
     if (pathname === SHARE_PATH) return share(req, res, app, url.searchParams)
     if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
@@ -471,6 +477,22 @@ export function createAppHttp(options: {
   return {
     // True when the request is for an app origin rather than Hobwork itself.
     isAppRequest: (req: IncomingMessage) => origins.labelOf(req.headers.host) !== undefined,
+
+    // apple-app-site-association on the apps host itself, which iOS reads for
+    // `applinks:*.<apps host>`. Every hob shares it, so it has only the paths
+    // no hob page has; the app applies each hob's own rules.
+    handleAppsHost(req: IncomingMessage, res: ServerResponse): boolean {
+      let hostname: string
+      try {
+        hostname = new URL(`http://${req.headers.host}`).hostname
+      } catch {
+        return false
+      }
+      const { pathname } = new URL(req.url ?? '/', 'http://localhost')
+      if (hostname !== origins.domain || pathname !== AASA_PATH || !SAFE_METHODS.has(req.method ?? 'GET')) return false
+      sendAasa(res, linkRules(undefined, []))
+      return true
+    },
 
     handle(req: IncomingMessage, res: ServerResponse) {
       serveApp(req, res).catch((err: unknown) => sendRuntimeError(res, err))

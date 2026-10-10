@@ -26,6 +26,7 @@ import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
 import { callRoute, jsonBody } from './runtime/http.ts'
+import { runUploadTriggers } from './runtime/uploads.ts'
 import { createRuntime } from './runtime/runtime.ts'
 import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
@@ -69,10 +70,8 @@ const devices = createDevices({
     if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
     return { status: outcome.response.status, body: jsonBody(outcome.response) }
   },
-  declarations: async (project) => {
-    const { config: hob } = await runtime.config(project)
-    return { ...(hob.widget !== undefined ? { widget: hob.widget } : {}), intents: hob.intents }
-  },
+  declarations: async (project) => (await runtime.config(project)).config,
+  uploaded: (project, done, caller) => runUploadTriggers(runtime, project, undefined, done, caller),
 })
 const appOrigins = createAppOrigins(config.appsUrl)
 const homeAssistant = createHomeAssistant({

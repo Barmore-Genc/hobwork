@@ -52,12 +52,14 @@ type Surfaces = {
   routes?: Record<string, { handler: string }>
   widget?: { route: string }
   intents?: { id: string; route?: string; method?: string }[]
+  share?: { id: string; route: string; upload?: string; accepts: { files?: string[] } }[]
+  uploads?: Record<string, unknown>
 }
 
-// The widget and intents name routes by path, which only a route of
+// The widget, intents and share targets name routes by path, which only a route of
 // hobwork.json can answer.
 function surfaceProblems(config: unknown): string[] {
-  const { routes, widget, intents = [] } = config as Surfaces
+  const { routes, widget, intents = [], share = [], uploads = {} } = config as Surfaces
   const parsed = parseRoutes(routes)
   const answers = (method: string, path: string) => {
     const match = matchRoute(parsed, method, path.split('?')[0]!)
@@ -73,6 +75,16 @@ function surfaceProblems(config: unknown): string[] {
     if (intent.route !== undefined && !answers(method, intent.route)) {
       problems.push(`/intents/${i}/route: no "${method}" route in routes matches ${intent.route}`)
     }
+  }
+  const targets = new Set<string>()
+  for (const [i, target] of share.entries()) {
+    if (targets.has(target.id)) problems.push(`/share/${i}/id: "${target.id}" is used twice`)
+    targets.add(target.id)
+    if (!answers('POST', target.route)) problems.push(`/share/${i}/route: no "POST" route in routes matches ${target.route}`)
+    if (target.upload !== undefined && !(target.upload in uploads)) {
+      problems.push(`/share/${i}/upload: there is no upload "${target.upload}" in uploads`)
+    }
+    if (target.accepts.files && target.upload === undefined) problems.push(`/share/${i}: a target that accepts files needs upload`)
   }
   return problems
 }

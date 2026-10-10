@@ -11,9 +11,12 @@ import {
   UPLOAD_FILES_PATH,
   UPLOAD_TOKEN_PREFIX,
   uploadTypeAllowed,
+  type UploadEvent,
   type UploadedFile,
   type UploadStatus,
 } from '../../../packages/sdk/src/uploads.ts'
+import type { Caller } from '../../../packages/sdk/src/people.ts'
+import type { Runtime } from './runtime.ts'
 import { publishChange } from '../changes.ts'
 import type { Host } from '../host.ts'
 import { HttpError } from '../http.ts'
@@ -156,7 +159,18 @@ async function store(host: Host, target: UploadTarget, temp: string, path: strin
   return { path, size: stats.size, modified: stats.mtime.toISOString() }
 }
 
-export function createUploads(host: Host) {
+// One per host: the app origins and the device endpoints continue the same uploads.
+const perHost = new WeakMap<Host, Uploads>()
+
+export function createUploads(host: Host): Uploads {
+  const existing = perHost.get(host)
+  if (existing) return existing
+  const created = uploadsOf(host)
+  perHost.set(host, created)
+  return created
+}
+
+function uploadsOf(host: Host) {
   // One chunk at a time per upload: a second request for the same upload
   // would write at the same offset.
   const busy = new Set<string>()
@@ -242,6 +256,30 @@ export function createUploads(host: Host) {
       await rm(tempPath(host, target.project, id), { force: true })
     },
 
+    // A stored file of the hob at `path`, if there is one.
+    async stat(target: UploadTarget, path: string): Promise<{ size: number } | undefined> {
+      if (filePathProblem(path)) throw new HttpError(400, `${path} is not a valid file path`)
+      const stats = await lstat(join(projectFilesDir(host, target.project), ...path.split('/'))).catch(() => undefined)
+      return stats?.isFile() ? { size: stats.size } : undefined
+    },
+
+    // A path for a file named `name` under `prefix` that no file and no
+    // unfinished upload has yet: "model.3mf", then "model-2.3mf".
+    async freePath(target: UploadTarget, prefix: string, name: string): Promise<string> {
+      const clean = cleanFileName(name)
+      const dot = clean.lastIndexOf('.')
+      const [stem, ext] = dot > 0 ? [clean.slice(0, dot), clean.slice(dot)] : [clean, '']
+      const files = projectFilesDir(host, target.project)
+      for (let n = 1; n < 1000; n++) {
+        const path = `${prefix}${n === 1 ? stem : `${stem}-${n}`}${ext}`
+        const pending = host.db.prepare('SELECT 1 FROM chunked_uploads WHERE project_id = ? AND path = ?').get(target.projectId, path)
+        if (pending) continue
+        const exists = await lstat(join(files, ...path.split('/'))).then(() => true, () => false)
+        if (!exists) return path
+      }
+      return `${prefix}${stem}-${randomBytes(6).toString('hex')}${ext}`
+    },
+
     // The whole file in one request body, for scripts.
     async single(target: UploadTarget, path: string, req: IncomingMessage): Promise<Completed> {
       const { name, entry } = entryFor(target, path)
@@ -261,7 +299,44 @@ export function createUploads(host: Host) {
   }
 }
 
-export type Uploads = ReturnType<typeof createUploads>
+export type Uploads = ReturnType<typeof uploadsOf>
+
+const MAX_NAME = 120
+
+// A file name from another app as one path segment: other characters become
+// "-", and it never starts with "." or "-".
+export function cleanFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? ''
+  const ext = /\.[A-Za-z0-9]{1,16}$/.exec(base)?.[0] ?? ''
+  const stem = base
+    .slice(0, base.length - ext.length)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[.-]+|[.-]+$/g, '')
+    .slice(0, MAX_NAME)
+  return `${stem || 'shared'}${ext.toLowerCase()}`
+}
+
+// Runs the triggers of the upload a file arrived through. The upload has
+// already succeeded, so a failing trigger only shows in the hob's log.
+export async function runUploadTriggers(
+  runtime: Pick<Runtime, 'uploads' | 'invoke'>,
+  project: string,
+  branch: string | undefined,
+  done: Completed,
+  caller: Caller | undefined,
+): Promise<void> {
+  const { triggers } = await runtime.uploads(project, branch)
+  const payload: UploadEvent = { upload: done.name, ...done.file, contentType: done.contentType }
+  for (const [name, entry] of Object.entries(triggers)) {
+    if (entry.upload !== done.name) continue
+    runtime
+      .invoke(project, { kind: 'trigger', name, manual: false, branch, payload, ...(caller && { caller }) })
+      .catch((err: unknown) => console.error(`The upload trigger ${name} of ${project} failed to start`, err))
+  }
+}
 
 // Drops chunked uploads nobody continued, and their bytes.
 export async function expireUploads(host: Host, now = Date.now()): Promise<number> {

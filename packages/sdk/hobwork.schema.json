@@ -8,6 +8,7 @@
     "handlerPath": { "type": "string", "minLength": 1 },
     "routePath": { "type": "string", "pattern": "^/[^\\s#]{0,511}$" },
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "linkPath": { "type": "string", "pattern": "^/[^\\s#]{0,255}$" },
     "vmResources": {
       "type": "object",
       "additionalProperties": false,
@@ -266,6 +267,58 @@
           },
           "opensApp": { "description": "Opens the app after the route ran: at the path the route returns as open, else at open, else at the hob's home.", "type": "boolean" },
           "open": { "description": "A path of the hob's UI, e.g. \"/scan\".", "$ref": "#/definitions/routePath" }
+        }
+      }
+    },
+    "share": {
+      "description": "Targets of the hob in the share sheet (\"Share to Hobwork\" in the Hobwork app on iPhone and iPad). The person picks a target for a link, text or files they share from another app. Files are uploaded into the upload named by upload first; then Hobwork runs the POST route with body ShareRequest from @hobwork/sdk ({ target, url?, text?, files }) and ctx.caller set to the person and device. The route may return ShareResult: say is shown in the share sheet.",
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "accepts", "route"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+          "title": { "description": "What the share sheet lists, e.g. \"Add to the queue\".", "type": "string", "minLength": 1, "maxLength": 64 },
+          "accepts": {
+            "description": "What the target takes. It is offered when the shared items include something it accepts.",
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "urls": { "description": "Web links (http and https).", "type": "boolean" },
+              "text": { "description": "Plain text.", "type": "boolean" },
+              "files": {
+                "description": "Files by MIME type (\"model/3mf\", \"image/*\") or extension (\".3mf\"), as in uploads. Needs upload.",
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^(\\.[A-Za-z0-9]+|[a-z]+/([a-z0-9.+-]+|\\*))$" }
+              }
+            }
+          },
+          "upload": { "description": "The upload (a key of uploads) that shared files go into.", "$ref": "#/definitions/name" },
+          "route": { "description": "The POST route that receives the ShareRequest.", "$ref": "#/definitions/routePath" }
+        }
+      }
+    },
+    "appLinks": {
+      "description": "Which links to the hob's app open in the Hobwork app (universal links) when it is installed, instead of in the browser. Default: every page of the UI. Paths under /api, /_hobwork, /theme and the static directories never do. Patterns are URL paths where * matches any characters and ? one character, as in an apple-app-site-association file.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "description": "Only these paths open the app, e.g. [\"/spool/*\", \"/bin/*\"].",
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/definitions/linkPath" }
+        },
+        "exclude": {
+          "description": "These paths stay in the browser, e.g. [\"/print/*\"]. They win over include.",
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/definitions/linkPath" }
         }
       }
     }

@@ -950,6 +950,11 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       const { config } = await deployedFor(project, branch)
       return { uploads: config.uploads, triggers: config.triggers }
     },
+    // Which paths of the app open the Hobwork app, from the deployed version (or the branch).
+    async appLinks(project: string, branch?: string): Promise<{ appLinks: ProjectConfig['appLinks']; static: StaticMount[] }> {
+      const { config } = await deployedFor(project, branch)
+      return { appLinks: config.appLinks, static: config.static }
+    },
     // The hobs whose apps may send requests to this one, as its deployed version (or the branch) declares.
     async crossAppRequests(project: string, branch?: string): Promise<string[]> {
       return (await deployedFor(project, branch)).config.crossAppRequests

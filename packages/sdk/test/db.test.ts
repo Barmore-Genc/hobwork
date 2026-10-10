@@ -83,6 +83,26 @@ test('allows schema introspection', async () => {
   ])
 })
 
+test('FTS5 tables can be written and searched', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hobwork-sdk-test-'))
+  dirs.push(dir)
+  writeFileSync(
+    join(dir, '0001_notes.sql'),
+    `CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
+CREATE VIRTUAL TABLE notes_fts USING fts5(body, content='notes', content_rowid='id');
+CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+  INSERT INTO notes_fts (rowid, body) VALUES (new.id, new.body);
+END;`,
+  )
+  const notes = createTestDb({ migrations: dir })
+  await notes.run("INSERT INTO notes (body) VALUES ('blue spool on the shelf'), ('red spool in the dryer')")
+  expect(await notes.query("SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'dryer'")).toEqual([{ rowid: 2 }])
+  await notes.run("INSERT INTO notes_fts (notes_fts) VALUES ('rebuild')")
+  expect(
+    await notes.query("SELECT highlight(notes_fts, 0, '[', ']') AS hit FROM notes_fts WHERE notes_fts MATCH 'shelf'"),
+  ).toEqual([{ hit: 'blue spool on the [shelf]' }])
+})
+
 test('SQL errors carry SQLite messages', async () => {
   const spools = db()
   await spools.run("INSERT INTO spools (color) VALUES ('red')")

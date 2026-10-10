@@ -39,9 +39,22 @@ enum HostURL {
         let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") { return true }
         if host.contains(":") { return true }
+        if insecureHTTPDomains.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 4 && parts.allSatisfy { UInt8($0) != nil }
     }
+
+    /// Domains App Transport Security lets this build reach over plain http. Debug builds add
+    /// development hosts here (HOBWORK_INSECURE_HTTP_DOMAINS); Release only has localhost.
+    static let insecureHTTPDomains: [String] = {
+        let ats = Bundle.main.object(forInfoDictionaryKey: "NSAppTransportSecurity") as? [String: Any]
+        let domains = ats?["NSExceptionDomains"] as? [String: [String: Any]] ?? [:]
+        return domains.compactMap { name, settings in
+            settings["NSExceptionAllowsInsecureHTTPLoads"] as? Bool == true && settings["NSIncludesSubdomains"] as? Bool == true
+                ? name.lowercased()
+                : nil
+        }
+    }()
 
     static func webSocketURL(for host: URL, path: String) -> URL {
         var components = URLComponents(url: host.appending(path: path), resolvingAgainstBaseURL: false)!

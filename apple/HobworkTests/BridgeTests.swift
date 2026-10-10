@@ -275,17 +275,50 @@ struct BridgeTests {
             var text: String? = "https://example.com/model"
             func read() -> (text: String?, url: URL?) { (text, text.flatMap(URL.init(string:))) }
             func write(_ text: String) { self.text = text }
+            func detect() async -> (url: Bool, text: Bool) { (text?.hasPrefix("https://") == true, text != nil) }
         }
         let board = Board()
         let clipboard = ClipboardBridge(clipboard: board)
         #expect(clipboard.permission(for: "read")?.key == "clipboard.read")
         #expect(clipboard.permission(for: "write") == nil)
+        #expect(clipboard.permission(for: "detect") == nil)
         let context = BridgeContext(origin: filament, presenter: presenter) { _, _ in }
+        #expect(try await clipboard.call("detect", args: .null, context: context) == .object(["url": .bool(true), "text": .bool(true)]))
         let read = try await clipboard.call("read", args: .null, context: context)
         #expect(read == .object(["text": .string("https://example.com/model"), "url": .string("https://example.com/model")]))
         _ = try await clipboard.call("write", args: .object(["text": .string("PLA")]), context: context)
         #expect(board.text == "PLA")
+        #expect(try await clipboard.call("detect", args: .null, context: context) == .object(["url": .bool(false), "text": .bool(true)]))
     }
+
+    #if os(iOS)
+        @Test func pastesThroughTheSystemPasteButtonWithoutAsking() async throws {
+            final class Sheet: PasteSheet {
+                var answer: (text: String?, url: URL?)?
+                var titles: [String?] = []
+                func paste(title: String?, message: String?, presenter: any BridgePresenter) async throws -> (text: String?, url: URL?)? {
+                    titles.append(title)
+                    return answer
+                }
+            }
+            final class Board: Clipboard {
+                func read() -> (text: String?, url: URL?) { (nil, nil) }
+                func write(_ text: String) {}
+                func detect() async -> (url: Bool, text: Bool) { (false, false) }
+            }
+            let sheet = Sheet()
+            let clipboard = ClipboardBridge(clipboard: Board(), pasteSheet: sheet)
+            #expect(clipboard.permission(for: "paste") == nil)
+            let context = BridgeContext(origin: filament, presenter: presenter) { _, _ in }
+            let link = "https://makerworld.com/en/models/1052418"
+            sheet.answer = (link, URL(string: link))
+            let pasted = try await clipboard.call("paste", args: .object(["title": .string("Paste a link")]), context: context)
+            #expect(pasted == .object(["text": .string(link), "url": .string(link)]))
+            #expect(sheet.titles == ["Paste a link"])
+            sheet.answer = nil
+            await #expect(throws: BridgeError.self) { try await clipboard.call("paste", args: .null, context: context) }
+        }
+    #endif
 
     @Test func buildsLocalNotifications() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

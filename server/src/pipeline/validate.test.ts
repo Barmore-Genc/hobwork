@@ -85,3 +85,32 @@ test('the widget and intents must name routes hobwork.json declares', () => {
 test('an intent needs a route or open', () => {
   expect(validateHobworkJson(JSON.stringify({ intents: [{ id: 'a', title: 'A' }] }))).not.toEqual([])
 })
+
+test('share targets must name a POST route and an upload hobwork.json declares', () => {
+  const routes = { 'POST /share': { handler: 'src/share.ts' } }
+  const uploads = { inbox: { prefix: 'inbox/', types: ['.3mf', 'image/*'] } }
+  const ok = {
+    routes,
+    uploads,
+    share: [
+      { id: 'queue', title: 'Add to the queue', accepts: { urls: true, files: ['model/3mf', '.3mf'] }, upload: 'inbox', route: '/share' },
+      { id: 'note', title: 'Note', accepts: { text: true }, route: '/share' },
+    ],
+    appLinks: { include: ['/spool/*', '/bin/?'], exclude: ['/print/*'] },
+  }
+  expect(validateHobworkJson(JSON.stringify(ok))).toEqual([])
+  const bad = {
+    routes,
+    uploads,
+    share: [
+      { id: 'a', title: 'A', accepts: { files: ['.3mf'] }, route: '/other' },
+      { id: 'a', title: 'B', accepts: { urls: true }, upload: 'photos', route: '/share' },
+    ],
+  }
+  expect(validateHobworkJson(JSON.stringify(bad))).toEqual([
+    '/share/0/route: no "POST" route in routes matches /other',
+    '/share/0: a target that accepts files needs upload',
+    '/share/1/id: "a" is used twice',
+    '/share/1/upload: there is no upload "photos" in uploads',
+  ])
+})

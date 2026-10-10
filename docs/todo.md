@@ -168,7 +168,7 @@ See Web bridge in `docs/architecture.md`.
 - Tested in unit tests and in a web view with pages loaded under hob origins, not on a device: haptics, printing to an AirPrint printer (paper choice, `print(to:)` without the dialog, printer names from `contactPrinter`), the share sheet, the clipboard prompts and iPad popovers need a check on hardware.
 - The app derives the apps host from the Hobwork host. A host with `HOBWORK_APPS_URL` somewhere else gets no bridge (nor in-app links). `/.well-known/hobwork` could name the apps host.
 - Popovers point at the edge of the web view, not at the button. The page could send the button's rect, but a hob page in the web UI's iframe does not know its offset; the web UI could tell the app where the frame is.
-- No native paste control (`UIPasteControl`): it would have to sit over the page's button. Clipboard reads rely on the per-hob question and iOS's "Allow Paste" prompt, and the app does not check that a read follows a tap.
+- `clipboard.read` relies on the per-hob question and iOS's "Allow Paste" prompt, and the app does not check that a read follows a tap. `clipboard.paste` (a sheet with `UIPasteControl`) and `detect` avoid both prompts; the paste sheet is untested on a device.
 - Local notifications have no actions. Actions that run without the app would need the host to know the notification; a hob can send through its own route instead.
 - Printer and media lists: iOS has no API for them outside the picker and a print. macOS could list `NSPrinter.printerNames` and their papers.
 - Permissions are per hob and shared with its branch previews. A preview with new code reads the clipboard if main was allowed.
@@ -184,11 +184,20 @@ See Web bridge in `docs/architecture.md`.
 ## NFC and alarms
 
 - Untested on hardware (unit tests with fake sessions and a fake AlarmKit only): `NFCTagReaderSession` with NTAG21x, ISO 15693 and Type 4 tags (UIDs, read-back after write, `restartPolling` in sessions and how often a tag left on the reader is found again), the 60 second end of a session, the iPad to iPhone hand-off end to end, AlarmKit's repeat button with `.countdown` behavior, whether AlarmKit runs `secondaryIntent` for a `.countdown` button (if not, `repeated` comes only from `alarmUpdates` while the app runs), the stop and repeat intents launching the app in the background, and the Live Activity's subtitle, tint and repeat button.
-- Links to hob origins (`https://<hob>.apps.<host>/spool/78` on a tag) are not universal links, so iOS background tag reading opens them in Safari, and only the Scan NFC Tag action hands them to an open page. Making them universal links needs `applinks:*.apps.<host>` in Associated Domains (wildcards are fetched from the apps host itself, which serves no app) and an `apple-app-site-association` there that leaves out `/_hobwork/*` (the sign-in callback must stay in the browser). Every link to a hob would then open the app.
 - `alarms/fired` is only reported when the app sees the ring or a Stop/repeat; a timer that rings and is never stopped while the app is not running reports nothing until the app runs. AlarmKit gives apps no callback when an alarm fires.
 - The alert's Stop button text ("Took them out") cannot be set on iOS 26.1 and later; the hob can put it in the title or subtitle.
 - Hand-off only covers `nfc.read` and `nfc.write`; alarms ring on the device that set them, as the filament hob wants.
 - `alarm-states.json` keeps one entry per alarm ID that ever rang; hobs that make new IDs for every timer grow it slowly.
+
+## Share sheet and links to hob pages
+
+See Share targets and Links to hob pages in `docs/architecture.md`.
+
+- **Check on a device** (unit tests and the simulator so far; the simulator showed the extension in Safari's share sheet and its not-connected message): sharing a 200 MB 3MF from Files and a MakerWorld link from Safari to a paired host, the extension's memory while it uploads, and what iOS does when the person leaves the sheet half way. Universal links to hob pages need a signed build with `HOBWORK_APPLINKS_HOST` and an apps host that serves its association file: a tag with `https://<hob>.apps.<host>/spool/78` read in the background, the `link.opened` hand-off to an open page, an excluded path opening in the Safari view, and whether iOS's CDN reads the wildcard's file from the apps host as expected.
+- **Uploads only while the sheet is open.** A background `URLSession` could send the parts after the sheet closes, but the route call after them needs code that runs; the app could take over (the extension hands the upload to the app group, a background session wakes the app on completion, and the app calls the route), at the cost of the `say` text never reaching the person except as a notification.
+- **No "Open in Hobwork" after sharing.** Share extensions cannot open their app (`extensionContext.open` works only in widgets), so `ShareResult` has no `open`; the hob can send a notification that opens a page.
+- **No share extension on the Mac.** macOS share extensions use the same activation rules with an AppKit view controller; the shared code (`Hobwork/Shared/Share/`) would carry over. The local signing (`just test-mac local`) has no app group, so the extension would not find the pairing there.
+- **The paste control is a sheet.** `UIPasteControl` cannot sit in the page, so `clipboard.paste()` needs a second tap. A native toolbar above the web view with a paste button pages could turn on would save it.
 
 ## Live Activities, widgets and intents
 

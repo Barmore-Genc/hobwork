@@ -5,13 +5,22 @@ import type { WidgetContent, WidgetLine } from '../../../packages/sdk/src/widget
 import type { Host } from '../host.ts'
 import { personOf } from '../people.ts'
 import { listProjects } from '../projects.ts'
-import type { IntentEntry } from '../runtime/config.ts'
+import type { IncomingMessage } from 'node:http'
+import type { ShareRequest } from '../../../packages/sdk/src/share-targets.ts'
+import { uploadTypeAllowed, type UploadStatus, type UploadedFile } from '../../../packages/sdk/src/uploads.ts'
+import { linkRules } from '../apps/app-links.ts'
+import { HttpError } from '../http.ts'
+import { getProject } from '../projects.ts'
+import type { AppLinks, IntentEntry, ShareEntry, UploadEntry } from '../runtime/config.ts'
+import type { StaticMount } from '../runtime/files.ts'
+import type { Completed, UploadTarget, Uploads } from '../runtime/uploads.ts'
 import type { PushSender } from './push/relay.ts'
 import { DeviceError, type DeviceRegistry } from './registry.ts'
 import { setPush, type Device } from './store.ts'
 
-// Widgets, Shortcuts actions and controls in the app, which hobs declare in
-// hobwork.json ("widget", "intents").
+// Widgets, Shortcuts actions, controls and share targets in the app, which
+// hobs declare in hobwork.json ("widget", "intents", "share"), and the rules
+// for which of their links open the app ("appLinks").
 
 export const WIDGETS_CAPABILITY = 'widgets'
 const DEFAULT_REFRESH_MS = 30 * 60 * 1000
@@ -23,9 +32,20 @@ const COLOR = /^#[0-9A-Fa-f]{6}$/
 const PATH = /^\/[^\s#]{0,511}$/
 const RELOAD_WAIT_MS = 4_000
 const RELOAD_TTL_S = 60 * 60
+const MAX_SHARED_TEXT = 100_000
+const MAX_SHARED_URL = 8192
+const MAX_SHARED_FILES = 20
+const MAX_FILE_NAME = 255
 const TRANSPORT_ERRORS = new Set(['not_connected', 'disconnected', 'timeout'])
 
-export type Declarations = { widget?: string; intents: IntentEntry[] }
+export type Declarations = {
+  widget?: string
+  intents: IntentEntry[]
+  share?: ShareEntry[]
+  uploads?: Record<string, UploadEntry>
+  appLinks?: AppLinks
+  static?: StaticMount[]
+}
 
 export type RouteAnswer = { status: number; body: unknown }
 
@@ -120,6 +140,10 @@ export type HobSurfacesDeps = {
   callRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<RouteAnswer>
   projectLog: (project: string, level: 'info' | 'warn', message: string) => void
   reloadWaitMs?: number
+  // Shared files go into the hob's uploads, like files.upload from the hob's app.
+  uploads?: Uploads
+  // Runs the upload's triggers once a shared file is in.
+  uploaded?: (project: string, done: Completed, caller: Caller) => Promise<void>
 }
 
 export type HobSurfaces = ReturnType<typeof createHobSurfaces>
@@ -143,11 +167,12 @@ export function createHobSurfaces(deps: HobSurfacesDeps) {
     }
   }
 
+  // Every deployed hob: the app needs the link rules of each.
   async function hobs() {
     const out = []
     for (const { name } of listProjects(host)) {
       const found = await declared(name)
-      if (!found || (!found.widget && !found.intents.length)) continue
+      if (!found) continue
       out.push({
         hob: name,
         widget: found.widget !== undefined,
@@ -159,6 +184,16 @@ export function createHobSurfaces(deps: HobSurfacesDeps) {
           ...(i.open !== undefined ? { open: i.open } : {}),
           runs: i.route !== undefined,
         })),
+        share: (found.share ?? []).map((t) => {
+          const upload = t.upload === undefined ? undefined : found.uploads?.[t.upload]
+          return {
+            id: t.id,
+            title: t.title,
+            accepts: { urls: t.accepts.urls, text: t.accepts.text, files: upload ? t.accepts.files : [] },
+            ...(upload ? { maxBytes: upload.maxBytes } : {}),
+          }
+        }),
+        appLinks: linkRules(found.appLinks, found.static ?? []),
       })
     }
     return out
@@ -259,5 +294,129 @@ export function createHobSurfaces(deps: HobSurfacesDeps) {
     }
   }
 
-  return { hobs, widget, runIntent, reload }
+  async function shareTarget(project: unknown, id: unknown): Promise<{ hob: string; target: ShareEntry; found: Declarations }> {
+    if (typeof project !== 'string' || typeof id !== 'string') throw new SurfaceError(400, 'bad_request', 'Send hob and target')
+    const found = await declared(project)
+    const target = found?.share?.find((t) => t.id === id)
+    if (!found || !target) throw new SurfaceError(404, 'unknown_target', `Hob ${JSON.stringify(project)} has no share target ${JSON.stringify(id)}`)
+    return { hob: project, target, found }
+  }
+
+  // The upload a share target's files go into, as the device's owner, on the
+  // deployed version. Only the target's own upload, so a device reaches none
+  // of the hob's other upload folders.
+  async function uploadTarget(device: Device, project: unknown, id: unknown): Promise<{ hob: string; upload: UploadTarget; entry: UploadEntry; target: ShareEntry }> {
+    if (!deps.uploads) throw new SurfaceError(503, 'unavailable', 'This Hobwork host takes no uploads')
+    const { hob, target, found } = await shareTarget(project, id)
+    const name = target.upload
+    const entry = name === undefined ? undefined : found.uploads?.[name]
+    if (name === undefined || !entry || !target.accepts.files.length) throw new SurfaceError(400, 'not_accepted', `${target.title} takes no files`)
+    const projectId = getProject(host, hob)?.id
+    if (projectId === undefined) throw new SurfaceError(404, 'unknown_target', `There is no hob ${JSON.stringify(hob)}`)
+    const upload: UploadTarget = { project: hob, projectId, uploads: { [name]: entry }, uploader: { userId: device.userId } }
+    return { hob, upload, entry, target }
+  }
+
+  function uploadFailed(err: unknown): never {
+    if (err instanceof HttpError) throw new SurfaceError(err.status, 'upload_failed', err.message)
+    throw err
+  }
+
+  function uploads(): Uploads {
+    if (!deps.uploads) throw new SurfaceError(503, 'unavailable', 'This Hobwork host takes no uploads')
+    return deps.uploads
+  }
+
+  // { hob, target, name, size, type? }: the host picks a free path for the
+  // file in the target's upload folder.
+  async function startUpload(device: Device, body: Record<string, unknown>): Promise<UploadStatus> {
+    const { upload, entry, target } = await uploadTarget(device, body.hob, body.target)
+    if (typeof body.name !== 'string' || !body.name || body.name.length > MAX_FILE_NAME) {
+      throw new SurfaceError(400, 'bad_request', 'Send name, the name of the file')
+    }
+    const type = typeof body.type === 'string' && body.type ? body.type : null
+    if (!uploadTypeAllowed(target.accepts.files, body.name, type)) {
+      throw new SurfaceError(415, 'not_accepted', `${target.title} takes only ${target.accepts.files.join(', ')} files`)
+    }
+    const path = await uploads().freePath(upload, entry.prefix, body.name)
+    return uploads()
+      .start(upload, { path, size: body.size, ...(type ? { type } : {}) })
+      .catch(uploadFailed)
+  }
+
+  async function uploadStatus(device: Device, hob: string, target: string, id: string): Promise<UploadStatus> {
+    const { upload } = await uploadTarget(device, hob, target)
+    try {
+      return uploads().status(upload, id)
+    } catch (err) {
+      uploadFailed(err)
+    }
+  }
+
+  async function uploadChunk(
+    device: Device,
+    hob: string,
+    target: string,
+    id: string,
+    offset: number,
+    req: IncomingMessage,
+  ): Promise<UploadStatus | { done: true; file: UploadedFile }> {
+    const { upload } = await uploadTarget(device, hob, target)
+    const result = await uploads().chunk(upload, id, offset, req).catch(uploadFailed)
+    if (!('file' in result)) return result
+    await deps.uploaded?.(hob, result, callerOf(device)).catch((err: unknown) => {
+      deps.projectLog(hob, 'warn', `${device.name}: the triggers of the upload "${result.name}" failed to start: ${(err as Error).message}`)
+    })
+    return { done: true, file: result.file }
+  }
+
+  async function cancelUpload(device: Device, hob: string, target: string, id: string): Promise<void> {
+    const { upload } = await uploadTarget(device, hob, target)
+    await uploads().cancel(upload, id).catch(uploadFailed)
+  }
+
+  // { hob, target, url?, text?, files? }. Files were uploaded first, and each
+  // must be a file in the target's upload folder.
+  async function runShare(device: Device, body: Record<string, unknown>): Promise<{ say?: string }> {
+    const { hob, target } = await shareTarget(body.hob, body.target)
+    const request: ShareRequest = { target: target.id, files: [] }
+    if (body.url !== undefined && body.url !== null) {
+      if (!target.accepts.urls) throw new SurfaceError(400, 'not_accepted', `${target.title} takes no links`)
+      if (typeof body.url !== 'string' || body.url.length > MAX_SHARED_URL || !/^https?:\/\//i.test(body.url) || !URL.canParse(body.url)) {
+        throw new SurfaceError(400, 'bad_request', 'url must be an http or https link')
+      }
+      request.url = body.url
+    }
+    if (body.text !== undefined && body.text !== null) {
+      if (!target.accepts.text) throw new SurfaceError(400, 'not_accepted', `${target.title} takes no text`)
+      if (typeof body.text !== 'string' || body.text.length > MAX_SHARED_TEXT) {
+        throw new SurfaceError(400, 'bad_request', 'text must be at most 100,000 characters')
+      }
+      request.text = body.text
+    }
+    const files = Array.isArray(body.files) ? body.files : []
+    if (files.length > MAX_SHARED_FILES) throw new SurfaceError(400, 'bad_request', `Share at most ${MAX_SHARED_FILES} files at once`)
+    if (files.length) {
+      const { upload, entry } = await uploadTarget(device, hob, target.id)
+      for (const file of files) {
+        if (!isObject(file) || typeof file.path !== 'string' || !file.path.startsWith(entry.prefix)) {
+          throw new SurfaceError(400, 'bad_request', `files must be files uploaded to ${target.title}`)
+        }
+        const stat = await uploads().stat(upload, file.path).catch(uploadFailed)
+        if (!stat) throw new SurfaceError(400, 'bad_request', `${file.path} has not been uploaded`)
+        const name = typeof file.name === 'string' && file.name && file.name.length <= MAX_FILE_NAME ? file.name : file.path.slice(file.path.lastIndexOf('/') + 1)
+        const contentType = typeof file.contentType === 'string' && file.contentType && file.contentType.length <= 200 ? file.contentType : null
+        request.files.push({ path: file.path, name, size: stat.size, contentType })
+      }
+    }
+    if (request.url === undefined && request.text === undefined && !request.files.length) {
+      throw new SurfaceError(400, 'bad_request', 'Share a link, text or files')
+    }
+    const answer = await route(hob, device, { method: 'POST', path: target.route, body: request }, `share "${target.id}"`)
+    const result = isObject(answer) ? answer : {}
+    const say = text(result.say, MAX_SAY)
+    return say ? { say } : {}
+  }
+
+  return { hobs, widget, runIntent, reload, startUpload, uploadStatus, uploadChunk, cancelUpload, runShare }
 }

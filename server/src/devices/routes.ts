@@ -4,6 +4,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ApiRoute } from '../api/router.ts'
 import type { Auth } from '../auth/auth.ts'
 import { getUser, isAllowed } from '../auth/users.ts'
+import { AASA_PATH } from '../apps/app-links.ts'
 import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
@@ -35,9 +36,6 @@ import {
 
 // The app checks the address a person typed with this before pairing.
 export const DISCOVERY_PATH = '/.well-known/hobwork'
-// Lets the app open tag URLs (universal links) when it is built with this host
-// in its Associated Domains.
-export const AASA_PATH = '/.well-known/apple-app-site-association'
 const HOST_VERSION = String(
   (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown }).version,
 )
@@ -55,6 +53,10 @@ const LIVE_ACTIVITIES_PATH = '/api/devices/live-activities'
 const HOBS_PATH = '/api/devices/hobs'
 const INTENTS_PATH = '/api/devices/intents'
 const WIDGET_PATH = /^\/api\/devices\/widgets\/([a-z0-9][a-z0-9-]*)$/
+const SHARE_PATH = '/api/devices/share'
+const UPLOADS_PATH = '/api/devices/uploads'
+// <hob>/<share target>/<upload ID>
+const UPLOAD_PATH = /^\/api\/devices\/uploads\/([a-z0-9][a-z0-9-]*)\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})$/
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
 const MAX_RETURN_TO = 2048
@@ -359,6 +361,63 @@ export function createDeviceRoutes(options: {
     }
   }
 
+  // Files for a share target, uploaded in parts like files.upload in a hob's
+  // app, as the device's owner.
+  async function startUpload(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, target, name, size, type? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 201, await devices.surfaces.startUpload(device, body))
+    } catch (err) {
+      if (err instanceof SurfaceError) json(res, err.status, { error: err.message, code: err.code })
+      else throw err
+    }
+  }
+
+  async function upload(req: IncomingMessage, res: ServerResponse, hob: string, target: string, id: string, search: URLSearchParams) {
+    const device = requireDevice(req)
+    const surfaces = devices.surfaces
+    try {
+      if (req.method === 'GET') return json(res, 200, await surfaces.uploadStatus(device, hob, target, id))
+      if (req.method === 'DELETE') {
+        await surfaces.cancelUpload(device, hob, target, id)
+        res.writeHead(204).end()
+        return
+      }
+      if (req.method !== 'PUT') {
+        res.writeHead(405, { allow: 'GET, PUT, DELETE' }).end()
+        return
+      }
+      const offset = Number(search.get('offset'))
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new SurfaceError(400, 'bad_request', 'offset must say where this part starts')
+      touchDevice(db, device.id)
+      const result = await surfaces.uploadChunk(device, hob, target, id, offset, req)
+      json(res, 'done' in result ? 201 : 200, result)
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      // An answer before the body was read: the app may still be sending it.
+      if (!req.complete) res.setHeader('connection', 'close')
+      json(res, err.status, { error: err.message, code: err.code })
+    }
+  }
+
+  // Runs a share target's route once its files are in. Answers 200 either
+  // way, so the share sheet can say what went wrong.
+  async function share(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, target, url?, text?, files? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 200, { ok: true, ...(await devices.surfaces.runShare(device, body)) })
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
   type Handle = (req: IncomingMessage, res: ServerResponse) => Promise<void>
   const endpoints: Record<string, Record<string, Handle>> = {
     [TOKEN_PATH]: { POST: token },
@@ -372,6 +431,8 @@ export function createDeviceRoutes(options: {
     [LIVE_ACTIVITIES_PATH]: { POST: liveActivity },
     [HOBS_PATH]: { GET: hobs },
     [INTENTS_PATH]: { POST: intent },
+    [UPLOADS_PATH]: { POST: startUpload },
+    [SHARE_PATH]: { POST: share },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {
@@ -424,6 +485,16 @@ export function createDeviceRoutes(options: {
     if (widgetMatch && req.method === 'GET') {
       try {
         await widget(req, res, widgetMatch[1]!)
+      } catch (err) {
+        if (err instanceof HttpError) json(res, err.status, { error: err.message })
+        else throw err
+      }
+      return true
+    }
+    const uploadMatch = UPLOAD_PATH.exec(pathname)
+    if (uploadMatch) {
+      try {
+        await upload(req, res, uploadMatch[1]!, uploadMatch[2]!, uploadMatch[3]!, search)
       } catch (err) {
         if (err instanceof HttpError) json(res, err.status, { error: err.message })
         else throw err

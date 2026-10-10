@@ -52,18 +52,24 @@ test('calls send their arguments and resolve with the value', async () => {
     'haptics.impact': () => null,
     'clipboard.read': () => ({ text: 'https://example.com/model', url: 'https://example.com/model' }),
     'clipboard.write': () => null,
+    'clipboard.detect': () => ({ url: true, text: true }),
+    'clipboard.paste': () => ({ text: 'https://makerworld.com/en/models/1', url: 'https://makerworld.com/en/models/1' }),
     'app.info': () => ({ platform: 'ios', hob: 'filament', person: { id: 1, name: 'Kaan' } }),
   })
   await native.haptics.impact('rigid', 0.5)
   await native.haptics.impact()
   expect(await native.clipboard.read()).toEqual({ text: 'https://example.com/model', url: 'https://example.com/model' })
   await native.clipboard.writeText('PLA Black')
+  expect(await native.clipboard.detect()).toEqual({ url: true, text: true })
+  expect((await native.clipboard.paste({ title: 'Paste a link' })).url).toBe('https://makerworld.com/en/models/1')
   expect((await native.app.info()).person).toEqual({ id: 1, name: 'Kaan' })
   expect(bridge.calls).toEqual([
     { capability: 'haptics', method: 'impact', args: { style: 'rigid', intensity: 0.5 } },
     { capability: 'haptics', method: 'impact', args: { style: 'medium' } },
     { capability: 'clipboard', method: 'read', args: null },
     { capability: 'clipboard', method: 'write', args: { text: 'PLA Black' } },
+    { capability: 'clipboard', method: 'detect', args: null },
+    { capability: 'clipboard', method: 'paste', args: { title: 'Paste a link' } },
     { capability: 'app', method: 'info', args: null },
   ])
 })
@@ -327,4 +333,14 @@ test('Live Activities start on this device and update and end through the app', 
     { capability: 'liveActivities', method: 'update', args: { id: 'hand', changes: { subtitle: null } } },
     { capability: 'liveActivities', method: 'end', args: { id: 'hand', dismissAt: 'now' } },
   ])
+})
+
+test('links opened while a page listens arrive as link.opened', async () => {
+  bridge = createFakeBridge({})
+  const opened: unknown[] = []
+  const stop = native.links.onOpened((link) => opened.push(link))
+  bridge.emit('link.opened', { url: 'https://filament.apps.example.com/spool/78', path: '/spool/78' })
+  stop()
+  bridge.emit('link.opened', { url: 'https://filament.apps.example.com/bin/4', path: '/bin/4' })
+  expect(opened).toEqual([{ url: 'https://filament.apps.example.com/spool/78', path: '/spool/78' }])
 })

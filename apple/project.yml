@@ -25,6 +25,10 @@ settings:
     # NFC tag links to https://<host>/nfc/<tag> open the app, and pairing with this
     # host finishes on a link only the app can claim.
     HOBWORK_APPLINKS_HOST: ""
+    # With HOBWORK_APPLINKS_HOST, links to hob pages (https://<hob>.<apps host>/...)
+    # open the app too. Set it when the apps host is not apps.<HOBWORK_APPLINKS_HOST>,
+    # such as apps.example.com next to hobwork.example.com.
+    HOBWORK_APPS_HOST: apps.$(HOBWORK_APPLINKS_HOST)
     # Entitlements files are picked by name from the two settings above.
     HOBWORK_FAMILY_CONTROLS_SUFFIX_YES: ""
     HOBWORK_FAMILY_CONTROLS_SUFFIX_NO: -NoFamilyControls
@@ -50,6 +54,7 @@ targets:
           - Shared/Health
           - Shared/LiveActivities
           - Shared/Hobs
+          - Shared/Share
           - Capabilities/NFC
           - Capabilities/Health
           - Capabilities/LiveActivities
@@ -70,6 +75,8 @@ targets:
       - path: Hobwork/Shared/LiveActivities
         destinationFilters: [iOS]
       - path: Hobwork/Shared/Hobs
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Share
         destinationFilters: [iOS]
       - path: Hobwork/Capabilities/LiveActivities
         destinationFilters: [iOS]
@@ -113,6 +120,8 @@ targets:
       - target: HobworkDeviceActivityMonitor
         destinationFilters: [iOS]
       - target: HobworkWidgets
+        destinationFilters: [iOS]
+      - target: HobworkShare
         destinationFilters: [iOS]
     settings:
       base:
@@ -166,6 +175,7 @@ targets:
           - Health
           - LiveActivities
           - Hobs
+          - Share
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -255,6 +265,51 @@ targets:
         PRODUCT_NAME: HobworkWidgets
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
         CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  # "Share to Hobwork" in the share sheet.
+  HobworkShare:
+    type: app-extension
+    supportedDestinations: [iOS]
+    sources:
+      - path: ShareExtension
+      - path: Hobwork/Shared/Share
+      - path: Hobwork/Shared/Hobs/HobCatalog.swift
+      - path: Hobwork/Shared/Hobs/HobLinks.swift
+      - path: Hobwork/Shared/AppGroup.swift
+      - path: Hobwork/Shared/Encoding.swift
+      - path: Hobwork/Shared/JSONValue.swift
+      - path: Hobwork/Shared/SharedFile.swift
+      - path: Hobwork/Shared/Time.swift
+      - path: Hobwork/Shared/Host/HostAPI.swift
+      - path: Hobwork/Shared/Host/HostProbe.swift
+      - path: Hobwork/Shared/Host/Keychain.swift
+      - path: Hobwork/Shared/Push/PushStore.swift
+      - path: Hobwork/Shared/Push/PushCrypto.swift
+      - path: Hobwork/Shared/Push/RelayClient.swift
+      - path: Hobwork/Shared/Commands/DeviceMessage.swift
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 10
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.Share
+        PRODUCT_NAME: HobworkShare
+        INFOPLIST_KEY_CFBundleDisplayName: Hobwork
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 

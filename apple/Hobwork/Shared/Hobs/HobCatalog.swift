@@ -1,10 +1,29 @@
 import Foundation
 
 /// A hob as `GET /api/devices/hobs` lists it: whether it has a widget, and its intents.
+/// Hosts before share targets and link rules leave those out.
 struct HostHob: Codable, Equatable, Sendable {
     var hob: String
     var widget: Bool
     var intents: [HostHobIntent]
+    var share: [HostShareTarget]?
+    var appLinks: HobLinkRules?
+}
+
+/// A target of the hob in the share sheet ("Share to Hobwork").
+struct HostShareTarget: Codable, Equatable, Sendable {
+    struct Accepts: Codable, Equatable, Sendable {
+        var urls: Bool
+        var text: Bool
+        /// MIME types (`model/3mf`, `image/*`) and extensions (`.3mf`). Empty: no files.
+        var files: [String]
+    }
+
+    var id: String
+    var title: String
+    var accepts: Accepts
+    /// The largest file the target's upload takes, when it takes files.
+    var maxBytes: Int?
 }
 
 struct HostHobIntent: Codable, Equatable, Sendable {

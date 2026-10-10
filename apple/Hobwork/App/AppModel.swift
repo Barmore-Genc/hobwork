@@ -245,8 +245,10 @@ final class AppModel {
 
         /// `hobwork://nfc/<tag>`, universal links to `<host>/nfc/<tag>`, and links to hob apps.
         /// A tag scanned in the background while a page of the hob that wrote it is open goes
-        /// to that page (`nfc.scanned`), as does a link to a hob page that listens for it, and
-        /// the app stays where it is.
+        /// to that page (`nfc.scanned`), and the app stays where it is. A link to a hob page goes
+        /// to an open page of that hob that listens for `link.opened` (or else `nfc.scanned`),
+        /// loads in the web view otherwise, and opens in Safari when the hob keeps the path out
+        /// of the app.
         func open(_ url: URL) {
             guard let pairing else { return }
             if let link = HobLink(url: url) {
@@ -258,11 +260,29 @@ final class AppModel {
                 return
             }
             guard let origin = web.linkPolicy?.hobOrigin(of: url) else { return }
-            if web.bridge.router.listens("nfc.scanned", origin: origin) {
-                Task { await scanned(url, records: nil) }
-            } else {
-                web.open(link: url.absoluteString)
+            Task { await openHobLink(url, origin: origin, host: pairing.host) }
+        }
+
+        private func openHobLink(_ url: URL, origin: HobOrigin, host: URL) async {
+            let rules = await linkRules.rules(for: origin.hob, host: host, fetch: hobsForLinks)
+            let router = web.bridge.router
+            switch HobLinkRouter.action(for: url, origin: origin, rules: rules, listens: { router.listens($0, origin: origin) }) {
+            case let .deliver(origin, data): router.emit("link.opened", data: data, to: origin)
+            case .scanned: await scanned(url, records: nil)
+            case let .load(url): web.open(link: url.absoluteString)
+            case let .browser(url): web.openInSafari(url)
             }
+        }
+
+        @ObservationIgnored private let linkRules = HobLinkRulesCache()
+
+        /// The link waits for this, so a host that does not answer soon gets the default rules.
+        private func hobsForLinks() async throws -> [HostHob] {
+            guard let api else { throw HostError.unreachable("This device isn't connected to a Hobwork host") }
+            var request = api.hobsRequest
+            request.timeoutInterval = 5
+            struct Response: Decodable { var hobs: [HostHob] }
+            return try await api.decode(Response.self, request).hobs
         }
 
         /// Sends a scanned link to the host's triggers and, when a page of the hob that wrote the

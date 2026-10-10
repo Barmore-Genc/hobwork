@@ -29,6 +29,20 @@ export type IntentEntry = {
   open?: string
 }
 
+// An entry of `share`: a target in the app's share sheet. Files go into the
+// upload `upload`, then `route` runs (POST) with a ShareRequest.
+export type ShareEntry = {
+  id: string
+  title: string
+  route: string
+  accepts: { urls: boolean; text: boolean; files: string[] }
+  upload?: string
+}
+
+// Paths of the hob's origin that open the app as universal links, in the
+// syntax of apple-app-site-association components.
+export type AppLinks = { include?: string[]; exclude: string[] }
+
 export type ProjectConfig = {
   routes: Record<string, Entry>
   crons: Record<string, Entry & CronEntry>
@@ -45,6 +59,8 @@ export type ProjectConfig = {
   // The GET route of the hob's widget.
   widget?: string
   intents: IntentEntry[]
+  share: ShareEntry[]
+  appLinks: AppLinks
 }
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000
@@ -105,10 +121,40 @@ function intentEntries(entries: unknown): IntentEntry[] {
   }))
 }
 
+function shareEntries(entries: unknown): ShareEntry[] {
+  if (!Array.isArray(entries)) return []
+  return entries.map((raw: Record<string, unknown>) => {
+    const accepts = (typeof raw.accepts === 'object' && raw.accepts !== null ? raw.accepts : {}) as Record<string, unknown>
+    return {
+      id: String(raw.id),
+      title: String(raw.title),
+      route: String(raw.route),
+      accepts: {
+        urls: accepts.urls === true,
+        text: accepts.text === true,
+        files: Array.isArray(accepts.files) ? accepts.files.filter((t): t is string => typeof t === 'string') : [],
+      },
+      ...(typeof raw.upload === 'string' ? { upload: raw.upload } : {}),
+    }
+  })
+}
+
+function paths(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string' && p.startsWith('/')) : undefined
+}
+
+function appLinks(value: unknown): AppLinks {
+  const raw = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  const include = paths(raw.include)
+  return { ...(include ? { include } : {}), exclude: paths(raw.exclude) ?? [] }
+}
+
 // The pipeline validated hobwork.json against the schema before it reached main.
 export function parseProjectConfig(raw: string): ProjectConfig {
-  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static' | 'uploads' | 'widget' | 'intents'>> & {
+  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static' | 'uploads' | 'widget' | 'intents' | 'share' | 'appLinks'>> & {
     idleTimeout?: string
+    share?: unknown
+    appLinks?: unknown
     widget?: { route?: unknown }
     intents?: unknown
     static?: Record<string, { dir?: unknown; public?: unknown }>
@@ -128,6 +174,8 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
     ...(typeof json.widget?.route === 'string' ? { widget: json.widget.route } : {}),
     intents: intentEntries(json.intents),
+    share: shareEntries(json.share),
+    appLinks: appLinks(json.appLinks),
   }
 }
 

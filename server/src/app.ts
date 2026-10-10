@@ -190,6 +190,7 @@ export function createApp(
     origins,
     publicUrl: web.publicUrl,
     runtime: options.runtime,
+    ...(web.appleAppId ? { appleAppId: web.appleAppId } : {}),
     serveTheme: createStaticRoutes({}),
   })
   const handleRuntime =
@@ -225,6 +226,7 @@ export function createApp(
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (apps.isAppRequest(req)) return apps.handle(req, res)
+    if (apps.handleAppsHost(req, res)) return
     res.setHeader('x-content-type-options', 'nosniff')
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
     if (!hostAllowed(req) && !(req.method === 'GET' && pathname === '/api/health')) return misdirected(res)

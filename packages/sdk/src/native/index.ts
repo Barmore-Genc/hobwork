@@ -1,6 +1,6 @@
 // Native features of the Hobwork app for hob UIs: haptics, printing, the
 // share sheet, the clipboard, local notifications, NFC, alarms, the camera,
-// Live Activities and app info. Everything feature-detects: outside the app (a browser)
+// Live Activities, opened links and app info. Everything feature-detects: outside the app (a browser)
 // `native.available` is false and calls reject with NativeError code
 // "unavailable".
 //
@@ -14,6 +14,7 @@ import { camera } from './camera.ts'
 import { clipboard } from './clipboard.ts'
 import { haptics } from './haptics.ts'
 import { liveActivities } from './live-activities.ts'
+import { links } from './links.ts'
 import { nfc } from './nfc.ts'
 import { notifications } from './notifications.ts'
 import { print } from './print.ts'
@@ -46,7 +47,8 @@ export type {
   NfcWrite,
   NfcWriteResult,
 } from './nfc.ts'
-export type { ClipboardContents } from './clipboard.ts'
+export type { ClipboardContents, ClipboardKinds, PasteOptions } from './clipboard.ts'
+export type { LinkOpened } from './links.ts'
 export type { ImpactStyle } from './haptics.ts'
 export type { LiveActivityStatus } from './live-activities.ts'
 export type { LocalNotification } from './notifications.ts'
@@ -72,6 +74,7 @@ export const native = {
   clipboard,
   haptics,
   liveActivities,
+  links,
   nfc,
   notifications,
   print,

@@ -10,7 +10,7 @@ import {
   getDevice,
   PAIRING_CODE_TTL_MS,
   redeemWebSessionLink,
-  setPushToken,
+  setPush,
   slugifyDeviceName,
   verifyDeviceToken,
   WEB_SESSION_LINK_TTL_MS,
@@ -118,8 +118,8 @@ test('approving redirects to hobwork://paired with a code the app exchanges once
     fetch(`${app.base}/api/devices/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const res = await exchange({ code, codeVerifier: verifier })
   expect(res.status).toBe(200)
-  const paired = (await res.json()) as { deviceId: number; name: string; token: string }
-  expect(paired).toEqual({ deviceId: expect.any(Number), name: 'kaan-iphone', token: expect.stringMatching(/^hwd_/) })
+  const paired = (await res.json()) as { deviceId: number; name: string; token: string; push: null }
+  expect(paired).toEqual({ deviceId: expect.any(Number), name: 'kaan-iphone', token: expect.stringMatching(/^hwd_/), push: null })
   expect(verifyDeviceToken(host.db, paired.token)).toMatchObject({ id: paired.deviceId, userId, platform: 'ios' })
 
   // Single use.
@@ -279,7 +279,7 @@ test('web-session links expire after 60 seconds and die with their device', asyn
   expect(redeemWebSessionLink(host.db, link)).toBeUndefined()
 })
 
-test('the app updates its push token while disconnected', async () => {
+test('the app updates its push grant while disconnected', async () => {
   const device = await pairDevice(app.base, cookie)
   const put = (body: unknown) =>
     fetch(`${app.base}/api/devices/push`, {
@@ -287,25 +287,28 @@ test('the app updates its push token while disconnected', async () => {
       headers: { authorization: `Bearer ${device.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-  expect((await put({ token: 'ABCDEF0123456789abcdef', environment: 'sandbox' })).status).toBe(204)
-  expect(verifyDeviceToken(host.db, device.token)?.push).toEqual({ token: 'abcdef0123456789abcdef', environment: 'sandbox' })
-  expect((await put({ token: 'not hex', environment: 'sandbox' })).status).toBe(400)
-  expect((await put({ token: 'abcdef0123456789abcdef', environment: 'dev' })).status).toBe(400)
-  expect((await put({ token: null })).status).toBe(204)
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
+  expect((await put(push)).status).toBe(204)
+  expect(verifyDeviceToken(host.db, device.token)?.push).toEqual(push)
+  expect((await put({ grant: 'not a grant', key: push.key })).status).toBe(400)
+  expect((await put({ grant: push.grant, key: 'too short' })).status).toBe(400)
+  // What older apps sent: an APNs token.
+  expect((await put({ token: 'abcdef0123456789abcdef', environment: 'sandbox' })).status).toBe(400)
+  expect((await put({ grant: null })).status).toBe(204)
   expect(verifyDeviceToken(host.db, device.token)?.push).toBeNull()
 })
 
-test('a push token belongs to one device, and removing the device forgets it', async () => {
+test('a push grant belongs to one device, and removing the device forgets it', async () => {
   const old = await pairDevice(app.base, cookie, { name: 'old-phone' })
   const paired = await pairDevice(app.base, cookie)
-  const push = { token: 'abcdef0123456789', environment: 'production' as const }
-  setPushToken(host.db, old.deviceId, push)
-  setPushToken(host.db, paired.deviceId, push)
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
+  setPush(host.db, old.deviceId, push)
+  setPush(host.db, paired.deviceId, push)
   expect(getDevice(host.db, old.deviceId)?.push).toBeNull()
   expect(getDevice(host.db, paired.deviceId)?.push).toEqual(push)
 
   await fetch(`${app.base}/api/devices/${paired.deviceId}/revoke`, { method: 'POST', headers: writeHeaders(cookie) })
-  expect(host.db.prepare('SELECT push_token FROM devices WHERE id = ?').get(paired.deviceId)).toEqual({ push_token: null })
+  expect(host.db.prepare('SELECT push_grant, push_key FROM devices WHERE id = ?').get(paired.deviceId)).toEqual({ push_grant: null, push_key: null })
 })
 
 test('pairing codes only take known platforms', () => {

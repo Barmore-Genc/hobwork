@@ -6,7 +6,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{AttestKey, ConfirmOutcome, Environment, Event, Grant, PendingToken, Registration, Retention, Store};
 
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/0001_init.sql"),
+    include_str!("../../migrations/0002_drop_filtering.sql"),
+];
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -53,8 +56,7 @@ impl SqliteStore {
 }
 
 const REGISTRATION_COLUMNS: &str = "id, secret_hash, token, environment, pending_token, pending_environment,
-    proof_nonce, proof_expires_at, filtering, attest_key_id, attest_public_key, attest_counter,
-    created_at, gone_at";
+    proof_nonce, proof_expires_at, attest_key_id, attest_public_key, attest_counter, created_at, gone_at";
 
 fn environment(value: Option<String>) -> Option<Environment> {
     value.as_deref().and_then(Environment::parse)
@@ -74,9 +76,9 @@ fn registration_from_row(row: &Row) -> rusqlite::Result<Registration> {
         }),
         _ => None,
     };
-    let key_id: Option<Vec<u8>> = row.get(9)?;
-    let public_key: Option<Vec<u8>> = row.get(10)?;
-    let counter: Option<i64> = row.get(11)?;
+    let key_id: Option<Vec<u8>> = row.get(8)?;
+    let public_key: Option<Vec<u8>> = row.get(9)?;
+    let counter: Option<i64> = row.get(10)?;
     let attest = match (key_id, public_key, counter) {
         (Some(key_id), Some(public_key), Some(counter)) => Some(AttestKey {
             key_id,
@@ -91,10 +93,9 @@ fn registration_from_row(row: &Row) -> rusqlite::Result<Registration> {
         token: row.get(2)?,
         environment: environment(row.get(3)?),
         pending,
-        filtering: row.get(8)?,
         attest,
-        created_at: row.get(12)?,
-        gone_at: row.get(13)?,
+        created_at: row.get(11)?,
+        gone_at: row.get(12)?,
     })
 }
 
@@ -119,9 +120,9 @@ impl Store for SqliteStore {
         let pending = r.pending.as_ref();
         self.conn().execute(
             "INSERT INTO registrations (id, secret_hash, token, environment, pending_token, pending_environment,
-               proof_nonce, proof_expires_at, filtering, attest_key_id, attest_public_key, attest_counter,
+               proof_nonce, proof_expires_at, attest_key_id, attest_public_key, attest_counter,
                created_at, last_used_at)
-             VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 r.id,
                 r.secret_hash,
@@ -129,7 +130,6 @@ impl Store for SqliteStore {
                 pending.map(|p| p.environment.as_str()),
                 pending.map(|p| &p.nonce),
                 pending.map(|p| p.expires_at),
-                r.filtering,
                 r.attest.as_ref().map(|a| &a.key_id),
                 r.attest.as_ref().map(|a| &a.public_key),
                 r.attest.as_ref().map(|a| a.counter as i64),
@@ -177,14 +177,6 @@ impl Store for SqliteStore {
                 pending.map(|p| p.expires_at),
                 id,
             ],
-        )?;
-        Ok(())
-    }
-
-    fn set_filtering(&self, id: &str, filtering: bool) -> Result<()> {
-        self.conn().execute(
-            "UPDATE registrations SET filtering = ? WHERE id = ?",
-            params![filtering, id],
         )?;
         Ok(())
     }
@@ -477,7 +469,6 @@ mod tests {
             token: None,
             environment: None,
             pending: None,
-            filtering: false,
             attest: None,
             created_at: 0,
             gone_at: None,

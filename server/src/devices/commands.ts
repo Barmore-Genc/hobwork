@@ -24,8 +24,9 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/
 type Args = Record<string, unknown>
 
 export type CommandSpec = {
-  // Needs the app in the foreground (the NFC scan sheet), so it is sent as a
-  // push the person taps rather than one the notification service extension runs.
+  // Needs the app (the NFC scan sheet, or AlarmKit, which only the app may
+  // use), so it is sent as a push the person taps rather than one the
+  // notification service extension runs.
   foreground?: boolean
   // Checks the handler's arguments and returns what goes to the device.
   parse(args: Args, now: number): Args
@@ -137,6 +138,7 @@ const noArgs = (method: string): CommandSpec => ({
 export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
   alarms: {
     set: {
+      foreground: true,
       parse(args, now) {
         only(args, 'alarms.set', ['title', 'at', 'time', 'days', 'id'])
         if ((args.at === undefined) === (args.time === undefined)) {
@@ -153,19 +155,21 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
       },
     },
     timer: {
+      foreground: true,
       parse(args) {
         only(args, 'alarms.timer', ['title', 'seconds', 'id'])
         return { title: title(args), seconds: integer(args, 'seconds', 1, MAX_TIMER_SECONDS), ...optionalId(args) }
       },
     },
     cancel: {
+      foreground: true,
       parse(args) {
         only(args, 'alarms.cancel', ['id'])
         if (args.id === undefined) bad('alarms.cancel needs the id that alarms.set or alarms.timer returned')
         return optionalId(args)
       },
     },
-    list: noArgs('alarms.list'),
+    list: { foreground: true, ...noArgs('alarms.list') },
   },
   screenTime: {
     sets: noArgs('screenTime.sets'),
@@ -277,6 +281,19 @@ export function fallbackBody(capability: string, method: string): string {
 }
 
 // The prompt push for foreground commands.
-export function promptAlert(project: string, method: string): { title: string; body: string } {
+export function promptAlert(project: string, capability: string, method: string, args: Args): { title: string; body: string } {
+  if (capability === 'alarms') {
+    const name = typeof args.title === 'string' ? `"${args.title}"` : undefined
+    switch (method) {
+      case 'set':
+        return { title: 'Set an alarm', body: `${project} wants to set the alarm ${name}. Tap to set it.` }
+      case 'timer':
+        return { title: 'Start a timer', body: `${project} wants to start the timer ${name}. Tap to start it.` }
+      case 'cancel':
+        return { title: 'Cancel an alarm', body: `${project} wants to cancel an alarm. Tap to cancel it.` }
+      default:
+        return { title: 'Check alarms', body: `${project} wants to know which alarms are set. Tap to answer.` }
+    }
+  }
   return { title: method === 'write' ? 'Write an NFC tag' : 'Scan an NFC tag', body: `${project} is waiting. Tap to start.` }
 }

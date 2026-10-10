@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { AiSettingsError, DEFAULT_MODELS, parseModel, type AiModels } from './ai/settings.ts'
 import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
+import { DEFAULT_RELAY_URL } from './devices/push/relay.ts'
 import { loadVmBudget, type VmBudget } from './sandbox/budget.ts'
 
 export type HomeAssistantConnection = {
@@ -52,7 +53,11 @@ export type Config = {
   trustedProxies: TrustedProxies
   // The AI models hobs get unless people or agents choose others.
   aiModels: AiModels
+  // Undefined when push is off.
+  push?: PushConfig
 }
+
+export type PushConfig = { relayUrl: string; keyDir: string }
 
 const repoRoot = resolve(import.meta.dirname, '../..')
 
@@ -196,6 +201,15 @@ function loadPort(name: string, value: string | undefined, fallback: number): nu
   return port
 }
 
+function loadPush(env: NodeJS.ProcessEnv, dataDir: string): PushConfig | undefined {
+  const value = env.HOBWORK_PUSH_RELAY_URL ?? DEFAULT_RELAY_URL
+  if (value === 'off') return undefined
+  const url = httpUrl('HOBWORK_PUSH_RELAY_URL', value, DEFAULT_RELAY_URL)
+  if (url.pathname !== '/' || url.search || url.hash) throw new Error(`HOBWORK_PUSH_RELAY_URL must be an origin like ${DEFAULT_RELAY_URL}, got "${value}"`)
+  // Outside the data dir, so backups never contain the keys.
+  return { relayUrl: url.origin, keyDir: resolve(repoRoot, env.HOBWORK_PUSH_KEY_DIR ?? `${dataDir}-push-keys`) }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = loadPort('HOBWORK_PORT', env.HOBWORK_PORT, 7420)
   const idleMinutes = Number(env.HOBWORK_WORKSPACE_IDLE_MINUTES ?? 30)
@@ -205,8 +219,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     )
   }
   const publicUrl = loadPublicUrl(env, port)
+  const dataDir = resolve(repoRoot, env.HOBWORK_DATA_DIR ?? 'data')
   return {
-    dataDir: resolve(repoRoot, env.HOBWORK_DATA_DIR ?? 'data'),
+    dataDir,
     port,
     host: env.HOBWORK_HOST ?? '127.0.0.1',
     publicUrl,
@@ -223,5 +238,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     appleAppId: loadAppleAppId(env),
     trustedProxies: parseTrustedProxies(env.HOBWORK_TRUSTED_PROXIES),
     aiModels: loadAiModels(env),
+    push: loadPush(env, dataDir),
   }
 }

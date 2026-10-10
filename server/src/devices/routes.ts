@@ -24,7 +24,7 @@ import {
   pairedUniversalLink,
   redeemWebSessionLink,
   renameDevice,
-  setPushToken,
+  setPush,
   touchDevice,
   type Device,
 } from './store.ts'
@@ -210,7 +210,7 @@ export function createDeviceRoutes(options: {
     if (!code || !verifier) throw new HttpError(400, 'Send code and codeVerifier')
     try {
       const { device, token } = exchangePairingCode(db, code, verifier)
-      json(res, 200, { deviceId: device.id, name: device.name, token })
+      json(res, 200, { deviceId: device.id, name: device.name, token, push: devices.pushInfo() })
     } catch (err) {
       if (err instanceof DeviceStoreError) throw new HttpError(err.status, err.message)
       throw err
@@ -229,9 +229,9 @@ export function createDeviceRoutes(options: {
   async function push(req: IncomingMessage, res: ServerResponse) {
     const device = requireDevice(req)
     const body = await readJson(req)
-    const value = isObject(body) && body.token === null ? null : parsePush(body)
-    if (value === undefined) throw new HttpError(400, 'Send { token, environment } with a hex APNs token and "sandbox" or "production"')
-    setPushToken(db, device.id, value)
+    const value = isObject(body) && body.grant === null ? null : parsePush(body)
+    if (value === undefined) throw new HttpError(400, 'Send { grant, key } with the relay grant ID and a base64 X25519 key, or { grant: null }')
+    setPush(db, device.id, value)
     res.writeHead(204).end()
   }
 

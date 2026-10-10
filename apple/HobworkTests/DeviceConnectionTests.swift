@@ -243,7 +243,8 @@ import Testing
         let (connection, socket) = try await connected()
 
         try await eventually("event sent") { socket.sent == [.hello(hello), .event(event)] }
-        #expect(queue.events.isEmpty)
+        // The event leaves the queue after the send returns.
+        try await eventually("queue emptied") { queue.events.isEmpty }
         connection.stop()
     }
 

@@ -29,6 +29,8 @@ final class DeviceConnection {
     private(set) var state: State = .stopped
 
     @ObservationIgnored var onUnauthorized: (() -> Void)?
+    /// The host's push keys, sent after every `hello`.
+    @ObservationIgnored var onPush: ((HostPushKeys?) -> Void)?
 
     @ObservationIgnored private let request: URLRequest
     @ObservationIgnored private let makeSocket: @MainActor (URLRequest) -> any DeviceSocket
@@ -165,6 +167,8 @@ final class DeviceConnection {
                 try await socket.send(DeviceMessage.pong.encoded())
             case let .call(call):
                 Task { await respond(to: call, on: socket) }
+            case let .push(keys):
+                onPush?(keys)
             default:
                 break
             }

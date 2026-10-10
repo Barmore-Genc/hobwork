@@ -9,6 +9,8 @@
 		<string>applinks:$(HOBWORK_APPLINKS_HOST)</string>
 		<string>webcredentials:$(HOBWORK_APPLINKS_HOST)</string>
 	</array>
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>development</string>
 	<key>com.apple.developer.family-controls</key>
 	<true/>
 	<key>com.apple.developer.healthkit</key>

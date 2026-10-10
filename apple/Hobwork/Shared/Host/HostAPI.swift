@@ -78,6 +78,26 @@ struct DeviceCredentials: Codable, Equatable, Sendable {
     var token: String
 }
 
+/// The token exchange's answer: the credentials and the host's push keys.
+struct PairingExchange: Decodable, Equatable, Sendable {
+    var credentials: DeviceCredentials
+    var push: HostPushKeys?
+
+    private enum CodingKeys: String, CodingKey {
+        case push
+    }
+
+    init(credentials: DeviceCredentials, push: HostPushKeys?) {
+        self.credentials = credentials
+        self.push = push
+    }
+
+    init(from decoder: Decoder) throws {
+        credentials = try DeviceCredentials(from: decoder)
+        push = try decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(HostPushKeys.self, forKey: .push)
+    }
+}
+
 /// The host's HTTP endpoints for devices.
 struct HostAPI: Sendable {
     let host: URL
@@ -96,8 +116,8 @@ struct HostAPI: Sendable {
         return try HostInfo.parse(status: (response as? HTTPURLResponse)?.statusCode ?? 0, data: data)
     }
 
-    func exchange(code: String, verifier: String) async throws -> DeviceCredentials {
-        try await decode(DeviceCredentials.self, exchangeRequest(code: code, verifier: verifier))
+    func exchange(code: String, verifier: String) async throws -> PairingExchange {
+        try await decode(PairingExchange.self, exchangeRequest(code: code, verifier: verifier))
     }
 
     /// A one-time URL that signs the web view in and then opens `returnTo`.
@@ -108,9 +128,9 @@ struct HostAPI: Sendable {
         return url
     }
 
-    /// Sets the APNs token, or turns push off with nil.
-    func updatePush(_ push: PushRegistration?) async throws {
-        _ = try await send(pushRequest(push))
+    /// Tells the host this pairing's relay grant, or that there is none.
+    func updatePush(_ grant: HostPushGrant?) async throws {
+        _ = try await send(pushRequest(grant))
     }
 
     func send(_ event: DeviceEvent) async throws {
@@ -139,8 +159,8 @@ struct HostAPI: Sendable {
         request(method: "POST", path: "api/devices/web-session", body: ["returnTo": returnTo])
     }
 
-    func pushRequest(_ push: PushRegistration?) -> URLRequest {
-        let body: any Encodable = push ?? JSONValue.object(["token": .null])
+    func pushRequest(_ grant: HostPushGrant?) -> URLRequest {
+        let body: any Encodable = grant ?? JSONValue.object(["grant": .null])
         return request(method: "PUT", path: "api/devices/push", body: body)
     }
 

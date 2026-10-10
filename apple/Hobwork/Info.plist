@@ -38,7 +38,7 @@
 	<key>NFCReaderUsageDescription</key>
 	<string>Hobwork reads and writes NFC tags that run your hobs.</string>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Hobs on your Hobwork host can set alarms and timers on this iPhone.</string>
+	<string>Hobs on your Hobwork host can set alarms and timers on this device.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -58,5 +58,9 @@
 	<string>Hobs on your Hobwork host can read the Health data you choose to share.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

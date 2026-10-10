@@ -690,7 +690,7 @@ async fn renewal_pushes_go_out_once_a_day_after_day_15() {
     tasks::send_renewals(&h.state).await.unwrap();
     assert_eq!(h.apns.count(), before + 1, "one push for both grants");
     let sent = h.apns.last();
-    assert_eq!(sent.push_type, PushType::Background, "no filtering entitlement");
+    assert_eq!(sent.push_type, PushType::Background);
     let mut renew: Vec<String> = serde_json::from_value(h.apns.last_payload()["hobwork"]["renew"].clone()).unwrap();
     renew.sort();
     let mut expected = vec![first.clone(), second];
@@ -715,24 +715,25 @@ async fn renewal_pushes_go_out_once_a_day_after_day_15() {
 }
 
 #[tokio::test]
-async fn renewal_pushes_are_hidden_alerts_with_filtering() {
+async fn registrations_accept_the_filtering_field_of_older_apps() {
     let h = Harness::new();
-    let reg = h.register(TOKEN).await;
+    let body = json!({ "token": TOKEN, "environment": "sandbox", "filtering": true });
+    let (status, _) = h.call("POST", "/v1/registrations", &[], Some(&body)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let reg = h.register(OTHER_TOKEN).await;
     let path = format!("/v1/registrations/{}", reg.id);
-    let (status, _) = h
-        .app_call(
-            &reg,
-            "PUT",
-            &path,
-            Some(&json!({ "token": TOKEN, "environment": "sandbox", "filtering": true })),
-        )
-        .await;
+    let body = json!({ "token": OTHER_TOKEN, "environment": "sandbox", "filtering": true });
+    let (status, _) = h.app_call(&reg, "PUT", &path, Some(&body)).await;
     assert_eq!(status, StatusCode::OK);
+    let (_, body) = h.app_call(&reg, "GET", &path, None).await;
+    assert!(body.get("filtering").is_none());
+
     h.grant(&reg, "pairing-1", &sidecar_key()).await;
     h.advance(17 * DAY);
     tasks::send_renewals(&h.state).await.unwrap();
-    assert_eq!(h.apns.last().push_type, PushType::Alert);
-    assert_eq!(h.apns.last_payload()["aps"]["mutable-content"], 1);
+    assert_eq!(h.apns.last().push_type, PushType::Background);
+    assert_eq!(h.apns.last_payload()["aps"]["content-available"], 1);
 }
 
 #[tokio::test]

@@ -39,7 +39,7 @@ final class HealthCapability: CapabilityHandler {
             samples = try await reader.samples(of: query.type, from: query.from, to: query.to, limit: query.limit)
         } catch {
             switch error {
-            case .locked: throw CallError(code: "locked", message: "Health data can't be read while this iPhone is locked")
+            case .locked: throw CallError(code: "locked", message: "Health data can't be read while this device is locked")
             case .notAuthorized: throw CallError.notAuthorized("Hobwork may not read \(query.type.title) on this device")
             case let .failed(message): throw CallError(code: "failed", message: message)
             }

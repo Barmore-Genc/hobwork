@@ -44,6 +44,7 @@ targets:
     sources:
       - path: Hobwork
         excludes:
+          - Alarms
           - Shared/Alarms
           - Shared/ScreenTime
           - Shared/Health
@@ -51,6 +52,8 @@ targets:
           - Capabilities/Health
           - Views/ScreenTimeSettings.swift
           - Views/HealthSettings.swift
+      - path: Hobwork/Alarms
+        destinationFilters: [iOS]
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -86,7 +89,9 @@ targets:
           - CFBundleURLName: dev.bgenc.hobwork
             CFBundleURLSchemes: [hobwork]
         NSSupportsLiveActivities: true
-        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this iPhone.
+        # Relay grant renewals arrive as background pushes.
+        UIBackgroundModes: [remote-notification]
+        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this device.
         NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your hobs.
         NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
     dependencies:
@@ -182,6 +187,7 @@ targets:
     sources:
       - path: Widgets
       - path: Hobwork/Shared/Alarms/HobworkAlarmMetadata.swift
+      - path: Hobwork/Alarms/AlarmControlIntent.swift
     info:
       path: Widgets/Info.plist
       properties:

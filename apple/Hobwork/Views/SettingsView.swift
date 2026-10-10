@@ -127,12 +127,18 @@ private struct AlarmsSection: View {
 
     var body: some View {
         Section {
-            LabeledContent("Alarms and timers", value: model.capabilities.alarms ? "Allowed" : "Not allowed")
-            if !model.capabilities.alarms {
+            if model.capabilities.alarms {
+                NavigationLink {
+                    AlarmsView(model: model)
+                } label: {
+                    LabeledContent("Alarms and timers", value: "Allowed")
+                }
+            } else {
+                LabeledContent("Alarms and timers", value: "Not allowed")
                 Button("Allow Alarms") { Task { await model.requestAlarms() } }
             }
         } footer: {
-            Text("Hobs can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
+            Text("Hobs can set alarms and timers that ring on this \(DeviceModel.name). If you declined before, allow alarms for Hobwork in the Settings app.")
         }
     }
 }

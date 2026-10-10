@@ -86,12 +86,10 @@ The relay and the app are trusted; hosts are not, since anyone can run one. A ho
 
 ### Relay
 
-Built in `relay/` (Push relay in `docs/architecture.md`). Left:
+Built in `relay/` (Push relay in `docs/architecture.md`) and running at `relay.bgenc.dev`. Left:
 
-- Start it at `relay.bgenc.dev`: the deploy is in place, and it needs the team's APNs key (`.p8`) and its ID, and the image package on GHCR made public (or the repo).
 - App Attest keys belong to the app's bundle ID, so the notification service extension probably cannot make assertions, and an attested registration then cannot renew grants from the extension. Check on a device; if so, renewals from the extension need another proof (for example the renewal push's grant list, signed by the relay).
 - Check an attestation from a real device against the relay: the tests use their own CA, since Apple publishes no sample attestation.
-- `server/src/devices/apns.ts` is ported to `relay/src/apns.rs`; delete it from the host with the sidecar work.
 - The App Store privacy label, from `relay/PRIVACY.md`.
 
 ### Push sidecar
@@ -117,14 +115,12 @@ Built in `relay/` (Push relay in `docs/architecture.md`). Left:
 
 ### Filtering entitlement
 
-We are not applying for `com.apple.developer.usernotifications.filtering`. Apple grants it only for four use cases (end-to-end encrypted messaging, earthquake warnings, education alerts, healthcare alert retraction) and rejects other uses without a reason. Hobwork encrypts its pushes but is not a messaging app. Without the entitlement the extension cannot hide a push, so:
+Hobwork does not use `com.apple.developer.usernotifications.filtering`. Apple grants it only for end-to-end encrypted messaging, earthquake warnings, education alerts and healthcare alert retraction, and Hobwork is none of these. The extension cannot hide a push, so:
 
 - The ownership proof shows "Notifications from Hobwork are set up." once per registration.
 - Renewal uses background pushes.
 - Pushes that fail to decrypt or are stale show generic fallback text, as does a notification whose extension crashed or timed out.
 - A push that repeats one the app already got over the socket while open is hidden by the app's `willPresent` (see Encryption). When the app is not in the foreground with its socket open, as the Mac app often is, both show.
-
-The relay keeps the `filtering` flag, so the entitlement can be added later if Apple widens it. It would then be requested for `dev.bgenc.hobwork.NotificationService` from the account owner's login, with provisioning profiles made by hand with "NSE Filtering" selected; to hide a notification the extension sets title, subtitle and body to empty strings.
 
 ### Checks
 

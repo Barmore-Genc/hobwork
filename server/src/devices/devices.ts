@@ -14,7 +14,7 @@ import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
-import { MAX_PAYLOAD_BYTES, PayloadTooLarge, type Apns } from './apns.ts'
+import { MAX_PAYLOAD_BYTES, PayloadTooLarge, pushSize, type PushInfo, type PushMessage, type PushSender } from './push/relay.ts'
 import { commandSpec, fallbackBody, HEALTH_TYPES, knownMethods, promptAlert } from './commands.ts'
 import {
   CLOSE_OWNER_NOT_ALLOWED,
@@ -23,6 +23,7 @@ import {
   DeviceError,
   type DeviceConnection,
   type DeviceRegistry,
+  type HostMessage,
 } from './registry.ts'
 import {
   NFC_TAG_ID,
@@ -43,7 +44,7 @@ import {
   recordNfcTag,
   recordNotification,
   revokeDevice,
-  setPushToken,
+  setPush,
   type CommandRecord,
   type Device,
 } from './store.ts'
@@ -152,11 +153,26 @@ export function pushPayload(id: string, project: string, n: ParsedNotification) 
   }
 }
 
-// JSON escaping can make fields within their limits too large together, so
-// the payload itself is measured. This runs before any delivery, so every
-// notification that is accepted can also go by push.
-function checkPushSize(project: string, n: ParsedNotification) {
-  const size = Buffer.byteLength(JSON.stringify(pushPayload(SAMPLE_ID, project, n)))
+const NOTIFICATION_TTL_S = 24 * 60 * 60
+
+function notificationPush(id: string, project: string, n: ParsedNotification, now: number): PushMessage {
+  return { id, kind: 'alert', payload: pushPayload(id, project, n), expiresAt: Math.floor(now / 1000) + NOTIFICATION_TTL_S }
+}
+
+function commandPush(project: string, command: CommandRecord, foreground: boolean): PushMessage {
+  return {
+    id: command.id,
+    kind: foreground ? 'prompt' : 'command',
+    payload: commandPushPayload(project, command, foreground),
+    expiresAt: Math.floor(Date.parse(command.expiresAt) / 1000),
+  }
+}
+
+// Fields within their limits can be too large together once escaped,
+// compressed and encrypted, so the push itself is measured. This runs before
+// any delivery, so every notification that is accepted can also go by push.
+function checkPushSize(project: string, n: ParsedNotification, now: number) {
+  const size = pushSize(notificationPush(SAMPLE_ID, project, n, now), now)
   if (size > MAX_PAYLOAD_BYTES) {
     throw new DeviceError(
       'too_large',
@@ -171,7 +187,7 @@ type Waiter = {
   command: CommandRecord
   device: string
   foreground: boolean
-  payload: unknown
+  message: PushMessage
   resolve: (value: unknown) => void
   reject: (err: DeviceError) => void
   timer: NodeJS.Timeout
@@ -201,7 +217,7 @@ function pushCommand(command: CommandRecord, foreground: boolean) {
 export function commandPushPayload(project: string, command: CommandRecord, foreground: boolean) {
   const hobwork = { project, command: pushCommand(command, foreground) }
   if (foreground) {
-    return { aps: { alert: promptAlert(project, command.method), sound: 'default', 'thread-id': project }, hobwork }
+    return { aps: { alert: promptAlert(project, command.capability, command.method, command.args as Record<string, unknown>), sound: 'default', 'thread-id': project }, hobwork }
   }
   return {
     aps: {
@@ -262,7 +278,7 @@ export type Devices = ReturnType<typeof createDevices>
 
 export function createDevices(options: {
   host: Host
-  apns?: Apns
+  relay?: PushSender
   // Devices of people no longer on it are hidden from projects.
   allowlist?: Allowlist
   registry?: DeviceRegistry
@@ -276,7 +292,7 @@ export function createDevices(options: {
   socketFallbackMs?: number
   now?: () => number
 }) {
-  const { host, apns } = options
+  const { host, relay } = options
   const registry = options.registry ?? createDeviceRegistry()
   const publicUrl = options.publicUrl ?? 'http://localhost'
   const now = options.now ?? Date.now
@@ -316,7 +332,7 @@ export function createDevices(options: {
       connected: registry.connected(device.id),
       lastSeenAt: device.lastSeenAt,
       appVersion: device.appVersion,
-      push: Boolean(apns) && device.push !== null,
+      push: Boolean(relay) && device.push !== null,
       createdAt: device.createdAt,
       ownerAllowed: ownerAllowed(device),
     }
@@ -364,7 +380,7 @@ export function createDevices(options: {
     const notification = parseNotification(args)
     const projectRow = getProject(host, project)
     if (!projectRow) throw new DeviceError('bad_request', `Hob "${project}" does not exist`)
-    checkPushSize(project, notification)
+    checkPushSize(project, notification, now())
     const id = recordNotification(host.db, {
       deviceId: device.id,
       projectId: projectRow.id,
@@ -383,18 +399,18 @@ export function createDevices(options: {
       }
     }
     const offline = socketError ? `${device.name} did not answer (${socketError.message})` : `${device.name} is not connected`
-    if (!apns) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications yet`)
+    if (!relay) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications`)
     if (!device.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
     let result
     try {
-      result = await apns.send(device.push, { id, payload: pushPayload(id, project, notification) })
+      result = await relay.send(device.push, notificationPush(id, project, notification, now()))
     } catch (err) {
       if (err instanceof PayloadTooLarge) throw new DeviceError('too_large', err.message)
-      throw new DeviceError('push_failed', `Could not reach Apple's push service for ${device.name}: ${(err as Error).message}`)
+      throw new DeviceError('push_failed', `Could not reach the push relay for ${device.name}: ${(err as Error).message}`)
     }
     if (!result.ok) {
-      if (result.tokenGone) setPushToken(host.db, device.id, null)
-      throw new DeviceError('push_failed', `Apple's push service refused the notification for ${device.name}: ${result.reason}`)
+      if (result.gone) setPush(host.db, device.id, null)
+      throw new DeviceError('push_failed', `The push relay refused the notification for ${device.name}: ${result.reason}`)
     }
     return { id, delivery: 'push' }
   }
@@ -448,9 +464,9 @@ export function createDevices(options: {
       expiresAt: new Date(createdAt + COMMAND_TTL_MS).toISOString(),
     }
     const foreground = Boolean(spec.foreground)
-    const payload = commandPushPayload(project, draft, foreground)
+    const message = commandPush(project, draft, foreground)
     // Checked before anything is sent, so every command can also go by push.
-    const size = Buffer.byteLength(JSON.stringify(payload))
+    const size = pushSize(message, now())
     if (size > MAX_PAYLOAD_BYTES) {
       throw new DeviceError('too_large', `The command is ${size} bytes as a push, and Apple allows ${MAX_PAYLOAD_BYTES}. Send less`)
     }
@@ -471,7 +487,7 @@ export function createDevices(options: {
           ),
         )
       }, wait)
-      waiters.set(id, { command, device: device.name, foreground, payload, resolve, reject, timer, pushed: false })
+      waiters.set(id, { command, device: device.name, foreground, message, resolve, reject, timer, pushed: false })
     })
     // Keeps a failed delivery from being an unhandled rejection before it is awaited.
     answered.catch(() => {})
@@ -535,23 +551,22 @@ export function createDevices(options: {
 
   async function push(waiter: Waiter, offline: string): Promise<void> {
     const { command } = waiter
-    if (!apns) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications yet`)
+    if (!relay) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications`)
     const device = getDevice(host.db, command.deviceId)
     if (!device?.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
     waiter.pushed = true
-    const ttlSeconds = Math.max(1, Math.ceil((Date.parse(command.expiresAt) - now()) / 1000))
     let result
     try {
-      result = await apns.send(device.push, { id: command.id, payload: waiter.payload, ttlSeconds })
+      result = await relay.send(device.push, waiter.message)
     } catch (err) {
       waiter.pushed = false
       if (err instanceof PayloadTooLarge) throw new DeviceError('too_large', err.message)
-      throw new DeviceError('push_failed', `${offline}, and Apple's push service could not be reached: ${(err as Error).message}`)
+      throw new DeviceError('push_failed', `${offline}, and the push relay could not be reached: ${(err as Error).message}`)
     }
     if (!result.ok) {
       waiter.pushed = false
-      if (result.tokenGone) setPushToken(host.db, device.id, null)
-      throw new DeviceError('push_failed', `${offline}, and Apple's push service refused the push: ${result.reason}`)
+      if (result.gone) setPush(host.db, device.id, null)
+      throw new DeviceError('push_failed', `${offline}, and the push relay refused the push: ${result.reason}`)
     }
   }
 
@@ -804,7 +819,9 @@ export function createDevices(options: {
 
   return {
     registry,
-    pushEnabled: Boolean(apns),
+    pushEnabled: Boolean(relay),
+    pushInfo: (): PushInfo | null => relay?.info ?? null,
+    pushMessage: (): HostMessage => (relay ? { type: 'push', ...relay.info } : { type: 'push', relay: null }),
     ownerAllowed,
     list: (): DeviceSummary[] => listDevices(host.db).map(summary),
     info: (): DeviceInfo[] =>
@@ -839,7 +856,6 @@ export function createDevices(options: {
       }
       registry.closeAll(1001, 'Hobwork is shutting down')
       for (const closer of closers) closer()
-      apns?.close()
     },
   }
 }

@@ -42,23 +42,16 @@ pub async fn send_renewals(state: &State) -> Result<()> {
         let (Some(token), Some(environment)) = (registration.token, registration.environment) else {
             continue;
         };
-        let (push_type, priority) = if registration.filtering {
-            (PushType::Alert, 10)
-        } else {
-            (PushType::Background, 5)
-        };
         let outcome = state
             .apns
             .send(&ApnsRequest {
                 environment,
                 token,
-                push_type,
-                priority,
+                push_type: PushType::Background,
+                priority: 5,
                 expiration: now + DAY,
                 collapse_id: Some("hobwork-renewal".into()),
-                payload: payload::renewal(&grant_ids, registration.filtering)
-                    .to_string()
-                    .into_bytes(),
+                payload: payload::renewal(&grant_ids).to_string().into_bytes(),
             })
             .await;
         if outcome.token_gone() {

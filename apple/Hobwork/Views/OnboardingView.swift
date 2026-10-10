@@ -108,8 +108,8 @@ struct OnboardingView: View {
                     additionalHeaderFields: [:]
                 )
                 let code = try request.code(from: callback)
-                let credentials = try await HostAPI(host: host).exchange(code: code, verifier: request.pkce.verifier)
-                try model.completePairing(host: host, credentials: credentials)
+                let exchange = try await HostAPI(host: host).exchange(code: code, verifier: request.pkce.verifier)
+                try model.completePairing(host: host, exchange: exchange)
             } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
                 return
             } catch {

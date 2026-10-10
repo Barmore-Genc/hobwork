@@ -134,11 +134,12 @@ test('refuses connections without a valid device token', async () => {
   await expect(agent.opened()).rejects.toThrow('401')
 })
 
-test('hello registers capabilities, push token and connection', async () => {
+test('hello registers capabilities, push grant and connection, and the host answers with its push setup', async () => {
   const device = await pairDevice(app.base, cookie)
   const client = await connect(device.token)
   expect(devices.list()[0]).toMatchObject({ connected: false })
-  await client.hello({ push: { token: 'aabbccddeeff00112233', environment: 'production' } })
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
+  await client.hello({ push })
   expect(devices.list()[0]).toMatchObject({
     name: 'kaan-iphone',
     connected: true,
@@ -147,7 +148,8 @@ test('hello registers capabilities, push token and connection', async () => {
     push: false,
     lastSeenAt: expect.any(String),
   })
-  expect(getDevice(host.db, device.deviceId)?.push).toEqual({ token: 'aabbccddeeff00112233', environment: 'production' })
+  expect(getDevice(host.db, device.deviceId)?.push).toEqual(push)
+  expect(await client.next((m) => m.type === 'push')).toEqual({ type: 'push', relay: null })
 
   client.ws.close()
   await until(() => !devices.list()[0]!.connected)
@@ -360,7 +362,7 @@ test('a device whose owner is off the allowlist gets 403 not_allowed, and works 
 
   const calls: [string, string, unknown][] = [
     ['/api/devices/web-session', 'POST', { returnTo: '/' }],
-    ['/api/devices/push', 'PUT', { token: null }],
+    ['/api/devices/push', 'PUT', { grant: null }],
     ['/api/devices/events', 'POST', { capability: 'notifications', name: 'action', data: {} }],
     ['/api/devices/self', 'DELETE', undefined],
   ]
@@ -371,19 +373,19 @@ test('a device whose owner is off the allowlist gets 403 not_allowed, and works 
   }
   await expect(new AppClient(app.base, device.token).opened()).rejects.toThrow('403')
   // An unknown token is still a 401, which the app takes as removed.
-  expect((await deviceRequest('/api/devices/push', 'PUT', 'hwd_wrong', { token: null })).status).toBe(401)
+  expect((await deviceRequest('/api/devices/push', 'PUT', 'hwd_wrong', { grant: null })).status).toBe(401)
   await expect(new AppClient(app.base, 'hwd_wrong').opened()).rejects.toThrow('401')
   expect(getDevice(host.db, device.deviceId)).toBeDefined()
 
   allowlist.emails = ['kaan@example.com']
-  expect((await deviceRequest('/api/devices/push', 'PUT', device.token, { token: null })).status).toBe(204)
+  expect((await deviceRequest('/api/devices/push', 'PUT', device.token, { grant: null })).status).toBe(204)
   const client = await connect(device.token)
   await client.hello()
 })
 
 test('the app removes its own device when signing out', async () => {
   const device = await pairDevice(app.base, cookie)
-  const push = { token: 'ab'.repeat(32), environment: 'sandbox' }
+  const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
   expect((await deviceRequest('/api/devices/push', 'PUT', device.token, push)).status).toBe(204)
   const link = await deviceRequest('/api/devices/web-session', 'POST', device.token, { returnTo: '/' })
   const url = new URL(((await link.json()) as { url: string }).url)
@@ -395,7 +397,7 @@ test('the app removes its own device when signing out', async () => {
   expect((await deviceRequest('/api/devices/self', 'DELETE', device.token)).status).toBe(204)
   expect((await client.closed).code).toBe(CLOSE_REVOKED)
   expect(getDevice(host.db, device.deviceId)).toBeUndefined()
-  expect(host.db.prepare('SELECT push_token FROM devices WHERE id = ?').get(device.deviceId)).toEqual({ push_token: null })
+  expect(host.db.prepare('SELECT push_grant FROM devices WHERE id = ?').get(device.deviceId)).toEqual({ push_grant: null })
   const session = (await (await fetch(`${app.base}/api/session`, { headers: { cookie: webView } })).json()) as { user: unknown }
   expect(session.user).toBeNull()
   expect((await deviceRequest('/api/devices/self', 'DELETE', device.token)).status).toBe(401)

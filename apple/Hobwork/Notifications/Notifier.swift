@@ -21,11 +21,15 @@ final class Notifier: NSObject, CapabilityHandler {
     }
 
     private let center: UNUserNotificationCenter
+    private let handled: HandledPushLog
     /// Set by the app model; called for taps and action buttons.
     var onResponse: ((Response) async -> Void)?
+    /// Set by the app model; called with the nonce of a relay proof push shown in the foreground.
+    var onProof: ((String) -> Void)?
 
-    init(center: UNUserNotificationCenter = .current()) {
+    init(center: UNUserNotificationCenter = .current(), handled: HandledPushLog = HandledPushLog()) {
         self.center = center
+        self.handled = handled
         super.init()
         center.delegate = self
     }
@@ -69,6 +73,8 @@ final class Notifier: NSObject, CapabilityHandler {
         } catch {
             throw CallError(code: "failed", message: error.localizedDescription)
         }
+        // A push of the same notification, when the host also sent one, is then dropped.
+        handled.claim(notification.id)
         return .object(["id": .string(notification.id)])
     }
 
@@ -107,7 +113,23 @@ extension Notifier: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let userInfo = notification.request.content.userInfo
+        if case let .proof(nonce)? = RelayPush(userInfo: userInfo) {
+            await proofArrived(nonce)
+            return []
+        }
+        return Self.presentation(for: userInfo)
+    }
+
+    /// The extension marks a push that repeats a notification this device already showed.
+    /// The extension cannot hide a notification, but the app can while open.
+    nonisolated static func presentation(for userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions {
+        if userInfo[OpenedPush.repeatedKey] != nil { return [] }
+        return [.banner, .list, .sound]
+    }
+
+    private func proofArrived(_ nonce: String) {
+        onProof?(nonce)
     }
 
     nonisolated func userNotificationCenter(

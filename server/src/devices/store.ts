@@ -224,7 +224,7 @@ export const ACTIVE_INTERVAL_MS = 10_000
 
 // App events that mean someone has the device in hand. Health samples and
 // Focus changes arrive without that.
-const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned'])
+const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned', 'alarms/stopped', 'alarms/repeated'])
 
 export function isUserEvent(capability: unknown, name: unknown): boolean {
   return USER_EVENTS.has(`${String(capability)}/${String(name)}`)

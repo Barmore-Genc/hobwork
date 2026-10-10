@@ -8,6 +8,7 @@ import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { createNfcPage, NFC_PATH, page } from './nfc-page.ts'
+import { DeviceError } from './registry.ts'
 import { deviceFromRequest, parsePush } from './socket.ts'
 import {
   createPairingCode,
@@ -47,6 +48,8 @@ const RESULTS_PATH = '/api/devices/results'
 // Health samples and query results are larger than other bodies.
 const MAX_DEVICE_BODY_BYTES = 1024 * 1024
 const SELF_PATH = '/api/devices/self'
+const HANDOFF_PATH = '/api/devices/handoff'
+const NFC_LOOKUP_PATH = '/api/devices/nfc/lookup'
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
 const MAX_RETURN_TO = 2048
@@ -266,6 +269,39 @@ export function createDeviceRoutes(options: {
     res.writeHead(204).end()
   }
 
+  // A command for another device of the same person, from a hob page in the
+  // app. Answers once that device answered (up to two minutes for NFC), with
+  // the outcome in the body, as the bridge passes it on.
+  async function handoff(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, device, capability, method, args }')
+    markDeviceActive(db, device.id)
+    try {
+      const { device: target, value } = await devices.handoff(device.id, {
+        hob: body.hob,
+        device: body.device,
+        capability: body.capability,
+        method: body.method,
+        args: body.args,
+      })
+      json(res, 200, { ok: true, device: target, value })
+    } catch (err) {
+      if (!(err instanceof DeviceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
+  // Which hob wrote a Hobwork tag, so the app can hand a scan of it to that
+  // hob's open page.
+  async function nfcLookup(req: IncomingMessage, res: ServerResponse) {
+    requireDevice(req)
+    const body = await readJson(req)
+    const found = isObject(body) && typeof body.url === 'string' ? devices.nfcTagHob(body.url) : undefined
+    if (!found) throw new HttpError(404, 'This is not a tag of this Hobwork host')
+    json(res, 200, found)
+  }
+
   type Handle = (req: IncomingMessage, res: ServerResponse) => Promise<void>
   const endpoints: Record<string, Record<string, Handle>> = {
     [TOKEN_PATH]: { POST: token },
@@ -274,6 +310,8 @@ export function createDeviceRoutes(options: {
     [EVENTS_PATH]: { POST: events },
     [RESULTS_PATH]: { POST: results },
     [SELF_PATH]: { GET: describeSelf, DELETE: removeSelf },
+    [HANDOFF_PATH]: { POST: handoff },
+    [NFC_LOOKUP_PATH]: { POST: nfcLookup },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {

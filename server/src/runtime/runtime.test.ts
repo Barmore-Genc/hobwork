@@ -876,7 +876,7 @@ test('handlers run device commands and get the answer', async () => {
   )
   const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
   expect(bodyOf(outcome)).toEqual({ set: { id: 'alarm-1' }, refused: ['DeviceError', 'bad_request'] })
-  expect(calls).toEqual([{ capability: 'alarms', method: 'set', args: { title: 'Print done', time: '07:00' } }])
+  expect(calls).toEqual([{ capability: 'alarms', method: 'set', args: { title: 'Print done', time: '07:00', hob: 'filament' } }])
   expect(queryLogs(host, { project: 'filament', invocationId: outcome.invocationId, limit: 10 }).map((l) => l.message)).toContain(
     'Device kaan-iphone: alarms.set answered {"id":"alarm-1"}',
   )

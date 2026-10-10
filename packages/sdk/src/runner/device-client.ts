@@ -52,7 +52,13 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
         call({ action: 'call', device: deviceName, capability, method: name, args })
     return {
       notifications: { send: method('notifications', 'send') },
-      alarms: { set: method('alarms', 'set'), timer: method('alarms', 'timer'), cancel: method('alarms', 'cancel'), list: method('alarms', 'list') },
+      alarms: {
+        set: method('alarms', 'set'),
+        timer: method('alarms', 'timer'),
+        reschedule: method('alarms', 'reschedule'),
+        cancel: method('alarms', 'cancel'),
+        list: method('alarms', 'list'),
+      },
       screenTime: {
         sets: method('screenTime', 'sets'),
         block: method('screenTime', 'block'),

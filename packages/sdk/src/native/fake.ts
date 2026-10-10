@@ -38,7 +38,8 @@ export function createFakeBridge(handlers: Record<string, FakeHandler>, platform
         return { ok: true, value: await handler(args) }
       } catch (err) {
         const code = err instanceof NativeError ? err.code : 'failed'
-        return { ok: false, error: { code, message: err instanceof Error ? err.message : String(err) } }
+        const reason = err instanceof NativeError && err.reason !== undefined ? { reason: err.reason } : {}
+        return { ok: false, error: { code, message: err instanceof Error ? err.message : String(err), ...reason } }
       }
     },
     listen(event, listener) {

@@ -56,10 +56,12 @@ test('capability methods are calls to the host with their arguments', async () =
   expect(await phone.alarms.set({ title: 'Wake up', time: '07:00', days: ['mon'] })).toEqual({ id: 'a1' })
   await phone.screenTime.block({ set: 'social' })
   await phone.focus.status()
+  await phone.alarms.reschedule({ id: 'a1', repeat: null })
   expect(requests).toEqual([
     { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'set', args: { title: 'Wake up', time: '07:00', days: ['mon'] } },
     { action: 'call', device: 'kaan-iphone', capability: 'screenTime', method: 'block', args: { set: 'social' } },
     { action: 'call', device: 'kaan-iphone', capability: 'focus', method: 'status', args: undefined },
+    { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'reschedule', args: { id: 'a1', repeat: null } },
   ])
 })
 

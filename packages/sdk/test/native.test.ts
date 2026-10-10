@@ -156,6 +156,71 @@ test('local notifications send deliverAt as an ISO date', async () => {
   ])
 })
 
+test('failures keep their reason', async () => {
+  bridge = createFakeBridge({
+    'nfc.write': () => {
+      throw new NativeError('failed', 'This tag is too small for the link', 'too_small')
+    },
+  })
+  const error = await rejection(native.nfc.write({ url: 'https://example.com/spool/78', alertMessage: 'Hold it near spool 78' }))
+  expect(error).toMatchObject({ code: 'failed', reason: 'too_small' })
+  expect(bridge.calls[0]!.args).toEqual({ url: 'https://example.com/spool/78', alertMessage: 'Hold it near spool 78' })
+})
+
+test('an NFC session streams tags until it ends, and onTag can change the sheet', async () => {
+  bridge = createFakeBridge({
+    'nfc.startSession': () => {
+      // A tag that arrives before the call answers still reaches the page.
+      bridge!.emit('nfc.tag', { session: 's1', records: [{ type: 'url', value: 'https://example.com/bin/4' }], uid: '04aa' })
+      return { session: 's1' }
+    },
+    'nfc.updateSession': () => null,
+    'nfc.stopSession': () => null,
+  })
+  const tags: unknown[] = []
+  const ends: unknown[] = []
+  const session = await native.nfc.session({
+    alertMessage: 'Tap a bin',
+    keepOpen: true,
+    onTag: (tag) => {
+      tags.push(tag)
+      return 'Now tap the spool'
+    },
+    onEnd: (end) => ends.push(end),
+  })
+  bridge.emit('nfc.tag', { session: 'other', records: [], uid: '04bb' })
+  bridge.emit('nfc.tag', { session: 's1', records: [], uid: '04cc' })
+  await new Promise((r) => setTimeout(r, 0))
+  await session.stop('Done')
+  bridge.emit('nfc.ended', { session: 's1', reason: 'timeout' })
+  expect(await session.ended).toEqual({ reason: 'timeout' })
+  bridge.emit('nfc.tag', { session: 's1', records: [], uid: '04dd' })
+  expect(tags).toEqual([
+    { records: [{ type: 'url', value: 'https://example.com/bin/4' }], uid: '04aa' },
+    { records: [], uid: '04cc' },
+  ])
+  expect(ends).toEqual([{ reason: 'timeout' }])
+  expect(bridge.calls.map((c) => [c.method, c.args])).toEqual([
+    ['startSession', { alertMessage: 'Tap a bin', keepOpen: true }],
+    ['updateSession', { session: 's1', alertMessage: 'Now tap the spool' }],
+    ['updateSession', { session: 's1', alertMessage: 'Now tap the spool' }],
+    ['stopSession', { session: 's1', successMessage: 'Done' }],
+  ])
+})
+
+test('alarm timers and their events', async () => {
+  bridge = createFakeBridge({ 'alarms.timer': () => ({ id: 'a1' }), 'alarms.reschedule': () => ({ id: 'a1' }) })
+  expect(await native.alarms.timer({ title: 'Oven', seconds: 2700, repeat: { seconds: 900, title: '+15 min' } })).toEqual({ id: 'a1' })
+  await native.alarms.reschedule({ id: 'a1', repeat: null })
+  const fired: unknown[] = []
+  const stop = native.alarms.on('fired', (alarm) => fired.push(alarm))
+  bridge.emit('alarms.fired', { id: 'a1', title: 'Oven' })
+  stop()
+  bridge.emit('alarms.fired', { id: 'a1' })
+  expect(fired).toEqual([{ id: 'a1', title: 'Oven' }])
+  expect(bridge.calls[1]!.args).toEqual({ id: 'a1', repeat: null })
+})
+
 test('share sends the file as data', async () => {
   bridge = createFakeBridge({ 'share.show': () => ({ activity: null }) })
   await native.share({ file: new Uint8Array([1, 2, 3]), filename: 'label.pdf' })

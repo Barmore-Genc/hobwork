@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  AlarmEvent,
   DeviceEvent,
   DeviceInfo,
   HealthSample,
@@ -53,7 +54,22 @@ import {
 export type DeviceTrigger = { capability: string; event: string; device?: string; url?: string }
 
 // Capability/event pairs the app sends and hobwork.json triggers may name.
-export const DEVICE_EVENTS = ['notifications/action', 'focus/changed', 'nfc/scanned', 'health/samples'] as const
+export const DEVICE_EVENTS = [
+  'notifications/action',
+  'focus/changed',
+  'nfc/scanned',
+  'health/samples',
+  'alarms/fired',
+  'alarms/stopped',
+  'alarms/repeated',
+] as const
+
+const ALARM_EVENTS = ['fired', 'stopped', 'repeated']
+// Commands another device of the same person may hand over through the host:
+// the bridge's "write on my iPhone" from an iPad or Mac without NFC.
+const HANDOFF_METHODS = new Set(['nfc.write', 'nfc.read'])
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UID = /^[0-9a-f]{2,64}$/
 
 export type AppEvent = { capability: unknown; name: unknown; data?: unknown }
 
@@ -94,11 +110,11 @@ function bad(message: string): never {
   throw new DeviceError('bad_request', message)
 }
 
-function commandPush(project: string, command: CommandRecord, foreground: boolean): PushMessage {
+function commandPush(project: string, command: CommandRecord, foreground: boolean, from?: string): PushMessage {
   return {
     id: command.id,
     kind: foreground ? 'prompt' : 'command',
-    payload: commandPushPayload(project, command, foreground),
+    payload: commandPushPayload(project, command, foreground, from),
     expiresAt: Math.floor(Date.parse(command.expiresAt) / 1000),
   }
 }
@@ -136,10 +152,11 @@ function pushCommand(command: CommandRecord, foreground: boolean) {
 // happened. Background pushes (content-available) are throttled and dropped
 // after a force quit, so they are not used. Foreground commands are an
 // ordinary alert the person taps to open the app.
-export function commandPushPayload(project: string, command: CommandRecord, foreground: boolean) {
+export function commandPushPayload(project: string, command: CommandRecord, foreground: boolean, from?: string) {
   const hobwork = { project, command: pushCommand(command, foreground) }
   if (foreground) {
-    return { aps: { alert: promptAlert(project, command.capability, command.method, command.args as Record<string, unknown>), sound: 'default', 'thread-id': project }, hobwork }
+    const alert = promptAlert(project, command.capability, command.method, command.args as Record<string, unknown>, from)
+    return { aps: { alert, sound: 'default', 'thread-id': project }, hobwork }
   }
   return {
     aps: {
@@ -189,6 +206,16 @@ function scannedRecords(value: unknown): NfcRecord[] | undefined | null {
       Buffer.byteLength(r.value) <= MAX_SCANNED_RECORD_BYTES,
   )
   return valid ? (value as Record<string, unknown>[]).map((r) => ({ type: r.type, value: r.value }) as NfcRecord) : null
+}
+
+// What the app adds to a write's result: the tag's hardware ID (hex) and
+// whether reading it back matched.
+function written(value: unknown): { uid?: string; verified?: boolean } {
+  if (!isObject(value)) return {}
+  return {
+    ...(typeof value.uid === 'string' && UID.test(value.uid) ? { uid: value.uid } : {}),
+    ...(typeof value.verified === 'boolean' ? { verified: value.verified } : {}),
+  }
 }
 
 function short(value: unknown): string {
@@ -368,6 +395,8 @@ export function createDevices(options: {
     method: string,
     args?: unknown,
     invocation?: number,
+    // The person's device that handed this command over, for the prompt's text.
+    from?: string,
   ): Promise<unknown> {
     const spec = commandSpec(capability, method)
     if (!spec) throw new DeviceError('unsupported', `Hobwork does not know ${capability}.${method}. Devices can do ${knownMethods()}`)
@@ -383,7 +412,9 @@ export function createDevices(options: {
     const projectRow = getProject(host, project)
     if (!projectRow) bad(`Hob "${project}" does not exist`)
     const tag = capability === 'nfc' && method === 'write' && parsed.url === undefined ? newNfcTagId() : undefined
-    const sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
+    let sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
+    // The app reports the alarm's events with it, so they reach this hob.
+    if (capability === 'alarms' && ['set', 'timer', 'reschedule'].includes(method)) sent = { ...sent, hob: project }
     const id = randomUUID()
     const createdAt = now()
     const draft: CommandRecord = {
@@ -399,7 +430,7 @@ export function createDevices(options: {
       expiresAt: new Date(createdAt + COMMAND_TTL_MS).toISOString(),
     }
     const foreground = Boolean(spec.foreground)
-    const message = commandPush(project, draft, foreground)
+    const message = commandPush(project, draft, foreground, from)
     // Checked before anything is sent, so every command can also go by push.
     const size = pushSize(message, now())
     if (size > MAX_PAYLOAD_BYTES) {
@@ -549,7 +580,7 @@ export function createDevices(options: {
     if (!answerCommand(host.db, command.id, outcome, now())) return 'ignored'
     if (command.capability === 'nfc' && command.method === 'write') {
       const { tag, url } = command.args as { tag?: string; url: string }
-      if (outcome.ok) outcome = { ok: true, value: tag ? { tag, url } : { url } }
+      if (outcome.ok) outcome = { ok: true, value: { ...(tag ? { tag } : {}), url, ...written(outcome.value) } }
       else if (tag) deleteNfcTag(host.db, tag)
     }
     const waiter = waiters.get(command.id)
@@ -625,6 +656,7 @@ export function createDevices(options: {
     const pair = `${String(event.capability)}/${String(event.name)}`
     if (pair === 'notifications/action') return notificationAction(device, data)
     if (pair === 'nfc/scanned') return nfcEvent(device.name, data)
+    if (event.capability === 'alarms' && ALARM_EVENTS.includes(event.name as string)) return alarmEvent(device.name, event.name as string, data)
     if (pair === 'focus/changed') {
       const { label, active } = data
       if (typeof label !== 'string' || !label || label.length > MAX_FOCUS_LABEL || typeof active !== 'boolean') return
@@ -659,6 +691,66 @@ export function createDevices(options: {
       }
       run(project, matching(entries, payload.capability, payload.event, payload.device, scan), payload)
     }
+  }
+
+  // alarms/fired, stopped and repeated, from the app. The app names the hob
+  // that set the alarm: the host added it to the command, or the bridge knows
+  // the page's hob. Events of hobs without a matching trigger are dropped.
+  async function alarmEvent(device: string, name: string, data: Record<string, unknown>) {
+    const { id, hob, title, seconds } = data
+    if (typeof id !== 'string' || !UUID.test(id) || typeof hob !== 'string' || !getProject(host, hob)) return
+    let entries: Record<string, { device?: DeviceTrigger }>
+    try {
+      entries = (await options.triggers?.(hob)) ?? {}
+    } catch {
+      return
+    }
+    const payload: AlarmEvent = {
+      device,
+      capability: 'alarms',
+      event: name as AlarmEvent['event'],
+      id: id.toLowerCase(),
+      ...(typeof title === 'string' && title.length <= 100 ? { title } : {}),
+      ...(typeof seconds === 'number' && Number.isInteger(seconds) && seconds > 0 ? { seconds } : {}),
+    }
+    run(hob, matching(entries, 'alarms', name, device), payload)
+  }
+
+  // The hob that wrote a Hobwork tag, for the app to hand a scan to an open page of it.
+  function nfcTagHob(url: string): { tag: string; url: string; hob: string } | undefined {
+    const normalized = scannedUrl(url)
+    const tag = normalized === undefined ? undefined : tagOfUrl(normalized)
+    const hob = tag === undefined ? undefined : nfcTagProject(host.db, tag)
+    return tag && hob ? { tag, url: `${publicUrl}/nfc/${tag}`, hob } : undefined
+  }
+
+  // A command from one of the person's devices that it cannot run itself,
+  // such as an NFC write from an iPad, run on another device of theirs:
+  // "lastActive" picks the one they used last that can.
+  async function handoff(
+    fromId: number,
+    request: { hob: unknown; device: unknown; capability: unknown; method: unknown; args?: unknown },
+  ): Promise<{ device: string; value: unknown }> {
+    const from = getDevice(host.db, fromId)
+    if (!reachable(from)) throw new DeviceError('unknown_device', 'This device is no longer paired')
+    const { hob, device, capability, method } = request
+    if (typeof capability !== 'string' || typeof method !== 'string' || !HANDOFF_METHODS.has(`${capability}.${method}`)) {
+      bad(`Only ${[...HANDOFF_METHODS].join(' and ')} can run on another device`)
+    }
+    if (typeof hob !== 'string' || !getProject(host, hob)) bad(`Hob ${JSON.stringify(hob)} does not exist`)
+    if (typeof device !== 'string' || !device) bad('device must be a device name or "lastActive"')
+    const own = (personDevices(from.userId) ?? []).filter((d) => d.id !== from.id)
+    const target =
+      device === 'lastActive' ? own.find((d) => d.capabilities.includes(capability)) : own.find((d) => d.name === device)
+    if (!target) {
+      const names = own.filter((d) => d.capabilities.includes(capability)).map((d) => d.name)
+      throw new DeviceError(
+        device === 'lastActive' ? 'unreachable' : 'unknown_device',
+        `${device === 'lastActive' ? 'None of your other devices' : `You have no other device called ${JSON.stringify(device)} that`} can use ${CAPABILITY_NAMES[capability] ?? capability}.${names.length ? ` Devices that can: ${names.join(', ')}` : ''}`,
+      )
+    }
+    const value = await callCommand(hob, target.name, capability, method, request.args, undefined, from.name)
+    return { device: target.name, value }
   }
 
   // The tag ID of a Hobwork tag URL of this host.
@@ -789,6 +881,8 @@ export function createDevices(options: {
     expire,
     handleEvent,
     nfcScanned,
+    nfcTagHob,
+    handoff,
     revoke(id: number): boolean {
       const revoked = revokeDevice(host.db, id)
       registry.disconnect(id, CLOSE_REVOKED, 'This device was removed from Hobwork')

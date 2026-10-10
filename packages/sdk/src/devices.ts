@@ -136,7 +136,20 @@ export interface NotificationControl {
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 
-export type AlarmSettings = {
+// How an alarm or timer looks on the Lock Screen, in its Live Activity and when it rings.
+export type AlarmLooks = {
+  // A second line under the title, e.g. "4 spools, 70 °C".
+  subtitle?: string
+  // "#RRGGBB" for its buttons and Live Activity. Default: Hobwork's accent color.
+  tint?: string
+}
+
+// The ringing timer's second button next to Stop: tapping it starts a new
+// countdown of seconds with the same ID, e.g. { seconds: 7200, title: "+2 h" }.
+// Without title the button says "+2 h" from seconds.
+export type AlarmRepeat = { seconds: number; title?: string }
+
+export type AlarmSettings = AlarmLooks & {
   title: string
   // A one-off alarm: an ISO date-time with a time zone, e.g. new Date(...).toISOString().
   at?: string
@@ -148,22 +161,48 @@ export type AlarmSettings = {
   id?: string
 }
 
-export type Alarm = {
+export type TimerSettings = AlarmLooks & {
+  title: string
+  // 1 to 86,400.
+  seconds: number
+  repeat?: AlarmRepeat
+  // Replaces the timer with this ID, from an earlier call.
+  id?: string
+}
+
+// What alarms.reschedule changes; anything left out stays. repeat: null
+// removes the button, e.g. once an oven run reaches its cap.
+export type TimerChanges = Partial<AlarmLooks> & {
+  id: string
+  // A new countdown from now.
+  seconds?: number
+  title?: string
+  repeat?: AlarmRepeat | null
+}
+
+export type Alarm = AlarmLooks & {
   id: string
   title: string
   state: 'scheduled' | 'countdown' | 'paused' | 'alerting'
   at?: string
   time?: string
   days?: Weekday[]
+  // The timer's length as last set.
   seconds?: number
+  repeat?: AlarmRepeat
+  // When a running timer rings, as an ISO date-time.
+  endsAt?: string
 }
 
 // AlarmKit alarms and countdown timers. They ring even in silent mode and
 // Focus, and run without the app once set. Clock app alarms are out of reach.
-// App error code: "limit_reached".
+// Ringing, Stop and the repeat button arrive as AlarmEvent triggers. App error
+// codes: "limit_reached", "unknown_alarm" (reschedule of an ID that is gone).
 export interface Alarms {
   set(alarm: AlarmSettings): Promise<{ id: string }>
-  timer(timer: { title: string; seconds: number; id?: string }): Promise<{ id: string }>
+  timer(timer: TimerSettings): Promise<{ id: string }>
+  // Changes a timer in place, keeping its ID.
+  reschedule(changes: TimerChanges): Promise<{ id: string }>
   // Unknown IDs succeed too.
   cancel(alarm: { id: string }): Promise<Record<string, never>>
   // Alarms Hobwork set.
@@ -211,19 +250,34 @@ export interface Focus {
 
 export type NfcRecord = { type: 'url' | 'text' | 'other'; value: string }
 
+// What the system scan sheet says: alertMessage while it waits ("Hold your
+// iPhone near the tag on bin 4"), successMessage when done. At most 200 characters.
+export type NfcSheet = { alertMessage?: string; successMessage?: string }
+
+export type NfcWritten = {
+  url: string
+  // The tag's hardware ID (UID) as lowercase hex, e.g. "04a2245a8b6380" for an
+  // NTAG215. Older apps leave it out.
+  uid?: string
+  // True when the tag read back what was written in the same tap.
+  verified?: boolean
+}
+
 // NFC tags, with the system scan sheet. It needs the app in the foreground,
 // so the device shows a notification to tap first, and the call waits up to
-// two minutes. App error codes: "cancelled", "not_writable", "too_small".
+// two minutes. App error codes: "cancelled", "not_writable", "too_small",
+// "verify_failed" (the tag did not read back what was written).
 export interface Nfc {
   // Writes a new Hobwork tag owned by this hob, plus text when given.
   // Scanning it runs the hob's NfcScannedEvent triggers.
-  write(tag?: { text?: string }): Promise<{ tag: string; url: string }>
+  write(tag?: NfcSheet & { text?: string }): Promise<NfcWritten & { tag: string }>
   // Writes any URL instead: http, https, mailto, tel, sms, facetime,
   // facetime-audio or shortcuts, at most 2,048 bytes. Scans run triggers with
   // a matching "url" prefix in every hob. Returns the URL as written.
-  write(tag: { url: string; text?: string }): Promise<{ url: string }>
-  // tag is set when the tag is a Hobwork tag of this host.
-  read(): Promise<{ records: NfcRecord[]; tag?: string }>
+  write(tag: NfcSheet & { url: string; text?: string }): Promise<NfcWritten>
+  // tag is set when the tag is a Hobwork tag of this host, uid is the tag's
+  // hardware ID (lowercase hex).
+  read(sheet?: NfcSheet): Promise<{ records: NfcRecord[]; tag?: string; uid?: string }>
 }
 
 export type HealthType = 'sleep' | 'steps' | 'heartRate' | 'restingHeartRate' | 'activeEnergy' | 'bodyMass' | 'workouts' | 'mindfulness'
@@ -312,4 +366,19 @@ export type HealthSamplesEvent = {
   samples: HealthSample[]
 }
 
-export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent
+// { "device": { "capability": "alarms", "event": "fired" } } (or "stopped",
+// "repeated"): an alarm or timer this hob set rang, someone tapped Stop, or the
+// repeat button started a new countdown of seconds. The app reports fired
+// when it sees the ring, which may be late (with Stop or Repeat) when iOS did
+// not have the app running.
+export type AlarmEvent = {
+  device: string
+  capability: 'alarms'
+  event: 'fired' | 'stopped' | 'repeated'
+  id: string
+  title?: string
+  // repeated: the new countdown.
+  seconds?: number
+}
+
+export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | AlarmEvent

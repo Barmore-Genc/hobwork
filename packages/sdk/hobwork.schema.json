@@ -77,13 +77,13 @@
         "properties": {
           "homeassistant": { "type": "object" },
           "device": {
-            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this hob sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this hob wrote was scanned, or with url any scanned URL starting with it), health/samples (new Health samples). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
+            "description": "Runs the handler on a device event: notifications/action (an action tapped on a notification this hob sent), focus/changed (a Focus mode with a Hobwork Focus filter turned on or off), nfc/scanned (a tag this hob wrote was scanned, or with url any scanned URL starting with it), health/samples (new Health samples), alarms/fired, alarms/stopped and alarms/repeated (an alarm or timer this hob set rang, was stopped, or its repeat button started a new countdown). ctx.payload is the matching DeviceEvent from @hobwork/sdk.",
             "type": "object",
             "additionalProperties": false,
             "required": ["capability", "event"],
             "properties": {
-              "capability": { "enum": ["notifications", "focus", "nfc", "health"] },
-              "event": { "enum": ["action", "changed", "scanned", "samples"] },
+              "capability": { "enum": ["notifications", "focus", "nfc", "health", "alarms"] },
+              "event": { "enum": ["action", "changed", "scanned", "samples", "fired", "stopped", "repeated"] },
               "device": {
                 "description": "Only events from the device with this name, as ctx.device() takes it.",
                 "$ref": "#/definitions/name"
@@ -100,7 +100,8 @@
               { "if": { "properties": { "capability": { "const": "notifications" } } }, "then": { "properties": { "event": { "const": "action" } } } },
               { "if": { "properties": { "capability": { "const": "focus" } } }, "then": { "properties": { "event": { "const": "changed" } } } },
               { "if": { "properties": { "capability": { "const": "nfc" } } }, "then": { "properties": { "event": { "const": "scanned" } } } },
-              { "if": { "properties": { "capability": { "const": "health" } } }, "then": { "properties": { "event": { "const": "samples" } } } }
+              { "if": { "properties": { "capability": { "const": "health" } } }, "then": { "properties": { "event": { "const": "samples" } } } },
+              { "if": { "properties": { "capability": { "const": "alarms" } } }, "then": { "properties": { "event": { "enum": ["fired", "stopped", "repeated"] } } } }
             ]
           },
           "upload": {

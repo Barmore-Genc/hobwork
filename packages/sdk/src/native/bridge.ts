@@ -13,14 +13,20 @@ export class NativeError extends Error {
   // cancelled: the person closed the sheet or dialog.
   // failed: anything else, including bad arguments.
   code: NativeErrorCode
-  constructor(code: NativeErrorCode, message: string) {
+  // A finer reason some failures carry, e.g. "too_small" for an NFC write to
+  // a tag too small for the link. Listed with each method.
+  reason?: string
+  constructor(code: NativeErrorCode, message: string, reason?: string) {
     super(message)
     this.name = 'NativeError'
     this.code = code
+    if (reason !== undefined) this.reason = reason
   }
 }
 
-export type NativeReply = { ok: true; value?: unknown } | { ok: false; error: { code: string; message: string } }
+export type NativeReply =
+  | { ok: true; value?: unknown }
+  | { ok: false; error: { code: string; message: string; reason?: string } }
 
 export type NativePlatform = 'ios' | 'macos'
 
@@ -75,7 +81,8 @@ export async function call<T = unknown>(capability: string, method: string, args
   if (!reply || typeof reply !== 'object') throw new NativeError('failed', `${capability}.${method} answered nothing`)
   if (reply.ok) return reply.value as T
   const code = CODES.includes(reply.error?.code) ? (reply.error.code as NativeErrorCode) : 'failed'
-  throw new NativeError(code, reply.error?.message ?? `${capability}.${method} failed`)
+  const reason = typeof reply.error?.reason === 'string' ? reply.error.reason : undefined
+  throw new NativeError(code, reply.error?.message ?? `${capability}.${method} failed`, reason)
 }
 
 // Listens for an event the app sends, named `<capability>.<event>`, e.g.

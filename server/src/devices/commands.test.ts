@@ -162,7 +162,7 @@ test('commands go over the socket when the app is connected, and the first resul
     id: expect.any(String),
     capability: 'alarms',
     method: 'set',
-    args: { title: 'Wake up', time: '07:00', days: ['mon', 'fri'] },
+    args: { title: 'Wake up', time: '07:00', days: ['mon', 'fri'], hob: 'bedtime' },
     expiresAt: expect.any(String),
   })
   client.send({ type: 'result', id: message.id, ok: true, value: { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' } })
@@ -419,6 +419,15 @@ test('arguments are checked on the host', async () => {
     ['alarms', 'set', { title: 'Up', time: '07:00', id: 'x' }, 'id must be a UUID'],
     ['alarms', 'set', { title: 'Up', time: '07:00', sound: 'loud' }, 'does not take "sound"'],
     ['alarms', 'timer', { title: 'Tea', seconds: 0 }, 'seconds must be a whole number from 1'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 60, tint: 'orange' }, 'tint must be a color'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 60, repeat: { seconds: 0 } }, 'repeat.seconds must be a whole number'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 60, repeat: { seconds: 60, snooze: true } }, 'repeat does not take "snooze"'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 60, repeat: null }, 'repeat must be { seconds, title? }'],
+    ['alarms', 'timer', { title: 'Tea', seconds: 60, repeat: { seconds: 60, title: 'x'.repeat(21) } }, 'title must be at most 20'],
+    ['alarms', 'reschedule', { seconds: 60 }, 'needs the id'],
+    ['alarms', 'reschedule', { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' }, 'needs something to change'],
+    ['nfc', 'read', { alertMessage: '' }, 'alertMessage must be a non-empty string'],
+    ['nfc', 'write', { successMessage: 'x'.repeat(201) }, 'successMessage must be at most 200'],
     ['alarms', 'cancel', {}, 'needs the id'],
     ['alarms', 'list', { all: true }, 'takes no arguments'],
     ['screenTime', 'block', { set: 'Social Apps' }, 'set must be a name'],
@@ -454,6 +463,13 @@ test('arguments are checked on the host', async () => {
     days: ['sat', 'sun'],
   })
   expect(COMMANDS.health!.query!.parse({ type: 'sleep', from: past, to: future }, now)).toEqual({ type: 'sleep', from: past, to: future })
+  expect(
+    COMMANDS.alarms!.timer!.parse({ title: 'Dehydrator', seconds: 21600, subtitle: '4 spools', tint: '#ff9500', repeat: { seconds: 7200, title: '+2 h' } }, now),
+  ).toEqual({ title: 'Dehydrator', seconds: 21600, subtitle: '4 spools', tint: '#FF9500', repeat: { seconds: 7200, title: '+2 h' } })
+  const id = 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6'
+  expect(COMMANDS.alarms!.reschedule!.parse({ id, repeat: null }, now)).toEqual({ id, repeat: null })
+  expect(COMMANDS.alarms!.reschedule!.parse({ id, seconds: 900 }, now)).toEqual({ id, seconds: 900 })
+  expect(COMMANDS.nfc!.read!.parse({ alertMessage: 'Hold it near bin 4' }, now)).toEqual({ alertMessage: 'Hold it near bin 4' })
 })
 
 test('workspaces and branch previews cannot run commands', async () => {
@@ -682,14 +698,121 @@ test('hobwork.json accepts the device trigger pairs and a device name', () => {
     ['focus', 'changed'],
     ['nfc', 'scanned'],
     ['health', 'samples'],
+    ['alarms', 'fired'],
+    ['alarms', 'stopped'],
+    ['alarms', 'repeated'],
   ]) {
     expect(check({ capability, event }), `${capability}/${event}`).toEqual([])
     expect(check({ capability, event, device: 'kaans-iphone' })).toEqual([])
   }
   expect(check({ capability: 'focus', event: 'scanned' })).not.toEqual([])
+  expect(check({ capability: 'alarms', event: 'scanned' })).not.toEqual([])
   expect(check({ capability: 'alarms', event: 'rang' })).not.toEqual([])
   expect(check({ capability: 'nfc', event: 'scanned', device: "Kaan's iPhone" })).not.toEqual([])
   expect(check({ capability: 'nfc', event: 'scanned', url: 'https://example.com/' })).toEqual([])
   expect(check({ capability: 'nfc', event: 'scanned', url: '' })).not.toEqual([])
   expect(check({ capability: 'focus', event: 'changed', url: 'https://example.com/' })).not.toEqual([])
+})
+
+test('nfc.write answers with the hardware ID and read-back check the app reports', async () => {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', {
+    url: 'https://example.com/spool/78',
+    alertMessage: 'Hold it near spool 78',
+  })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const command = pushed().payload.hobwork.command
+  expect(command.args).toEqual({ url: 'https://example.com/spool/78', alertMessage: 'Hold it near spool 78' })
+  await postResult(device.token, { id: command.id, ok: true, value: { uid: '04a2245a8b6380', verified: true, extra: 'dropped' } })
+  expect(await call).toEqual({ url: 'https://example.com/spool/78', uid: '04a2245a8b6380', verified: true })
+})
+
+test('timers carry their hob, so alarm events from the app reach its triggers', async () => {
+  const device = await phone()
+  const client = await AppClient.connect(device.token)
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'reschedule', { id: 'F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6', repeat: null })
+  const message = await client.next()
+  expect(message.args).toEqual({ id: 'F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6', repeat: null, hob: 'bedtime' })
+  client.send({ type: 'result', id: message.id, ok: true, value: { id: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' } })
+  await call
+
+  triggers.bedtime = {
+    rang: { device: { capability: 'alarms', event: 'fired' } },
+    again: { device: { capability: 'alarms', event: 'repeated' } },
+    other: { device: { capability: 'alarms', event: 'stopped', device: 'kaan-mac' } },
+  }
+  const id = 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6'
+  await postEvent(device.token, { capability: 'alarms', name: 'fired', data: { id, hob: 'bedtime', title: 'Tea' } })
+  await postEvent(device.token, { capability: 'alarms', name: 'repeated', data: { id, hob: 'bedtime', seconds: 900 } })
+  await postEvent(device.token, { capability: 'alarms', name: 'stopped', data: { id, hob: 'bedtime' } })
+  await postEvent(device.token, { capability: 'alarms', name: 'fired', data: { id, hob: 'nope' } })
+  await postEvent(device.token, { capability: 'alarms', name: 'fired', data: { id: 'x', hob: 'bedtime' } })
+  await postEvent(device.token, { capability: 'alarms', name: 'rang', data: { id, hob: 'bedtime' } })
+  await until(() => invoked.length === 2)
+  await new Promise((r) => setTimeout(r, 50))
+  expect(invoked).toEqual([
+    { project: 'bedtime', name: 'rang', payload: { device: 'kaan-iphone', capability: 'alarms', event: 'fired', id, title: 'Tea' } },
+    { project: 'bedtime', name: 'again', payload: { device: 'kaan-iphone', capability: 'alarms', event: 'repeated', id, seconds: 900 } },
+  ])
+  expect(devices.list()[0]!.lastActiveAt).not.toBeNull()
+})
+
+function handoff(token: string, body: unknown) {
+  return fetch(`${app.base}/api/devices/handoff`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+test("an iPad hands an NFC write to the person's phone and gets the result", async () => {
+  const ipad = await phone({ name: 'kaan-ipad', capabilities: ['notifications'] })
+  const iphone = await phone({ name: 'kaan-iphone' })
+  const ari = await phone({ name: 'ari-iphone' })
+  host.db.prepare('UPDATE devices SET user_id = ? WHERE id = ?').run(signedIn(host, 'ari@example.com').user.id, ari.deviceId)
+
+  const pending = handoff(ipad.token, {
+    hob: 'bedtime',
+    device: 'lastActive',
+    capability: 'nfc',
+    method: 'write',
+    args: { url: 'https://example.com/bin/4' },
+  })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  const { body, payload } = pushed()
+  expect(body.kind).toBe('prompt')
+  expect(payload.aps.alert).toEqual({ title: 'Write an NFC tag', body: 'bedtime on kaan-ipad is waiting. Tap to write the tag with this device.' })
+  await postResult(iphone.token, { id: payload.hobwork.command.id, ok: true, value: { uid: '04aabbccddeeff', verified: true } })
+  const res = await pending
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({
+    ok: true,
+    device: 'kaan-iphone',
+    value: { url: 'https://example.com/bin/4', uid: '04aabbccddeeff', verified: true },
+  })
+
+  // Only the person's own devices, and only NFC.
+  const refused = async (token: string, request: unknown) => ((await (await handoff(token, request)).json()) as { error: { code: string } }).error.code
+  expect(await refused(ipad.token, { hob: 'bedtime', device: 'ari-iphone', capability: 'nfc', method: 'write', args: {} })).toBe('unknown_device')
+  expect(await refused(ipad.token, { hob: 'bedtime', device: 'kaan-iphone', capability: 'alarms', method: 'list' })).toBe('bad_request')
+  expect(await refused(ipad.token, { hob: 'nope', device: 'kaan-iphone', capability: 'nfc', method: 'read' })).toBe('bad_request')
+  expect(await refused(iphone.token, { hob: 'bedtime', device: 'lastActive', capability: 'nfc', method: 'read' })).toBe('unreachable')
+  expect((await handoff('nope', {})).status).toBe(401)
+})
+
+test('the app can ask which hob wrote a Hobwork tag', async () => {
+  const device = await phone()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'nfc', 'write', {})
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  await postResult(device.token, { id: pushed().payload.hobwork.command.id, ok: true, value: {} })
+  const { tag, url } = (await call) as { tag: string; url: string }
+  const lookup = (body: unknown) =>
+    fetch(`${app.base}/api/devices/nfc/lookup`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${device.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  expect(await (await lookup({ url })).json()).toEqual({ tag, url, hob: 'bedtime' })
+  expect((await lookup({ url: 'https://example.com/nfc/abc' })).status).toBe(404)
+  expect((await lookup({ url: `${TEST_PUBLIC_URL}/nfc/AAAAAAAAAAAAAAAAAAAAAA` })).status).toBe(404)
 })

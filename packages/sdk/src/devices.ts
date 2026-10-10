@@ -269,9 +269,10 @@ export type HealthSample = {
   workoutType?: string
 }
 
-// HealthKit data of the types the person shares in the app's settings.
-// New samples arrive as HealthSamplesEvent. App error codes: "locked" (the
-// phone is locked, so Health data cannot be read), "not_shared".
+// HealthKit data the person allows. Types they did not allow return no
+// samples: HealthKit does not tell apps which were allowed. New samples arrive
+// as HealthSamplesEvent. App error codes: "locked" (the phone is locked, so
+// Health data cannot be read), "not_shared" (Health is not connected).
 export interface Health {
   // At most limit samples (default and most: 1,000) from ISO date-times from to to.
   query(query: { type: HealthType; from: string; to: string; limit?: number }): Promise<HealthSample[]>

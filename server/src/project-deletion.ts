@@ -56,6 +56,7 @@ export type TrashInfo = {
     model?: string | null
     decisionModel?: string | null
     embeddingModel?: string | null
+    visionModel?: string | null
     limits: string | null
     updatedByUserId: number | null
     updatedByAgentId?: number | null
@@ -206,12 +207,13 @@ function restorableRows(
     },
     ai:
       all(
-        `SELECT model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at
+        `SELECT model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at
          FROM project_ai_settings WHERE project_id = ?`,
       ).map((row) => ({
         model: row.model === null ? null : String(row.model),
         decisionModel: row.decision_model === null ? null : String(row.decision_model),
         embeddingModel: row.embedding_model === null ? null : String(row.embedding_model),
+        visionModel: row.vision_model === null ? null : String(row.vision_model),
         limits: row.limits === null ? null : String(row.limits),
         updatedByUserId: nullable(row.updated_by_user_id),
         updatedByAgentId: nullable(row.updated_by_agent_id),
@@ -411,16 +413,18 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     )
     for (const id of info.access?.grants ?? []) grantAccess.run(projectId, id)
     const ai = info.ai
-    if (ai && (ai.model != null || ai.decisionModel != null || ai.embeddingModel != null || ai.limits !== null)) {
+    const hasModels = ai && (ai.model != null || ai.decisionModel != null || ai.embeddingModel != null || ai.visionModel != null)
+    if (ai && (hasModels || ai.limits !== null)) {
       db.prepare(
         `INSERT INTO project_ai_settings
-           (project_id, model, decision_model, embedding_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (project_id, model, decision_model, embedding_model, vision_model, limits, updated_by_user_id, updated_by_agent_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         projectId,
         ai.model ?? null,
         ai.decisionModel ?? null,
         ai.embeddingModel ?? null,
+        ai.visionModel ?? null,
         ai.limits,
         existing('users', ai.updatedByUserId),
         existing('agents', ai.updatedByAgentId),

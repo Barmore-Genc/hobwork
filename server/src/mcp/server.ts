@@ -235,7 +235,7 @@ export function createMcpServer({
     const { lastMinute, lastHour, day, month } = projectUsage(host.db, projectId, Date.now())
     return {
       models,
-      ownModels: { model: own.model, decisionModel: own.decisionModel, embeddingModel: own.embeddingModel },
+      ownModels: { model: own.model, decisionModel: own.decisionModel, embeddingModel: own.embeddingModel, visionModel: own.visionModel },
       limits,
       usage: { requestsLastMinute: lastMinute, requestsLastHour: lastHour, last24Hours: day, last30Days: month },
     }

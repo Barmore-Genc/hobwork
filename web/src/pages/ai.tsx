@@ -141,6 +141,19 @@ export function ModelFields({
         }
         placeholder="openai/text-embedding-3-small"
       />
+      <ModelField
+        id={id}
+        legend="Vision model"
+        help="Hobs use this model when they ask AI to look at photos and other images. It needs to read images."
+        draft={draft.visionModel}
+        onChange={(visionModel) => onChange({ ...draft, visionModel })}
+        inheritLabel={
+          <>
+            {inheritFrom}: <Mono>{inherited.visionModel}</Mono>
+          </>
+        }
+        placeholder="google/gemini-3.1-flash-lite"
+      />
     </div>
   )
 }

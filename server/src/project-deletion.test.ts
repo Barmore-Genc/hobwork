@@ -335,7 +335,7 @@ test('restoring gives agent tokens limited to the project their access to it aga
 
 test('restoring brings back the project\'s own AI models and limits', async () => {
   const limits = { throttle: true, requestsPerMinute: 5, requestsPerHour: null, costPerDay: 2, costPerMonth: null }
-  saveProjectAiSettings(host.db, projectId('filament'), { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: 'qwen/qwen3-embedding-8b', limits }, { userId: signedIn(host).user.id })
+  saveProjectAiSettings(host.db, projectId('filament'), { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: 'qwen/qwen3-embedding-8b', visionModel: 'google/gemini-3.1-flash-lite', limits }, { userId: signedIn(host).user.id })
   await deleteProject({ host, workspaces, delivery, runtime, data }, 'filament')
   const [entry] = (await trashList()).projects
 
@@ -344,6 +344,7 @@ test('restoring brings back the project\'s own AI models and limits', async () =
     model: 'google/gemini-2.5-flash',
     decisionModel: false,
     embeddingModel: 'qwen/qwen3-embedding-8b',
+    visionModel: 'google/gemini-3.1-flash-lite',
     limits,
     updatedBy: expect.any(String),
   })

@@ -359,10 +359,15 @@ export type AiUsageTotals = {
 }
 
 // The models hobs get. decisionModel null: none, so the model answers decisions too.
-export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string }
+export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string; visionModel: string }
 
 // null: the level above picks. decisionModel false: no decision model.
-export type ModelChoice = { model: string | null; decisionModel: string | false | null; embeddingModel: string | null }
+export type ModelChoice = {
+  model: string | null
+  decisionModel: string | false | null
+  embeddingModel: string | null
+  visionModel: string | null
+}
 
 export type AiSettings = ModelChoice & {
   // What hobs get with these settings.

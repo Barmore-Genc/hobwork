@@ -18,11 +18,13 @@ export type ChatMessage = {
   tool_calls?: unknown[]
 }
 
-// The OpenRouter chat completions request, without a model: Hobwork picks it.
-// Fields not listed here (tools, reasoning, provider routing, ...) are passed
-// through as they are.
+// The OpenRouter chat completions request. Hobwork picks the model: the hob's
+// chat model, or its vision model with `model: 'vision'` (for messages with
+// images). Fields not listed here (tools, reasoning, provider routing, ...) are
+// passed through as they are.
 export type ChatRequest = {
   messages: ChatMessage[]
+  model?: 'vision'
   temperature?: number
   max_tokens?: number
   [key: string]: unknown

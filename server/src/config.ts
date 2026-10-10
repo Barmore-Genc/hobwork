@@ -171,9 +171,10 @@ function loadAiModels(env: NodeJS.ProcessEnv): AiModels {
       model: parseModel(env.HOBWORK_AI_MODEL || null) ?? DEFAULT_MODELS.model,
       decisionModel: decision === 'off' ? null : (parseModel(decision || null) ?? DEFAULT_MODELS.decisionModel),
       embeddingModel: parseModel(env.HOBWORK_AI_EMBEDDING_MODEL || null) ?? DEFAULT_MODELS.embeddingModel,
+      visionModel: parseModel(env.HOBWORK_AI_VISION_MODEL || null) ?? DEFAULT_MODELS.visionModel,
     }
   } catch (err) {
-    if (err instanceof AiSettingsError) throw new Error(`HOBWORK_AI_MODEL, HOBWORK_AI_DECISION_MODEL and HOBWORK_AI_EMBEDDING_MODEL: ${err.message}`)
+    if (err instanceof AiSettingsError) throw new Error(`HOBWORK_AI_MODEL, HOBWORK_AI_DECISION_MODEL, HOBWORK_AI_EMBEDDING_MODEL and HOBWORK_AI_VISION_MODEL: ${err.message}`)
     throw err
   }
 }

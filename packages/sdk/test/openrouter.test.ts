@@ -38,6 +38,18 @@ test('chat sends the request with the secret placeholder and returns the text', 
   ])
 })
 
+test('chat asks for the vision model by role', async () => {
+  const { fetch, sent } = fakeFetch({ body: completion('A red spool') })
+  const image = { type: 'image_url' as const, image_url: { url: 'data:image/jpeg;base64,AAAA' } }
+  await openrouter(createTestContext({ fetch, secrets })).chat({
+    model: 'vision',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'What color is it?' }, image] }],
+  })
+  expect(sent[0]?.body.model).toBe('vision')
+  // @ts-expect-error hobs pick roles, not model IDs
+  void (() => openrouter(createTestContext({ fetch, secrets })).chat({ model: 'openai/gpt-5-mini', messages }))
+})
+
 test('json without a schema uses JSON mode and parses the reply', async () => {
   const { fetch, sent } = fakeFetch({ body: completion('```json\n{"grams": 200}\n```') })
   const data = await openrouter(createTestContext({ fetch, secrets })).json({ messages })

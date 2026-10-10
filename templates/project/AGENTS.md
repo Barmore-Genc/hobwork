@@ -74,7 +74,7 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 
 `openrouter(ctx)` from `@hobwork/sdk` has `check`, `pick`, `decide`, `embed`, `chat` and `json` (with a zod `schema`; use `.nullable()`, not `.optional()`). It needs a secret with host `openrouter.ai` assigned as `OPENROUTER_API_KEY`. Every call takes `{ timeout, signal }` in its options (or `openrouter(ctx, { timeout })` for every call); a timeout throws `OpenRouterError` with code `timeout`.
 
-Hobwork picks the model for every request, so requests do not name one. People choose the models on the hob's AI page, and agents with `set_ai_model`; `get_hob` shows them under `ai.models`. `check`, `pick` and `decide` go to the decision model, `embed` to the embedding model, the rest to the chat model.
+Hobwork picks the model for every request, so requests do not name one. People choose the models on the hob's AI page, and agents with `set_ai_model`; `get_hob` shows them under `ai.models`. `check`, `pick` and `decide` go to the decision model, `embed` to the embedding model, the rest to the chat model. To read photos or other images, pass `model: 'vision'` to `chat` or `json` (with `image_url` content parts): it picks the hob's vision model. `'vision'` is the only value `model` takes; model IDs are not accepted.
 
 ### What AI is for
 

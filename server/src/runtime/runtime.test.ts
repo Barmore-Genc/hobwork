@@ -623,7 +623,7 @@ test('secrets reach runtime VMs as placeholders, their hosts join egress, and a 
 })
 
 test('runtime VMs send OpenRouter requests through the AI gateway', async () => {
-  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, limits: { ...DEFAULT_LIMITS, requestsPerMinute: 1 } }, null)
+  saveHostAiSettings(host.db, { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: null, visionModel: null, limits: { ...DEFAULT_LIMITS, requestsPerMinute: 1 } }, null)
   start({ ai: createAiGateway(host) })
   await deploy()
   const intercept = sandboxes.created[0]?.intercept

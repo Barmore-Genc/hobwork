@@ -19,7 +19,7 @@ vi.setConfig({ testTimeout: 15_000 })
 type Message = Record<string, unknown>
 type Triggers = Record<string, { device?: DeviceTrigger }>
 
-const ALL = ['notifications', 'alarms', 'screenTime', 'focus', 'nfc', 'health']
+const ALL = ['notifications', 'alarms', 'focus', 'nfc', 'health']
 
 let host: ReturnType<typeof createTestHost>
 let app: Awaited<ReturnType<typeof startTestApp>>
@@ -181,30 +181,33 @@ test('commands go over the socket when the app is connected, and the first resul
 test("the app's error fails the call with its code", async () => {
   const device = await phone()
   const client = await AppClient.connect(device.token)
-  const call = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'games' }).catch((err: unknown) => err)
+  const from = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const to = new Date().toISOString()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'health', 'query', { type: 'sleep', from, to }).catch((err: unknown) => err)
   const message = await client.next()
-  client.send({ type: 'result', id: message.id, ok: false, error: { code: 'unknown_set', message: 'No app set called games' } })
-  expect(await call).toMatchObject({ code: 'unknown_set', message: 'No app set called games' })
+  client.send({ type: 'result', id: message.id, ok: false, error: { code: 'not_shared', message: 'Sleep is not shared' } })
+  expect(await call).toMatchObject({ code: 'not_shared', message: 'Sleep is not shared' })
   expect(getCommand(host.db, String(message.id))?.status).toBe('failed')
 })
 
 test('a device that is not connected gets a background command as a passive push, answered by HTTP', async () => {
   const device = await phone()
-  const until = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-  const call = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'social', until })
+  const from = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const to = new Date().toISOString()
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'health', 'query', { type: 'steps', from, to })
   await vi.waitFor(() => expect(received).toHaveLength(1))
   const { body, payload } = pushed()
   const command = payload.hobwork.command
   expect(payload).toEqual({
     aps: {
-      alert: { title: 'bedtime', body: 'Screen Time change for this device. Open Hobwork if it did not apply.' },
+      alert: { title: 'bedtime', body: 'Health request for this device. Open Hobwork to answer it.' },
       'mutable-content': 1,
       'interruption-level': 'passive',
       'thread-id': 'bedtime',
     },
     hobwork: {
       project: 'bedtime',
-      command: { id: expect.any(String), capability: 'screenTime', method: 'block', args: { set: 'social', until }, expiresAt: expect.any(String) },
+      command: { id: expect.any(String), capability: 'health', method: 'query', args: { type: 'steps', from, to }, expiresAt: expect.any(String) },
     },
   })
   expect(Date.parse(String(command.expiresAt)) - Date.now()).toBeGreaterThan(COMMAND_TTL_MS - 5000)
@@ -310,15 +313,15 @@ test('pending commands go to the app again after every hello, oldest first', asy
   const device = await phone()
   const first = devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'list', {}).catch((err: unknown) => err)
   expect(await first).toMatchObject({ code: 'timeout' })
-  const second = devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'status')
+  const second = devices.callCommand('bedtime', 'kaan-iphone', 'focus', 'status')
   await vi.waitFor(() => expect(received).toHaveLength(2))
   const [firstId, secondId] = [0, 1].map((i) => pushed(i).payload.hobwork.command.id)
 
   const client = await AppClient.connect(device.token)
   const resent = [await client.next(), await client.next()]
   expect(resent.map((m) => m.id)).toEqual([firstId, secondId])
-  client.send({ type: 'result', id: secondId, ok: true, value: { blocked: [], schedules: [], limits: [] } })
-  expect(await second).toEqual({ blocked: [], schedules: [], limits: [] })
+  client.send({ type: 'result', id: secondId, ok: true, value: { active: ['work'] } })
+  expect(await second).toEqual({ active: ['work'] })
   client.send({ type: 'result', id: firstId, ok: true, value: [] })
   await until(() => getCommand(host.db, String(firstId))?.status === 'done')
 
@@ -391,9 +394,9 @@ test('results for commands of other devices, unknown IDs and bad bodies are refu
 
 test('capabilities the device did not report and unknown methods are unsupported', async () => {
   await phone({ capabilities: ['notifications'] })
-  await expect(devices.callCommand('bedtime', 'kaan-iphone', 'screenTime', 'block', { set: 'social' })).rejects.toMatchObject({
+  await expect(devices.callCommand('bedtime', 'kaan-iphone', 'focus', 'status', {})).rejects.toMatchObject({
     code: 'unsupported',
-    message: expect.stringContaining('Screen Time'),
+    message: expect.stringContaining('Focus status'),
   })
   await expect(devices.callCommand('bedtime', 'kaan-iphone', 'alarms', 'snooze', {})).rejects.toMatchObject({
     code: 'unsupported',
@@ -430,10 +433,6 @@ test('arguments are checked on the host', async () => {
     ['nfc', 'write', { successMessage: 'x'.repeat(201) }, 'successMessage must be at most 200'],
     ['alarms', 'cancel', {}, 'needs the id'],
     ['alarms', 'list', { all: true }, 'takes no arguments'],
-    ['screenTime', 'block', { set: 'Social Apps' }, 'set must be a name'],
-    ['screenTime', 'block', { set: 'social', until: past }, 'until is in the past'],
-    ['screenTime', 'schedule', { name: 'night', set: 'social', start: '22:00', end: '22:00' }, 'start and end must differ'],
-    ['screenTime', 'limit', { name: 'daily', set: 'social', minutes: 1440 }, 'minutes must be a whole number from 1 to 1439'],
     ['nfc', 'write', { text: 'x'.repeat(1025) }, 'at most 1024 bytes'],
     ['nfc', 'write', { url: 'example.com' }, 'url must be an absolute URL'],
     ['nfc', 'write', { url: 'https://example.com/a b' }, 'url must be an absolute URL'],
@@ -455,13 +454,7 @@ test('arguments are checked on the host', async () => {
 
   const now = Date.now()
   expect(COMMANDS.alarms!.set!.parse({ title: 'Up', at: future }, now)).toEqual({ title: 'Up', at: future })
-  expect(COMMANDS.screenTime!.schedule!.parse({ name: 'night', set: 'social', start: '22:00', end: '07:00', days: ['sat', 'sun'] }, now)).toEqual({
-    name: 'night',
-    set: 'social',
-    start: '22:00',
-    end: '07:00',
-    days: ['sat', 'sun'],
-  })
+  expect(COMMANDS.alarms!.set!.parse({ title: 'Up', time: '07:00', days: ['sat', 'sun'] }, now)).toEqual({ title: 'Up', time: '07:00', days: ['sat', 'sun'] })
   expect(COMMANDS.health!.query!.parse({ type: 'sleep', from: past, to: future }, now)).toEqual({ type: 'sleep', from: past, to: future })
   expect(
     COMMANDS.alarms!.timer!.parse({ title: 'Dehydrator', seconds: 21600, subtitle: '4 spools', tint: '#ff9500', repeat: { seconds: 7200, title: '+2 h' } }, now),

@@ -19,12 +19,10 @@ const MAX_REPEAT_TITLE = 20
 const MAX_ALERT_MESSAGE = 200
 const TINT = /^#[0-9a-fA-F]{6}$/
 const MAX_TIMER_SECONDS = 24 * 60 * 60
-const MAX_LIMIT_MINUTES = 24 * 60 - 1
 // ISO 8601 with a time zone, so "07:00" means the same on the host and the phone.
 const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/
 
 type Args = Record<string, unknown>
 
@@ -90,14 +88,6 @@ function repeat(args: Args, allowNull: boolean): { seconds: number; title?: stri
 
 function looks(args: Args) {
   return { subtitle: optionalText(args, 'subtitle', MAX_SUBTITLE), tint: tint(args) }
-}
-
-function slug(args: Args, key: string): string {
-  const value = args[key]
-  if (typeof value !== 'string' || !SLUG.test(value)) {
-    bad(`${key} must be a name of lowercase letters, digits and hyphens (at most 40), like "social"`)
-  }
-  return value
 }
 
 function dateTime(args: Args, key: string): string {
@@ -243,54 +233,6 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
     },
     list: { foreground: true, ...noArgs('alarms.list') },
   },
-  screenTime: {
-    sets: noArgs('screenTime.sets'),
-    block: {
-      parse(args, now) {
-        only(args, 'screenTime.block', ['set', 'until'])
-        return defined({ set: slug(args, 'set'), until: args.until === undefined ? undefined : futureDateTime(args, 'until', now) })
-      },
-    },
-    unblock: {
-      parse(args) {
-        only(args, 'screenTime.unblock', ['set'])
-        return { set: slug(args, 'set') }
-      },
-    },
-    schedule: {
-      parse(args) {
-        only(args, 'screenTime.schedule', ['name', 'set', 'start', 'end', 'days'])
-        const start = time(args, 'start')
-        const end = time(args, 'end')
-        if (start === end) bad('start and end must differ')
-        return defined({ name: slug(args, 'name'), set: slug(args, 'set'), start, end, days: days(args) })
-      },
-    },
-    removeSchedule: {
-      parse(args) {
-        only(args, 'screenTime.removeSchedule', ['name'])
-        return { name: slug(args, 'name') }
-      },
-    },
-    limit: {
-      parse(args) {
-        only(args, 'screenTime.limit', ['name', 'set', 'minutes', 'days'])
-        return defined({
-          name: slug(args, 'name'),
-          set: slug(args, 'set'),
-          minutes: integer(args, 'minutes', 1, MAX_LIMIT_MINUTES),
-          days: days(args),
-        })
-      },
-    },
-    removeLimit: {
-      parse(args) {
-        only(args, 'screenTime.removeLimit', ['name'])
-        return { name: slug(args, 'name') }
-      },
-    },
-    status: noArgs('screenTime.status'),
-  },
   focus: {
     status: noArgs('focus.status'),
   },
@@ -347,8 +289,8 @@ export function knownMethods(): string {
   return ['notifications.send', ...Object.entries(COMMANDS).flatMap(([c, methods]) => Object.keys(methods).map((m) => `${c}.${m}`))].join(', ')
 }
 
-const NAMES: Record<string, string> = { alarms: 'Alarm', screenTime: 'Screen Time', focus: 'Focus', health: 'Health' }
-const READS = new Set(['alarms.list', 'screenTime.sets', 'screenTime.status', 'focus.status', 'health.query'])
+const NAMES: Record<string, string> = { alarms: 'Alarm', focus: 'Focus', health: 'Health' }
+const READS = new Set(['alarms.list', 'focus.status', 'health.query'])
 
 // What the person sees if the notification service extension fails or runs
 // out of time before it replaces the text.

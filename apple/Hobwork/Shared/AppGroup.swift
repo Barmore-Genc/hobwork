@@ -14,9 +14,4 @@ enum AppGroup {
     static var defaults: UserDefaults {
         UserDefaults(suiteName: identifier) ?? .standard
     }
-
-    /// Whether this build was signed with Family Controls (`HOBWORK_FAMILY_CONTROLS`).
-    static var hasFamilyControls: Bool {
-        (Bundle.main.object(forInfoDictionaryKey: "HobworkFamilyControls") as? String) == "YES"
-    }
 }

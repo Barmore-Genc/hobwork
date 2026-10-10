@@ -164,20 +164,20 @@ struct CommandLogTests {
 struct CommandPushTests {
     @Test func readsCommandPushes() {
         let userInfo: [AnyHashable: Any] = [
-            "aps": ["alert": ["title": "kitchen", "body": "Screen Time change"], "mutable-content": 1],
+            "aps": ["alert": ["title": "kitchen", "body": "Alarm change"], "mutable-content": 1],
             "hobwork": [
                 "project": "kitchen",
                 "command": [
-                    "id": "5f0c", "capability": "screenTime", "method": "block",
-                    "args": ["set": "social"], "expiresAt": "2026-05-04T07:10:00Z",
+                    "id": "5f0c", "capability": "alarms", "method": "cancel",
+                    "args": ["id": "wake"], "expiresAt": "2026-05-04T07:10:00Z",
                 ],
             ],
         ]
         #expect(CommandPush(userInfo: userInfo) == CommandPush(project: "kitchen", command: DeviceCommand(
             id: .string("5f0c"),
-            capability: "screenTime",
-            method: "block",
-            args: .object(["set": .string("social")]),
+            capability: "alarms",
+            method: "cancel",
+            args: .object(["id": .string("wake")]),
             expiresAt: isoDate("2026-05-04T07:10:00Z")
         )))
     }
@@ -216,27 +216,18 @@ struct CommandSummaryTests {
         return CommandSummary.text(for: command, outcome: outcome, now: now, calendar: utcCalendar, locale: Locale(identifier: "en_GB"))
     }
 
-    @Test func describesScreenTimeChanges() {
-        #expect(summary("screenTime", "block", #"{"set":"social","until":"2026-05-04T21:00:00Z"}"#) == "social blocked until 21:00")
-        #expect(summary("screenTime", "block", #"{"set":"social","until":"2026-05-05T09:30:00Z"}"#) == "social blocked until Tue 09:30")
-        #expect(summary("screenTime", "block", #"{"set":"social"}"#) == "social blocked")
-        #expect(summary("screenTime", "unblock", #"{"set":"games"}"#) == "games unblocked")
-        #expect(summary("screenTime", "schedule", #"{"name":"bedtime","set":"social","start":"22:00","end":"07:00"}"#)
-            == "Screen Time schedule bedtime set for social, 22:00–07:00")
-        #expect(summary("screenTime", "limit", #"{"name":"daily","set":"games","minutes":30}"#) == "Daily limit of 30 min set for games")
-    }
-
     @Test func describesAlarms() {
         #expect(summary("alarms", "set", #"{"title":"Wake up","time":"07:00","days":["mon","tue","wed","thu","fri"]}"#)
             == "Alarm \u{201C}Wake up\u{201D} set for 07:00 on weekdays")
         #expect(summary("alarms", "set", #"{"title":"Bins","at":"2026-05-04T19:00:00Z"}"#) == "Alarm \u{201C}Bins\u{201D} set for 19:00")
+        #expect(summary("alarms", "set", #"{"at":"2026-05-05T09:30:00Z"}"#) == "Alarm set for Tue 09:30")
         #expect(summary("alarms", "timer", #"{"title":"Tea","seconds":270}"#) == "Timer set for 4 min 30 s")
         #expect(summary("alarms", "cancel", #"{"id":"x"}"#) == "Alarm cancelled")
     }
 
     @Test func describesFailures() {
-        let failure = CommandOutcome(.failure(CallError(code: "unknown_set", message: "There is no app set named work")))
-        #expect(summary("screenTime", "block", #"{"set":"work"}"#, failure) == "Screen Time change failed: There is no app set named work")
+        let failure = CommandOutcome(.failure(CallError(code: "not_found", message: "There is no alarm with this id")))
+        #expect(summary("alarms", "cancel", #"{"id":"x"}"#, failure) == "Alarm change failed: There is no alarm with this id")
         let expired = CommandOutcome(.failure(CallError(code: "expired", message: "Late")))
         #expect(summary("alarms", "set", "{}", expired) == "A request from Hobwork arrived too late and was skipped.")
     }
@@ -252,9 +243,9 @@ struct CapabilityStatusTests {
     @Test func reportsOnlyWhatIsAllowed() {
         #if os(iOS)
             #expect(CapabilityStatus().reported == ["widgets"])
-            #expect(CapabilityStatus(notifications: true, screenTime: true, nfc: true, widgets: false).reported == ["notifications", "screenTime", "nfc"])
-            #expect(CapabilityStatus(notifications: true, alarms: true, screenTime: true, focus: true, nfc: true, health: true, liveActivities: true).reported
-                == ["notifications", "alarms", "screenTime", "focus", "nfc", "health", "liveActivities", "widgets"])
+            #expect(CapabilityStatus(notifications: true, nfc: true, widgets: false).reported == ["notifications", "nfc"])
+            #expect(CapabilityStatus(notifications: true, alarms: true, focus: true, nfc: true, health: true, liveActivities: true).reported
+                == ["notifications", "alarms", "focus", "nfc", "health", "liveActivities", "widgets"])
         #else
             #expect(CapabilityStatus().reported == [])
             #expect(CapabilityStatus(focus: true).reported == ["focus"])

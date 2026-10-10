@@ -438,7 +438,6 @@ export function createDevices(options: {
 
   const CAPABILITY_NAMES: Record<string, string> = {
     alarms: 'alarms',
-    screenTime: 'Screen Time',
     focus: 'Focus status',
     nfc: 'NFC',
     health: 'Health data',

@@ -1,6 +1,5 @@
 #if os(iOS)
     import AlarmKit
-    import FamilyControls
     import HealthKit
     import UIKit
 #endif
@@ -201,11 +200,6 @@ final class AppModel {
     #if os(iOS)
         func requestAlarms() async {
             _ = await alarms.requestAuthorization()
-            await refreshCapabilities()
-        }
-
-        func requestScreenTime() async throws {
-            try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
             await refreshCapabilities()
         }
 

@@ -34,7 +34,6 @@ struct SettingsView: View {
 
                 #if os(iOS)
                     AlarmsSection(model: model)
-                    ScreenTimeSection(model: model)
                 #endif
                 FocusSection(model: model)
                 #if os(iOS)

@@ -54,24 +54,24 @@ test('capability methods are calls to the host with their arguments', async () =
   })
   const phone = client.device('kaan-iphone')
   expect(await phone.alarms.set({ title: 'Wake up', time: '07:00', days: ['mon'] })).toEqual({ id: 'a1' })
-  await phone.screenTime.block({ set: 'social' })
+  await phone.alarms.cancel({ id: 'a1' })
   await phone.focus.status()
   await phone.alarms.reschedule({ id: 'a1', repeat: null })
   expect(requests).toEqual([
     { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'set', args: { title: 'Wake up', time: '07:00', days: ['mon'] } },
-    { action: 'call', device: 'kaan-iphone', capability: 'screenTime', method: 'block', args: { set: 'social' } },
+    { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'cancel', args: { id: 'a1' } },
     { action: 'call', device: 'kaan-iphone', capability: 'focus', method: 'status', args: undefined },
     { action: 'call', device: 'kaan-iphone', capability: 'alarms', method: 'reschedule', args: { id: 'a1', repeat: null } },
   ])
 })
 
 test('createTestContext takes partial device fakes and rejects the rest', async () => {
-  const block = vi.fn(async () => ({}))
-  const ctx = createTestContext({ device: () => ({ screenTime: { block } }) })
-  await ctx.device('kaan-iphone').screenTime.block({ set: 'social' })
-  expect(block).toHaveBeenCalledWith({ set: 'social' })
-  await expect(ctx.device('kaan-iphone').screenTime.unblock({ set: 'social' })).rejects.toThrow(
-    "ctx.device('kaan-iphone').screenTime.unblock is not stubbed",
+  const cancel = vi.fn(async () => ({}))
+  const ctx = createTestContext({ device: () => ({ alarms: { cancel } }) })
+  await ctx.device('kaan-iphone').alarms.cancel({ id: 'a1' })
+  expect(cancel).toHaveBeenCalledWith({ id: 'a1' })
+  await expect(ctx.device('kaan-iphone').alarms.timer({ title: 'Tea', seconds: 60 })).rejects.toThrow(
+    "ctx.device('kaan-iphone').alarms.timer is not stubbed",
   )
   await expect(ctx.device('kaan-iphone').alarms.list()).rejects.toThrow('Pass device: (name) => ({ alarms: { list } })')
 })

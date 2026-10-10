@@ -20,24 +20,6 @@ enum CommandSummary {
         }
 
         switch (command.capability, command.method) {
-        case ("screenTime", "block"):
-            let set = string("set") ?? "Apps"
-            if let until = string("until").flatMap(ISODate.parse) { return "\(set) blocked until \(time(until))" }
-            return "\(set) blocked"
-        case ("screenTime", "unblock"):
-            return "\(string("set") ?? "Apps") unblocked"
-        case ("screenTime", "schedule"):
-            let range = [string("start"), string("end")].compactMap(\.self).joined(separator: "–")
-            return "Screen Time schedule \(string("name") ?? "") set for \(string("set") ?? "apps"), \(range)"
-        case ("screenTime", "removeSchedule"):
-            return "Screen Time schedule \(string("name") ?? "") removed"
-        case ("screenTime", "limit"):
-            let minutes = args?["minutes"]?.numberValue.map { Int($0) } ?? 0
-            return "Daily limit of \(minutes) min set for \(string("set") ?? "apps")"
-        case ("screenTime", "removeLimit"):
-            return "Screen Time limit \(string("name") ?? "") removed"
-        case ("screenTime", _):
-            return "Screen Time checked"
         case ("alarms", "set"):
             let title = string("title").map { " \u{201C}\($0)\u{201D}" } ?? ""
             if let at = string("at").flatMap(ISODate.parse) { return "Alarm\(title) set for \(time(at))" }
@@ -62,7 +44,6 @@ enum CommandSummary {
 
     private static func failureSubject(_ command: DeviceCommand) -> String {
         switch command.capability {
-        case "screenTime": "Screen Time change"
         case "alarms": command.method == "timer" ? "Timer" : "Alarm change"
         case "health": "Reading Health data"
         case "focus": "Checking Focus"

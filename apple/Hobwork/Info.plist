@@ -31,8 +31,6 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>HobworkAppLinksHost</key>
 	<string>$(HOBWORK_APPLINKS_HOST)</string>
-	<key>HobworkFamilyControls</key>
-	<string>$(HOBWORK_FAMILY_CONTROLS)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NFCReaderUsageDescription</key>

@@ -25,6 +25,10 @@ settings:
     # NFC tag links to https://<host>/nfc/<tag> open the app, and pairing with this
     # host finishes on a link only the app can claim.
     HOBWORK_APPLINKS_HOST: ""
+    # With HOBWORK_APPLINKS_HOST, links to hob pages (https://<hob>.<apps host>/...)
+    # open the app too. Set it when the apps host is not apps.<HOBWORK_APPLINKS_HOST>,
+    # such as apps.example.com next to hobwork.example.com.
+    HOBWORK_APPS_HOST: apps.$(HOBWORK_APPLINKS_HOST)
     # Entitlements files are picked by name from the two settings above.
     HOBWORK_FAMILY_CONTROLS_SUFFIX_YES: ""
     HOBWORK_FAMILY_CONTROLS_SUFFIX_NO: -NoFamilyControls
@@ -44,13 +48,20 @@ targets:
     sources:
       - path: Hobwork
         excludes:
+          - Alarms
           - Shared/Alarms
           - Shared/ScreenTime
           - Shared/Health
+          - Shared/LiveActivities
+          - Shared/Hobs
+          - Shared/Share
           - Capabilities/NFC
           - Capabilities/Health
+          - Capabilities/LiveActivities
           - Views/ScreenTimeSettings.swift
           - Views/HealthSettings.swift
+      - path: Hobwork/Alarms
+        destinationFilters: [iOS]
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -60,6 +71,14 @@ targets:
       - path: Hobwork/Capabilities/NFC
         destinationFilters: [iOS]
       - path: Hobwork/Capabilities/Health
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/LiveActivities
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Hobs
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Share
+        destinationFilters: [iOS]
+      - path: Hobwork/Capabilities/LiveActivities
         destinationFilters: [iOS]
       - path: Hobwork/Views/ScreenTimeSettings.swift
         destinationFilters: [iOS]
@@ -86,14 +105,23 @@ targets:
           - CFBundleURLName: dev.bgenc.hobwork
             CFBundleURLSchemes: [hobwork]
         NSSupportsLiveActivities: true
-        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this iPhone.
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # Relay grant renewals arrive as background pushes.
+        UIBackgroundModes: [remote-notification]
+        NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this device.
         NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your hobs.
+        NSCameraUsageDescription: Hobs you open in Hobwork can scan barcodes and take photos when you ask them to.
+        # Tag reader sessions that poll ISO 14443 need this list. The NFC Forum
+        # NDEF application lets Type 4 tags show up too.
+        com.apple.developer.nfc.readersession.iso7816.select-identifiers: [D2760000850101]
         NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
     dependencies:
       - target: HobworkNotificationService
       - target: HobworkDeviceActivityMonitor
         destinationFilters: [iOS]
       - target: HobworkWidgets
+        destinationFilters: [iOS]
+      - target: HobworkShare
         destinationFilters: [iOS]
     settings:
       base:
@@ -111,6 +139,29 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # The device driver (`scripts/drive`) and plain http to development hosts on
+        # sslip.io exist in Debug builds only.
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HOBWORK_DRIVER
+          HOBWORK_INSECURE_HTTP_DOMAINS: sslip.io
+          # The script below edits the processed Info.plist, which another build step produces.
+          ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Allow plain http to development hosts
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          [ -n "${HOBWORK_INSECURE_HTTP_DOMAINS:-}" ] || exit 0
+          plist="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          for domain in $HOBWORK_INSECURE_HTTP_DOMAINS; do
+            key=":NSAppTransportSecurity:NSExceptionDomains:$domain"
+            /usr/libexec/PlistBuddy -c "Delete $key" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add $key dict" \
+              -c "Add $key:NSIncludesSubdomains bool true" \
+              -c "Add $key:NSExceptionAllowsInsecureHTTPLoads bool true" "$plist"
+          done
 
   HobworkNotificationService:
     type: app-extension
@@ -122,6 +173,9 @@ targets:
           - Alarms
           - ScreenTime
           - Health
+          - LiveActivities
+          - Hobs
+          - Share
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -182,6 +236,22 @@ targets:
     sources:
       - path: Widgets
       - path: Hobwork/Shared/Alarms/HobworkAlarmMetadata.swift
+      - path: Hobwork/Alarms/AlarmControlIntent.swift
+      # Live Activities, widgets and controls talk to the host and open sealed pushes.
+      - path: Hobwork/Shared/LiveActivities
+      - path: Hobwork/Shared/Hobs
+      - path: Hobwork/Shared/AppGroup.swift
+      - path: Hobwork/Shared/Encoding.swift
+      - path: Hobwork/Shared/JSONValue.swift
+      - path: Hobwork/Shared/SharedFile.swift
+      - path: Hobwork/Shared/Time.swift
+      - path: Hobwork/Shared/Host/HostAPI.swift
+      - path: Hobwork/Shared/Host/HostProbe.swift
+      - path: Hobwork/Shared/Host/Keychain.swift
+      - path: Hobwork/Shared/Push/PushStore.swift
+      - path: Hobwork/Shared/Push/PushCrypto.swift
+      - path: Hobwork/Shared/Push/RelayClient.swift
+      - path: Hobwork/Shared/Commands/DeviceMessage.swift
     info:
       path: Widgets/Info.plist
       properties:
@@ -195,6 +265,51 @@ targets:
         PRODUCT_NAME: HobworkWidgets
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
         CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  # "Share to Hobwork" in the share sheet.
+  HobworkShare:
+    type: app-extension
+    supportedDestinations: [iOS]
+    sources:
+      - path: ShareExtension
+      - path: Hobwork/Shared/Share
+      - path: Hobwork/Shared/Hobs/HobCatalog.swift
+      - path: Hobwork/Shared/Hobs/HobLinks.swift
+      - path: Hobwork/Shared/AppGroup.swift
+      - path: Hobwork/Shared/Encoding.swift
+      - path: Hobwork/Shared/JSONValue.swift
+      - path: Hobwork/Shared/SharedFile.swift
+      - path: Hobwork/Shared/Time.swift
+      - path: Hobwork/Shared/Host/HostAPI.swift
+      - path: Hobwork/Shared/Host/HostProbe.swift
+      - path: Hobwork/Shared/Host/Keychain.swift
+      - path: Hobwork/Shared/Push/PushStore.swift
+      - path: Hobwork/Shared/Push/PushCrypto.swift
+      - path: Hobwork/Shared/Push/RelayClient.swift
+      - path: Hobwork/Shared/Commands/DeviceMessage.swift
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsMovieWithMaxCount: 10
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.Share
+        PRODUCT_NAME: HobworkShare
+        INFOPLIST_KEY_CFBundleDisplayName: Hobwork
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
@@ -220,12 +335,16 @@ targets:
     supportedDestinations: [iOS]
     sources:
       - path: HobworkUITests
+      - path: Hobwork/Driver/DriverServer.swift
     dependencies:
       - target: Hobwork
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.uitests
         GENERATE_INFOPLIST_FILE: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HOBWORK_DRIVER
 
 schemes:
   Hobwork:

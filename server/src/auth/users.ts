@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes } from 'node:crypto'
+import { publishChange } from '../changes.ts'
 import type { Allowlist } from '../config.ts'
 
 export type User = { id: number; name: string; email: string | null }
@@ -89,6 +90,7 @@ export function signInOidcUser(db: DatabaseSync, allowlist: Allowlist, identity:
       identity.subject,
     )
     db.exec('COMMIT')
+    publishChange(db, { kind: 'people' })
     return user
   } catch (err) {
     db.exec('ROLLBACK')
@@ -120,6 +122,7 @@ export function findOrCreateEmailUser(db: DatabaseSync, allowlist: Allowlist, em
     .prepare('INSERT INTO users (name, email) VALUES (?, ?) RETURNING id, name, email')
     .get(name?.trim() || email.split('@')[0]!, email)
   if (!row) throw new Error('User insert returned no row')
+  publishChange(db, { kind: 'people' })
   return toUser(row)
 }
 

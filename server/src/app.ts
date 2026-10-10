@@ -7,6 +7,7 @@ import { haServicesRoutes } from './api/ha-services.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
+import { peopleRoutes } from './api/people.ts'
 import { projectLifecycleRoutes } from './api/project-lifecycle.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
@@ -36,6 +37,7 @@ import type { FetchedDocument } from './oauth/metadata-fetch.ts'
 import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import type { PrivateEgressRule } from './sandbox/egress.ts'
 import type { SecretStore } from './secrets.ts'
 import type { StorageUsage } from './storage.ts'
 import { createStaticRoutes } from './static.ts'
@@ -58,6 +60,8 @@ export type WebOptions = {
   // Tests replace how client ID metadata documents are fetched and the clock.
   fetchClientMetadata?: (url: URL) => Promise<FetchedDocument>
   now?: () => number
+  // HOBWORK_PRIVATE_EGRESS, to show which of a hob's private targets it reaches.
+  privateEgress?: PrivateEgressRule[]
 }
 
 export function createApp(
@@ -137,6 +141,7 @@ export function createApp(
     data: options.data,
     secrets: options.secrets,
     storage: options.storage,
+    privateEgress: web.privateEgress ?? [],
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
   const handleDevices = createDeviceRoutes({
@@ -154,6 +159,7 @@ export function createApp(
     ...aiSettingsRoutes({ host, ai: options.ai, secrets: options.secrets }),
     ...haServicesRoutes({ host }),
     ...deviceUserRoutes({ db: host.db, devices, publicUrl: web.publicUrl }),
+    ...peopleRoutes({ db: host.db }),
     ...projectDeletionRoutes({
       host,
       workspaces,
@@ -184,6 +190,7 @@ export function createApp(
     origins,
     publicUrl: web.publicUrl,
     runtime: options.runtime,
+    ...(web.appleAppId ? { appleAppId: web.appleAppId } : {}),
     serveTheme: createStaticRoutes({}),
   })
   const handleRuntime =
@@ -219,6 +226,7 @@ export function createApp(
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (apps.isAppRequest(req)) return apps.handle(req, res)
+    if (apps.handleAppsHost(req, res)) return
     res.setHeader('x-content-type-options', 'nosniff')
     const { pathname, search } = new URL(req.url ?? '/', 'http://localhost')
     if (!hostAllowed(req) && !(req.method === 'GET' && pathname === '/api/health')) return misdirected(res)

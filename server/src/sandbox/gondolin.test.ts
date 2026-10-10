@@ -3,13 +3,13 @@ import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { createGondolinSandbox } from './gondolin.ts'
 import { imageDir, imageExists } from './image.ts'
 import { isolationMode } from './isolation.ts'
-import type { OutputChunk, Sandbox, SandboxOptions } from './sandbox.ts'
+import type { EgressBlocked, OutputChunk, Sandbox, SandboxOptions } from './sandbox.ts'
 import { systemEnv } from './system-env.ts'
 
 function alive(pid: number): boolean {
@@ -291,6 +291,49 @@ describe.runIf(process.env.HOBWORK_VM_TESTS === '1')('gondolin sandbox', { timeo
     const plain = await guarded.exec('curl -s -m 20 -H "Authorization: Bearer $API_KEY" http://api.example/').result
     expect(plain.stdout).toContain('Hobwork only sends API_KEY over https')
     await guarded.stop()
+  })
+
+  test('private targets need the host setting and egress, on the listed port, over plain http', async () => {
+    const lan = Object.values(networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)?.address
+    if (!lan) throw new Error('the private egress test needs a non-loopback IPv4 address on this machine')
+    const servers = [createServer((_req, res) => res.end('private service')), createServer((_req, res) => res.end('other service'))]
+    const ports: number[] = []
+    for (const server of servers) {
+      await new Promise<void>((resolve) => server.listen(0, lan, resolve))
+      ports.push((server.address() as AddressInfo).port)
+    }
+    const [open, other] = ports as [number, number]
+    const events: EgressBlocked[] = []
+    try {
+      const allowed = await start({
+        egress: [`${lan}:${open}`, lan],
+        privateEgress: [{ host: lan, port: open }],
+        secrets: { API_KEY: { value: 'super-secret-value', hosts: [lan] } },
+        onEgressBlocked: (event) => events.push(event),
+      })
+      const curl = (port: number, extra = '') => allowed.exec(`curl -s -m 20 ${extra} http://${lan}:${port}/`).result
+      expect((await curl(open)).stdout).toBe('private service')
+      // In egress without a port, but the host setting names only one.
+      expect((await curl(other)).stdout).not.toContain('other service')
+      expect(events).toContainEqual({ hostname: lan, ip: lan, port: other, private: true })
+      expect((await curl(open, '-H "Authorization: Bearer $API_KEY"')).stdout).toContain('Hobwork only sends API_KEY over https')
+      await allowed.stop()
+
+      events.length = 0
+      const onlyEgress = await start({ egress: [`${lan}:${open}`], onEgressBlocked: (event) => events.push(event) })
+      expect((await onlyEgress.exec(`curl -s -m 20 http://${lan}:${open}/`).result).stdout).not.toContain('private service')
+      expect(events).toContainEqual({ hostname: lan, ip: lan, port: open, private: true })
+      await onlyEgress.stop()
+
+      events.length = 0
+      const otherPort = await start({ egress: [`${lan}:${other}`], privateEgress: [{ host: lan, port: open }], onEgressBlocked: (event) => events.push(event) })
+      const refused = await otherPort.exec(`curl -s -o /dev/null -w "%{http_code}" -m 20 http://${lan}:${open}/`).result
+      expect(refused.stdout).toBe('403')
+      expect(events).toEqual([{ hostname: lan, ip: '', port: open }])
+      await otherPort.stop()
+    } finally {
+      for (const server of servers) server.close()
+    }
   })
 
   test('internal handlers take streamed bodies over 64MB when they opt in, and stream answers', { timeout: 180_000 }, async () => {

@@ -3,7 +3,8 @@ import type { Usage } from './usage.ts'
 // US dollars per token.
 export type ModelPrice = { prompt: number; completion: number; request: number }
 // `outputs` has `text` for chat models, `decisions` for decision models and `embeddings` for embedding models.
-export type ModelInfo = ModelPrice & { outputs: string[]; canDisableReasoning: boolean }
+// `inputs` has `image` for models that read images.
+export type ModelInfo = ModelPrice & { outputs: string[]; inputs: string[]; canDisableReasoning: boolean }
 export type Catalog = Map<string, ModelInfo>
 
 // Decision and embedding models are only listed when asked for.
@@ -26,6 +27,10 @@ function price(value: unknown): number | undefined {
   return Number.isFinite(number) && number >= 0 ? number : undefined
 }
 
+function modalities(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((m): m is string => typeof m === 'string') : []
+}
+
 // Keyed by lowercase ID and by the dated build (`canonical_slug`) answers name.
 export function parseCatalog(...bodies: unknown[]): Catalog {
   const catalog: Catalog = new Map()
@@ -38,20 +43,19 @@ export function parseCatalog(...bodies: unknown[]): Catalog {
         id?: unknown
         canonical_slug?: unknown
         pricing?: Record<string, unknown>
-        architecture?: { output_modalities?: unknown }
+        architecture?: { output_modalities?: unknown; input_modalities?: unknown }
         supported_parameters?: unknown
         reasoning?: { mandatory?: unknown }
       }
       if (typeof id !== 'string') continue
-      const outputs = Array.isArray(architecture?.output_modalities)
-        ? architecture.output_modalities.filter((m): m is string => typeof m === 'string')
-        : []
+      const outputs = modalities(architecture?.output_modalities)
       // Unknown prices fall back to FALLBACK_PRICE when estimating.
       const info: ModelInfo = {
         prompt: price(pricing?.prompt) ?? FALLBACK_PRICE.prompt,
         completion: price(pricing?.completion) ?? FALLBACK_PRICE.completion,
         request: price(pricing?.request) ?? 0,
         outputs,
+        inputs: modalities(architecture?.input_modalities),
         canDisableReasoning: Array.isArray(parameters) && parameters.includes('reasoning') && reasoning?.mandatory !== true,
       }
       catalog.set(id.toLowerCase(), info)
@@ -96,16 +100,17 @@ export function openRouterCatalog(fetchImpl: typeof fetch = fetch, now: () => nu
   }
 }
 
-// Why OpenRouter cannot run `model` as a chat, decision or embedding model, or undefined
+// Why OpenRouter cannot run `model` as a chat, decision, embedding or vision model, or undefined
 // when it can. An empty catalog (not fetched yet, or OpenRouter unreachable)
 // finds no problem, so a model can still be set while offline.
-export function modelProblem(catalog: Catalog, model: string, kind: 'chat' | 'decisions' | 'embeddings'): string | undefined {
+export function modelProblem(catalog: Catalog, model: string, kind: 'chat' | 'decisions' | 'embeddings' | 'vision'): string | undefined {
   if (catalog.size === 0) return undefined
   const info = catalog.get(model.toLowerCase())
   if (!info) return `OpenRouter has no model "${model}"`
   if (kind === 'decisions' && !info.outputs.includes('decisions')) return `${model} is not a decision model`
   if (kind === 'embeddings' && !info.outputs.includes('embeddings')) return `${model} is not an embedding model`
-  if (kind === 'chat' && !info.outputs.includes('text')) return `${model} does not answer with text`
+  if ((kind === 'chat' || kind === 'vision') && !info.outputs.includes('text')) return `${model} does not answer with text`
+  if (kind === 'vision' && !info.inputs.includes('image')) return `${model} does not read images`
   return undefined
 }
 

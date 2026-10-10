@@ -121,14 +121,27 @@ test('AI models have defaults, and the environment picks others or turns decisio
     model: 'deepseek/deepseek-v4.1-flash',
     decisionModel: 'typesafe/jev-1.13',
     embeddingModel: 'openai/text-embedding-3-small',
+    visionModel: 'google/gemini-3.1-flash-lite',
   })
   expect(
     loadConfig({
       HOBWORK_AI_MODEL: 'google/gemini-2.5-flash',
       HOBWORK_AI_DECISION_MODEL: 'respan/span-01-lite',
       HOBWORK_AI_EMBEDDING_MODEL: 'qwen/qwen3-embedding-8b',
+      HOBWORK_AI_VISION_MODEL: 'qwen/qwen3-vl-8b-instruct',
     }).aiModels,
-  ).toEqual({ model: 'google/gemini-2.5-flash', decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' })
+  ).toEqual({
+    model: 'google/gemini-2.5-flash',
+    decisionModel: 'respan/span-01-lite',
+    embeddingModel: 'qwen/qwen3-embedding-8b',
+    visionModel: 'qwen/qwen3-vl-8b-instruct',
+  })
   expect(loadConfig({ HOBWORK_AI_DECISION_MODEL: 'off' }).aiModels.decisionModel).toBeNull()
   expect(() => loadConfig({ HOBWORK_AI_MODEL: 'two words' })).toThrow('"two words" is not a model ID')
+})
+
+test('private egress targets come from HOBWORK_PRIVATE_EGRESS', () => {
+  expect(loadConfig({}).privateEgress).toEqual([])
+  expect(loadConfig({ HOBWORK_PRIVATE_EGRESS: '100.66.127.125:7912' }).privateEgress).toEqual([{ host: '100.66.127.125', port: 7912 }])
+  expect(() => loadConfig({ HOBWORK_PRIVATE_EGRESS: '100.66.127.125' })).toThrow('HOBWORK_PRIVATE_EGRESS: "100.66.127.125" needs a host or network and a port')
 })

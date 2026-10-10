@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Drives the Debug app on a connected iPhone or iPad through the driver UI test
+# (HobworkUITests/DriverTests.swift). See "Device driver" in apple/README.md.
+set -euo pipefail
+
+apple="$(cd "$(dirname "$0")/.." && pwd)"
+state="$apple/build/drive"
+session="$state/session"
+header="$state/auth-header"
+log="$state/xcodebuild.log"
+
+usage() {
+    cat >&2 <<'EOF'
+usage: drive <command>
+  start <device> [minutes]   build Debug, launch the app and the driver (device: UDID, CoreDevice ID or name)
+  screenshot <out.png>       the whole screen, system alerts and sheets included
+  tap <x> <y>                tap a point, in points from the top left
+  tap-label <label>          tap the element with this accessibility label or identifier
+  type <text>                type into the focused field
+  swipe up|down|left|right   swipe across the app
+  swipe <x1> <y1> <x2> <y2>  drag from one point to another
+  home                       press the Home button
+  activate                   bring the app back to the front
+  tree                       accessibility tree of the app in front
+  info                       screen size in points and scale
+  js <script>                run JavaScript in the web view, prints the completion value
+  js-async <body>            run the body of an async function in the web view, prints what it returns
+  open <url>                 load a URL in the web view
+  web                        URL and title of the web view
+  quit                       stop the driver
+EOF
+    exit 2
+}
+
+load_session() {
+    [ -f "$session" ] || { echo "no driver running; run: drive start <device>" >&2; exit 1; }
+    # shellcheck disable=SC1090
+    . "$session"
+}
+
+call() {
+    local method="$1" path="$2"
+    shift 2
+    curl -sS -g --fail-with-body --max-time 120 -X "$method" -H "@$header" "$@" \
+        "http://[$ADDRESS]:$PORT$path"
+}
+
+# Text goes in the body from stdin, so it never shows up in the process list.
+call_text() {
+    local path="$1" text="$2"
+    printf %s "$text" | call POST "$path" -H 'Content-Type: text/plain' --data-binary @-
+}
+
+running() {
+    [ -n "${PID:-}" ] && kill -0 "$PID" 2>/dev/null
+}
+
+start() {
+    local device="${1:-}" minutes="${2:-120}"
+    [ -n "$device" ] || usage
+    if [ -f "$session" ]; then
+        . "$session"
+        if running; then echo "a driver is already running (pid $PID); run: drive quit" >&2; exit 1; fi
+    fi
+    mkdir -p "$state"
+    chmod 700 "$state"
+    local details
+    details="$(mktemp)"
+    xcrun devicectl device info details --device "$device" --json-output "$details" >/dev/null
+    local fields
+    fields="$(python3 - "$details" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))["result"]
+connection = result["connectionProperties"]
+address = connection.get("tunnelIPAddress") or ""
+if connection.get("tunnelState") != "connected" or not address:
+    sys.exit(f"no tunnel to the device (tunnelState {connection.get('tunnelState')}); unlock it and check the cable")
+if result["deviceProperties"].get("developerModeStatus") != "enabled":
+    sys.exit("Developer Mode is off on the device: Settings, Privacy & Security, Developer Mode")
+print(result["hardwareProperties"]["udid"], address)
+PY
+)"
+    rm -f "$details"
+    local udid address
+    read -r udid address <<<"$fields"
+    local token port
+    token="$(openssl rand -hex 32)"
+    port=$((49152 + RANDOM % 16000))
+
+    (cd "$apple" && xcodegen generate --quiet)
+    (umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$header")
+    : >"$log"
+    (
+        cd "$apple"
+        TEST_RUNNER_HOBWORK_DRIVER_TOKEN="$token" TEST_RUNNER_HOBWORK_DRIVER_ADDRESS="$address" \
+            TEST_RUNNER_HOBWORK_DRIVER_PORT="$port" TEST_RUNNER_HOBWORK_DRIVER_MINUTES="$minutes" \
+            exec nohup xcodebuild -scheme HobworkUITests -destination "id=$udid" \
+            -derivedDataPath build/DerivedData -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+            -only-testing:HobworkUITests/DriverTests/testDrive test
+    ) >"$log" 2>&1 &
+    local pid=$!
+    (umask 077 && printf 'PID=%s\nADDRESS=%s\nPORT=%s\nUDID=%s\n' "$pid" "$address" "$port" "$udid" >"$session")
+    echo "building and launching on $udid, log in $log"
+
+    PID="$pid" ADDRESS="$address" PORT="$port"
+    local deadline=$((SECONDS + 900))
+    while [ $SECONDS -lt $deadline ]; do
+        if ! running; then
+            echo "the driver test ended before it answered:" >&2
+            grep -E 'error:|Refused|failed|skipped|Testing failed' "$log" | tail -20 >&2 || tail -20 "$log" >&2
+            exit 1
+        fi
+        if call GET /info -o /dev/null --max-time 2 2>/dev/null; then
+            echo "driver ready on [$address]:$PORT"
+            call GET /info
+            return
+        fi
+        sleep 2
+    done
+    echo "the driver did not answer within 15 minutes, log in $log" >&2
+    exit 1
+}
+
+quit() {
+    load_session
+    call POST /quit >/dev/null 2>&1 || true
+    local deadline=$((SECONDS + 30))
+    while running && [ $SECONDS -lt $deadline ]; do sleep 1; done
+    if running; then kill "$PID" 2>/dev/null || true; fi
+    rm -f "$session" "$header"
+    echo "driver stopped"
+}
+
+command="${1:-}"
+[ -n "$command" ] || usage
+shift
+case "$command" in
+start) start "$@" ;;
+quit) quit ;;
+screenshot)
+    [ $# -eq 1 ] || usage
+    load_session
+    call GET /screenshot -o "$1"
+    echo "$1"
+    ;;
+tap)
+    [ $# -eq 2 ] || usage
+    load_session
+    call POST "/tap?x=$1&y=$2"
+    ;;
+tap-label)
+    [ $# -eq 1 ] || usage
+    load_session
+    call_text /tap-label "$1"
+    ;;
+type)
+    [ $# -eq 1 ] || usage
+    load_session
+    call_text /type "$1"
+    ;;
+swipe)
+    load_session
+    case $# in
+    1) call POST "/swipe?direction=$1" ;;
+    4) call POST "/swipe?x1=$1&y1=$2&x2=$3&y2=$4" ;;
+    *) usage ;;
+    esac
+    ;;
+home | activate)
+    load_session
+    call POST "/$command"
+    ;;
+tree | info | web)
+    load_session
+    call GET "/$command"
+    ;;
+js | js-async | open)
+    [ $# -eq 1 ] || usage
+    load_session
+    call_text "/$command" "$1"
+    ;;
+*) usage ;;
+esac

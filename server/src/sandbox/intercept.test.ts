@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import { secretFiller, secretGuard } from './gondolin.ts'
+import { egressRules } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 
 const upstream = async () => new Response('upstream')
@@ -15,7 +16,7 @@ test('only allowed requests to intercepted hosts reach the interceptor', async (
         return new Response('intercepted')
       },
     },
-    egress: ['openrouter.ai', 'example.com'],
+    egress: egressRules(['openrouter.ai:443', 'example.com']),
     upstream,
   })!
   expect(await (await hook(new Request('https://hobwork.internal/v1/db')))!.text()).toBe('internal')
@@ -23,6 +24,8 @@ test('only allowed requests to intercepted hosts reach the interceptor', async (
   expect(await hook(new Request('https://example.com/'))).toBeUndefined()
   // Not in the egress allowlist, so Gondolin blocks and reports it.
   expect(await hook(new Request('https://eu.openrouter.ai/api/v1/chat/completions'))).toBeUndefined()
+  // Not on the port egress allows.
+  expect(await hook(new Request('https://openrouter.ai:8443/api/v1/chat/completions'))).toBeUndefined()
   expect(seen).toEqual(['https://openrouter.ai/api/v1/chat/completions'])
 })
 

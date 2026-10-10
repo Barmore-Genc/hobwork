@@ -45,3 +45,21 @@ test('reads static mounts, longest prefix first, and drops any that could serve 
     { prefix: '/photos', dir: 'photos', public: false },
   ])
 })
+
+test('reads uploads with defaults, and drops any that could write elsewhere', () => {
+  const config = parseProjectConfig(
+    JSON.stringify({
+      uploads: {
+        inbox: { prefix: 'prints/inbox/', types: ['.3mf'] },
+        big: { prefix: 'big/', maxBytes: 5 * 1024 ** 3 },
+        up: { prefix: '../etc/' },
+        bare: { prefix: 'inbox' },
+      },
+    }),
+  )
+  expect(config.uploads).toEqual({
+    inbox: { prefix: 'prints/inbox/', maxBytes: 100 * 1024 * 1024, types: ['.3mf'] },
+    big: { prefix: 'big/', maxBytes: 1024 ** 3, types: [] },
+  })
+  expect(parseProjectConfig('{}').uploads).toEqual({})
+})

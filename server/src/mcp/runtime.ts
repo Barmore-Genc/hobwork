@@ -19,6 +19,7 @@ import {
 } from '../runtime/logs.ts'
 import { matchRoute } from '../runtime/routes.ts'
 import type { InvokeOutcome, Runtime } from '../runtime/runtime.ts'
+import { rotateUploadToken, uploadFilesUrl } from '../runtime/uploads.ts'
 import { HOOKS_PREFIX, rotateBranchWebhookToken, rotateWebhookToken, webhookUrl } from '../runtime/webhooks.ts'
 import { MAX_OUTPUT_CHARS, truncateMiddle } from './output.ts'
 
@@ -321,6 +322,25 @@ export function registerRuntimeTools(
       const origin = originOf({ project: p, branch: b })
       const token = rotateBranchWebhookToken(host, p, b, webhook)
       return text(`Webhook URL for branch ${b}: ${webhookUrl(origin, webhook, token)}\nAny HTTP method works. It runs the branch's latest commit.`)
+    },
+  )
+
+  server.registerTool(
+    'rotate_upload_token',
+    {
+      description:
+        'Create or replace the token that lets scripts store files through an upload of hobwork.json ("uploads"), and return it with the URL to PUT files to. A script sends each file as `curl -T <file> -H "Authorization: Bearer <token>" <url><name>`; the path after the URL must stay under the upload\'s prefix. Only the deployed version takes token uploads. The token is shown only now; rotating again invalidates the old one right away.',
+      inputSchema: {
+        hob,
+        upload: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).describe('Upload name from hobwork.json'),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ hob: p, upload }) => {
+      const entry = (await runtime?.config(p))?.config.uploads[upload]
+      if (!entry) throw new ProjectError(`The deployed version of ${p} has no upload called "${upload}"`)
+      const token = rotateUploadToken(host, p, upload)
+      return text(`Upload token: ${token}\nPUT files to: ${uploadFilesUrl(originOf({ project: p }), entry.prefix)}<name>`)
     },
   )
 }

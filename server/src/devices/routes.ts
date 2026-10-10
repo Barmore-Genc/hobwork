@@ -4,10 +4,13 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { ApiRoute } from '../api/router.ts'
 import type { Auth } from '../auth/auth.ts'
 import { getUser, isAllowed } from '../auth/users.ts'
+import { AASA_PATH } from '../apps/app-links.ts'
 import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { createNfcPage, NFC_PATH, page } from './nfc-page.ts'
+import { SurfaceError } from './hob-surfaces.ts'
+import { DeviceError } from './registry.ts'
 import { deviceFromRequest, parsePush } from './socket.ts'
 import {
   createPairingCode,
@@ -19,21 +22,20 @@ import {
   exchangePairingCode,
   freeDeviceName,
   isPlatform,
+  isUserEvent,
+  markDeviceActive,
   PAIRED_PATH,
   PAIRING_REDIRECT_URI,
   pairedUniversalLink,
   redeemWebSessionLink,
   renameDevice,
-  setPushToken,
+  setPush,
   touchDevice,
   type Device,
 } from './store.ts'
 
 // The app checks the address a person typed with this before pairing.
 export const DISCOVERY_PATH = '/.well-known/hobwork'
-// Lets the app open tag URLs (universal links) when it is built with this host
-// in its Associated Domains.
-export const AASA_PATH = '/.well-known/apple-app-site-association'
 const HOST_VERSION = String(
   (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: unknown }).version,
 )
@@ -45,6 +47,16 @@ const RESULTS_PATH = '/api/devices/results'
 // Health samples and query results are larger than other bodies.
 const MAX_DEVICE_BODY_BYTES = 1024 * 1024
 const SELF_PATH = '/api/devices/self'
+const HANDOFF_PATH = '/api/devices/handoff'
+const NFC_LOOKUP_PATH = '/api/devices/nfc/lookup'
+const LIVE_ACTIVITIES_PATH = '/api/devices/live-activities'
+const HOBS_PATH = '/api/devices/hobs'
+const INTENTS_PATH = '/api/devices/intents'
+const WIDGET_PATH = /^\/api\/devices\/widgets\/([a-z0-9][a-z0-9-]*)$/
+const SHARE_PATH = '/api/devices/share'
+const UPLOADS_PATH = '/api/devices/uploads'
+// <hob>/<share target>/<upload ID>
+const UPLOAD_PATH = /^\/api\/devices\/uploads\/([a-z0-9][a-z0-9-]*)\/([A-Za-z0-9_-]{1,64})\/([A-Za-z0-9_-]{1,64})$/
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
 const MAX_RETURN_TO = 2048
@@ -196,6 +208,12 @@ export function createDeviceRoutes(options: {
   }
 
   // Signing out in the app, which removes the device like Settings does.
+  // What the app tells hob UIs about the device and its owner (the bridge's app.info).
+  async function describeSelf(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    json(res, 200, { id: device.id, name: device.name, platform: device.platform, person: { id: device.userId, name: device.owner } })
+  }
+
   async function removeSelf(req: IncomingMessage, res: ServerResponse) {
     const device = requireDevice(req)
     devices.revoke(device.id)
@@ -210,7 +228,7 @@ export function createDeviceRoutes(options: {
     if (!code || !verifier) throw new HttpError(400, 'Send code and codeVerifier')
     try {
       const { device, token } = exchangePairingCode(db, code, verifier)
-      json(res, 200, { deviceId: device.id, name: device.name, token })
+      json(res, 200, { deviceId: device.id, name: device.name, token, push: devices.pushInfo() })
     } catch (err) {
       if (err instanceof DeviceStoreError) throw new HttpError(err.status, err.message)
       throw err
@@ -229,9 +247,9 @@ export function createDeviceRoutes(options: {
   async function push(req: IncomingMessage, res: ServerResponse) {
     const device = requireDevice(req)
     const body = await readJson(req)
-    const value = isObject(body) && body.token === null ? null : parsePush(body)
-    if (value === undefined) throw new HttpError(400, 'Send { token, environment } with a hex APNs token and "sandbox" or "production"')
-    setPushToken(db, device.id, value)
+    const value = isObject(body) && body.grant === null ? null : parsePush(body)
+    if (value === undefined) throw new HttpError(400, 'Send { grant, key } with the relay grant ID and a base64 X25519 key, or { grant: null }')
+    setPush(db, device.id, value)
     res.writeHead(204).end()
   }
 
@@ -239,7 +257,8 @@ export function createDeviceRoutes(options: {
     const device = requireDevice(req)
     const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
     if (!isObject(body)) throw new HttpError(400, 'Send { capability, name, data }')
-    touchDevice(db, device.id)
+    if (isUserEvent(body.capability, body.name)) markDeviceActive(db, device.id)
+    else touchDevice(db, device.id)
     await devices.handleEvent(device.id, { capability: body.capability, name: body.name, data: body.data })
     res.writeHead(204).end()
   }
@@ -257,13 +276,163 @@ export function createDeviceRoutes(options: {
     res.writeHead(204).end()
   }
 
-  const endpoints: Record<string, { method: string; handle: (req: IncomingMessage, res: ServerResponse) => Promise<void> }> = {
-    [TOKEN_PATH]: { method: 'POST', handle: token },
-    [WEB_SESSION_PATH]: { method: 'POST', handle: webSession },
-    [PUSH_PATH]: { method: 'PUT', handle: push },
-    [EVENTS_PATH]: { method: 'POST', handle: events },
-    [RESULTS_PATH]: { method: 'POST', handle: results },
-    [SELF_PATH]: { method: 'DELETE', handle: removeSelf },
+  // A command for another device of the same person, from a hob page in the
+  // app. Answers once that device answered (up to two minutes for NFC), with
+  // the outcome in the body, as the bridge passes it on.
+  async function handoff(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, device, capability, method, args }')
+    markDeviceActive(db, device.id)
+    try {
+      const { device: target, value } = await devices.handoff(device.id, {
+        hob: body.hob,
+        device: body.device,
+        capability: body.capability,
+        method: body.method,
+        args: body.args,
+      })
+      json(res, 200, { ok: true, device: target, value })
+    } catch (err) {
+      if (!(err instanceof DeviceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
+  // Which hob wrote a Hobwork tag, so the app can hand a scan of it to that
+  // hob's open page.
+  async function nfcLookup(req: IncomingMessage, res: ServerResponse) {
+    requireDevice(req)
+    const body = await readJson(req)
+    const found = isObject(body) && typeof body.url === 'string' ? devices.nfcTagHob(body.url) : undefined
+    if (!found) throw new HttpError(404, 'This is not a tag of this Hobwork host')
+    json(res, 200, found)
+  }
+
+  // The web bridge's native.liveActivities from a hob page in the app. A start
+  // is for this device, which starts the activity itself from the answer;
+  // update and end reach every device that shows it.
+  async function liveActivity(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body) || typeof body.hob !== 'string' || !['start', 'update', 'end'].includes(body.op as string)) {
+      throw new HttpError(400, 'Send { hob, op: "start" | "update" | "end", id?, args }')
+    }
+    markDeviceActive(db, device.id)
+    const la = devices.liveActivities
+    try {
+      if (body.op === 'start') json(res, 200, la.startHere(body.hob, device, body.args))
+      else if (body.op === 'update') json(res, 200, await la.update(body.hob, body.id, body.args, 'all'))
+      else json(res, 200, await la.end(body.hob, body.id, body.args, 'all'))
+    } catch (err) {
+      if (!(err instanceof DeviceError)) throw err
+      json(res, err.code === 'unsupported' ? 403 : 400, { error: err.message, code: err.code })
+    }
+  }
+
+  // Hobs with a widget or intents, for the widget's and Shortcuts' pickers.
+  async function hobs(req: IncomingMessage, res: ServerResponse) {
+    requireDevice(req)
+    json(res, 200, { hobs: await devices.surfaces.hobs() })
+  }
+
+  async function widget(req: IncomingMessage, res: ServerResponse, hob: string) {
+    const device = requireDevice(req)
+    touchDevice(db, device.id)
+    try {
+      json(res, 200, await devices.surfaces.widget(device, hob))
+    } catch (err) {
+      if (err instanceof SurfaceError) json(res, err.status, { error: err.message, code: err.code })
+      else throw err
+    }
+  }
+
+  // Answers 200 either way, so Shortcuts can say what went wrong.
+  async function intent(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, intent, parameters? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 200, { ok: true, ...(await devices.surfaces.runIntent(device, { hob: body.hob, intent: body.intent, parameters: body.parameters })) })
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
+  // Files for a share target, uploaded in parts like files.upload in a hob's
+  // app, as the device's owner.
+  async function startUpload(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, target, name, size, type? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 201, await devices.surfaces.startUpload(device, body))
+    } catch (err) {
+      if (err instanceof SurfaceError) json(res, err.status, { error: err.message, code: err.code })
+      else throw err
+    }
+  }
+
+  async function upload(req: IncomingMessage, res: ServerResponse, hob: string, target: string, id: string, search: URLSearchParams) {
+    const device = requireDevice(req)
+    const surfaces = devices.surfaces
+    try {
+      if (req.method === 'GET') return json(res, 200, await surfaces.uploadStatus(device, hob, target, id))
+      if (req.method === 'DELETE') {
+        await surfaces.cancelUpload(device, hob, target, id)
+        res.writeHead(204).end()
+        return
+      }
+      if (req.method !== 'PUT') {
+        res.writeHead(405, { allow: 'GET, PUT, DELETE' }).end()
+        return
+      }
+      const offset = Number(search.get('offset'))
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new SurfaceError(400, 'bad_request', 'offset must say where this part starts')
+      touchDevice(db, device.id)
+      const result = await surfaces.uploadChunk(device, hob, target, id, offset, req)
+      json(res, 'done' in result ? 201 : 200, result)
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      // An answer before the body was read: the app may still be sending it.
+      if (!req.complete) res.setHeader('connection', 'close')
+      json(res, err.status, { error: err.message, code: err.code })
+    }
+  }
+
+  // Runs a share target's route once its files are in. Answers 200 either
+  // way, so the share sheet can say what went wrong.
+  async function share(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, target, url?, text?, files? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 200, { ok: true, ...(await devices.surfaces.runShare(device, body)) })
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
+  type Handle = (req: IncomingMessage, res: ServerResponse) => Promise<void>
+  const endpoints: Record<string, Record<string, Handle>> = {
+    [TOKEN_PATH]: { POST: token },
+    [WEB_SESSION_PATH]: { POST: webSession },
+    [PUSH_PATH]: { PUT: push },
+    [EVENTS_PATH]: { POST: events },
+    [RESULTS_PATH]: { POST: results },
+    [SELF_PATH]: { GET: describeSelf, DELETE: removeSelf },
+    [HANDOFF_PATH]: { POST: handoff },
+    [NFC_LOOKUP_PATH]: { POST: nfcLookup },
+    [LIVE_ACTIVITIES_PATH]: { POST: liveActivity },
+    [HOBS_PATH]: { GET: hobs },
+    [INTENTS_PATH]: { POST: intent },
+    [UPLOADS_PATH]: { POST: startUpload },
+    [SHARE_PATH]: { POST: share },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {
@@ -312,14 +481,35 @@ export function createDeviceRoutes(options: {
       redirect(res, used.returnTo)
       return true
     }
+    const widgetMatch = WIDGET_PATH.exec(pathname)
+    if (widgetMatch && req.method === 'GET') {
+      try {
+        await widget(req, res, widgetMatch[1]!)
+      } catch (err) {
+        if (err instanceof HttpError) json(res, err.status, { error: err.message })
+        else throw err
+      }
+      return true
+    }
+    const uploadMatch = UPLOAD_PATH.exec(pathname)
+    if (uploadMatch) {
+      try {
+        await upload(req, res, uploadMatch[1]!, uploadMatch[2]!, uploadMatch[3]!, search)
+      } catch (err) {
+        if (err instanceof HttpError) json(res, err.status, { error: err.message })
+        else throw err
+      }
+      return true
+    }
     const endpoint = endpoints[pathname]
     if (!endpoint) return false
-    if (req.method !== endpoint.method) {
-      res.writeHead(405, { allow: endpoint.method }).end()
+    const handle = endpoint[req.method ?? '']
+    if (!handle) {
+      res.writeHead(405, { allow: Object.keys(endpoint).join(', ') }).end()
       return true
     }
     try {
-      await endpoint.handle(req, res)
+      await handle(req, res)
     } catch (err) {
       if (err instanceof HttpError) json(res, err.status, { error: err.message })
       else throw err

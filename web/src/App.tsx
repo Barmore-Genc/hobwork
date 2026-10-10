@@ -71,6 +71,14 @@ export default function App() {
   useEffect(loadSession, [loadSession])
   useEffect(() => setSignedOutHandler(loadSession), [loadSession])
 
+  // Hobs use it for your local time, unless you chose a zone in Settings.
+  const signedIn = Boolean(session?.user)
+  useEffect(() => {
+    if (!signedIn) return
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (zone) api.reportTimeZone(zone).catch(() => {})
+  }, [signedIn])
+
   useEffect(() => {
     if (!session?.user || pathname !== '/login') return
     const returnTo = search.get('returnTo') ?? '/'

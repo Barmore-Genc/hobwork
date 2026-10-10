@@ -12,14 +12,14 @@ import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 const catalog = parseCatalog({
   data: [
     { id: 'deepseek/deepseek-v4.1-flash', architecture: { output_modalities: ['text'] } },
-    { id: 'google/gemini-2.5-flash', architecture: { output_modalities: ['text'] } },
+    { id: 'google/gemini-2.5-flash', architecture: { output_modalities: ['text'], input_modalities: ['text', 'image'] } },
     { id: 'typesafe/jev-1.13', architecture: { output_modalities: ['decisions'] } },
     { id: 'openai/text-embedding-3-small', architecture: { output_modalities: ['embeddings'] } },
     { id: 'qwen/qwen3-embedding-8b', architecture: { output_modalities: ['embeddings'] } },
   ],
 })
 const ai: AiConfig = {
-  models: { model: 'deepseek/deepseek-v4.1-flash', decisionModel: 'typesafe/jev-1.13', embeddingModel: 'openai/text-embedding-3-small' },
+  models: { model: 'deepseek/deepseek-v4.1-flash', decisionModel: 'typesafe/jev-1.13', embeddingModel: 'openai/text-embedding-3-small', visionModel: 'google/gemini-3.1-flash-lite' },
   catalog: async () => catalog,
 }
 
@@ -85,6 +85,7 @@ test('models must exist on OpenRouter and be of the right kind', async () => {
     [{ model: 'typesafe/jev-1.13' }, 'typesafe/jev-1.13 does not answer with text'],
     [{ decisionModel: 'google/gemini-2.5-flash' }, 'google/gemini-2.5-flash is not a decision model'],
     [{ embeddingModel: 'google/gemini-2.5-flash' }, 'google/gemini-2.5-flash is not an embedding model'],
+    [{ visionModel: 'deepseek/deepseek-v4.1-flash' }, 'deepseek/deepseek-v4.1-flash does not read images'],
     [{ model: 'two words' }, '"two words" is not a model ID'],
   ] as const) {
     const res = await call('PUT', '/api/settings/ai', { ...body, limits: DEFAULT_LIMITS })
@@ -110,10 +111,12 @@ test('a project has its own models and limits, and shows its usage', async () =>
   })
 
   const limits = { ...DEFAULT_LIMITS, throttle: false }
-  const saved = await (await call('PUT', '/api/projects/filament/ai', { model: 'google/gemini-2.5-flash', decisionModel: null, limits })).json()
+  const saved = await (
+    await call('PUT', '/api/projects/filament/ai', { model: 'google/gemini-2.5-flash', decisionModel: null, visionModel: 'google/gemini-2.5-flash', limits })
+  ).json()
   expect(saved).toMatchObject({
-    project: { model: 'google/gemini-2.5-flash', decisionModel: null, limits, updatedBy: 'Kaan' },
-    models: { ...ai.models, model: 'google/gemini-2.5-flash' },
+    project: { model: 'google/gemini-2.5-flash', decisionModel: null, visionModel: 'google/gemini-2.5-flash', limits, updatedBy: 'Kaan' },
+    models: { ...ai.models, model: 'google/gemini-2.5-flash', visionModel: 'google/gemini-2.5-flash' },
     limits,
   })
 

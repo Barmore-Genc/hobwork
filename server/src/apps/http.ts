@@ -13,8 +13,17 @@ import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
 import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from '../runtime/webhooks.ts'
-import { createAppCode, findAppSession, redeemAppCode, type AppScope } from './sessions.ts'
+import { createAppCode, findAppSession, redeemAppCode, type AppScope, type AppSession } from './sessions.ts'
+import type { Caller } from '../../../packages/sdk/src/people.ts'
+import { getDevice, markDeviceActive } from '../devices/store.ts'
+import { personOf } from '../people.ts'
 import { findShareLink, isShareToken } from './share-links.ts'
+import { HttpError, readJson } from '../http.ts'
+import { createUploads, isUploadToken, runUploadTriggers, uploadOfToken, type Completed, type UploadTarget } from '../runtime/uploads.ts'
+import { UPLOAD_FILES_PATH, UPLOADS_PATH } from '../../../packages/sdk/src/uploads.ts'
+import { decodeFilePath } from '../runtime/files.ts'
+import { AASA_PATH, aasaFile, linkRules } from './app-links.ts'
+import { DEFAULT_APPLE_APP_ID } from '../config.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
 export const APP_AUTH_PATH = '/auth/app'
@@ -34,7 +43,7 @@ type Resolved = { project: Project; target: AppTarget; origin: string; scope: Ap
 
 // Who a request to an app origin acts for: a signed-in user's app session, or
 // a share link (as a cookie, or as a bearer token from an agent).
-type Viewer = { shared: false } | { shared: true; readOnly: boolean; bearer: boolean }
+type Viewer = { shared: false; session: AppSession } | { shared: true; readOnly: boolean; bearer: boolean }
 
 const EXPIRED_LINK = 'This link has expired or was revoked. Ask for a new one, or open the app from Hobwork.'
 
@@ -69,6 +78,7 @@ export function createAppHttp(options: {
   origins: AppOrigins
   publicUrl: string
   runtime?: Runtime
+  appleAppId?: string
   // Serves /theme/theme.css and its fonts, which project UIs load from their own origin.
   serveTheme: (req: IncomingMessage, res: ServerResponse, pathname: string) => boolean
 }) {
@@ -83,6 +93,19 @@ export function createAppHttp(options: {
   // cannot know. Its cookie is partitioned by top-level site, so a page that
   // frames the app elsewhere gets no session from it.
   const sharedFrameHeaders = uiHeaders('*')
+  const uploads = createUploads(host)
+  const appleAppId = options.appleAppId ?? DEFAULT_APPLE_APP_ID
+
+  function sendAasa(res: ServerResponse, rules: ReturnType<typeof linkRules>) {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600', 'x-content-type-options': 'nosniff' })
+    res.end(JSON.stringify(aasaFile(appleAppId, rules)))
+  }
+
+  // Each hob's own rules. A version whose hobwork.json cannot be read gets the defaults.
+  async function appLinks(res: ServerResponse, app: Resolved) {
+    const declared = await runtime?.appLinks(app.target.project, app.target.branch).catch(() => undefined)
+    sendAasa(res, linkRules(declared?.appLinks, declared?.static ?? []))
+  }
 
   async function resolve(target: AppTarget): Promise<Resolved | undefined> {
     const project = getProject(host, target.project)
@@ -184,11 +207,21 @@ export function createAppHttp(options: {
       const link = findShareLink(host.db, bearer, app.scope)
       return link ? { shared: true, readOnly: link.readOnly, bearer: true } : 'expired'
     }
-    if (appUser(req, app)) return { shared: false }
+    const session = appUser(req, app)
+    if (session) return { shared: false, session }
     const cookie = parseCookies(req.headers.cookie).get(shareCookieName)
     if (cookie === undefined || !shareCookieUsable(req, pathname)) return undefined
     const link = findShareLink(host.db, cookie, app.scope)
     return link ? { shared: true, readOnly: link.readOnly, bearer: false } : 'expired'
+  }
+
+  // Read on every request, so a renamed device or a new time zone shows at once.
+  function callerOf(session: AppSession): Caller {
+    const device = session.deviceId === null ? undefined : getDevice(host.db, session.deviceId)
+    return {
+      person: personOf(host.db, session.user),
+      device: device ? { name: device.name, platform: device.platform } : null,
+    }
   }
 
   // `listed`: the request comes from an app that hobwork.json lets in, so a
@@ -298,6 +331,74 @@ export function createAppHttp(options: {
     await serveWebhook(req, res, runtime, { project, branch, name, url })
   }
 
+  async function uploadTriggers(app: Resolved, done: Completed, caller: Caller | undefined) {
+    if (runtime) await runUploadTriggers(runtime, app.target.project, app.target.branch, done, caller)
+  }
+
+  // Uploads into the hob's files: <app origin>/_hobwork/uploads[/<id>] in
+  // chunks from the app, and <app origin>/_hobwork/files/<path> in one
+  // request, from the app or from a script with an upload token.
+  async function upload(req: IncomingMessage, res: ServerResponse, app: Resolved, url: URL) {
+    const { pathname } = url
+    if (!runtime) return sendJson(res, 503, { error: 'This Hobwork host does not run hob apps' }, frameHeaders)
+    const header = req.headers.authorization
+    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined
+    let target: Omit<UploadTarget, 'uploads'>
+    let caller: Caller | undefined
+    if (bearer !== undefined && isUploadToken(bearer)) {
+      // A bearer token is never sent by the browser on its own, so it needs no CSRF check.
+      const name = app.target.branch === undefined ? uploadOfToken(host, app.project.id, bearer) : undefined
+      if (!name) return sendJson(res, 401, { error: 'This upload token is not valid. Ask for a new one on the hob\'s page in Hobwork' }, frameHeaders)
+      target = { project: app.target.project, projectId: app.project.id, uploader: { token: name } }
+    } else {
+      const cross = await crossApp(req, app, pathname)
+      if (cross.error) return sendJson(res, 403, { error: cross.error }, frameHeaders)
+      const session = appUser(req, app)
+      if (!session) return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
+      const error = csrfError(req, app, cross.listed)
+      if (error) return sendJson(res, 403, { error }, frameHeaders)
+      if (session.deviceId !== null) markDeviceActive(host.db, session.deviceId)
+      caller = callerOf(session)
+      target = { project: app.target.project, projectId: app.project.id, branch: app.target.branch, uploader: { userId: session.user.id } }
+    }
+    try {
+      const full: UploadTarget = { ...target, uploads: (await runtime.uploads(app.target.project, app.target.branch)).uploads }
+      const finish = async (done: Completed) => {
+        await uploadTriggers(app, done, caller)
+        sendJson(res, 201, { done: true, file: done.file }, frameHeaders)
+      }
+      if (pathname.startsWith(`${UPLOAD_FILES_PATH}/`)) {
+        if (req.method !== 'PUT') throw new HttpError(405, 'Send the file with PUT')
+        const path = decodeFilePath(pathname.slice(UPLOAD_FILES_PATH.length + 1))
+        if (path === undefined) throw new HttpError(400, 'This is not a valid file path')
+        return await finish(await uploads.single(full, path, req))
+      }
+      const id = pathname.slice(UPLOADS_PATH.length + 1)
+      if (!id) {
+        if (req.method !== 'POST') throw new HttpError(405, 'Start an upload with POST')
+        return sendJson(res, 201, await uploads.start(full, await readJson(req)), frameHeaders)
+      }
+      if (id.includes('/')) throw new HttpError(404, 'Not found')
+      if (req.method === 'GET') return sendJson(res, 200, uploads.status(full, id), frameHeaders)
+      if (req.method === 'DELETE') {
+        await uploads.cancel(full, id)
+        res.writeHead(204, frameHeaders)
+        return res.end()
+      }
+      if (req.method !== 'PUT') throw new HttpError(405, 'Send parts of an upload with PUT')
+      const offset = Number(url.searchParams.get('offset'))
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, 'offset must say where this part starts')
+      const result = await uploads.chunk(full, id, offset, req)
+      if ('file' in result) return await finish(result)
+      return sendJson(res, 200, result, frameHeaders)
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err
+      // An answer before the body was read: the client may still be sending it.
+      if (!req.complete) res.setHeader('connection', 'close')
+      return sendJson(res, err.status, { error: err.message }, frameHeaders)
+    }
+  }
+
   // Webhook URLs live in other systems, so the old name of a renamed hob still works.
   function renamedApp(hostHeader: string | undefined) {
     const label = origins.labelOf(hostHeader)
@@ -323,9 +424,13 @@ export function createAppHttp(options: {
     }
     const url = new URL(req.url ?? '/', app.origin)
     const { pathname, search } = url
+    if (pathname === AASA_PATH && SAFE_METHODS.has(req.method ?? 'GET')) return appLinks(res, app)
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
     if (pathname === SHARE_PATH) return share(req, res, app, url.searchParams)
     if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
+    if (pathname === UPLOADS_PATH || pathname.startsWith(`${UPLOADS_PATH}/`) || pathname.startsWith(`${UPLOAD_FILES_PATH}/`)) {
+      return upload(req, res, app, url)
+    }
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
     if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
     const mount = pathname.startsWith(API_PREFIX) || pathname.startsWith(RESERVED_PREFIX) ? undefined : await staticMountOf(app, pathname)
@@ -344,6 +449,7 @@ export function createAppHttp(options: {
       if (page) return redirect(res, signInUrl(app, `${app.origin}${pathname}${search}`), frameHeaders)
       return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
     }
+    if (!viewer.shared && viewer.session.deviceId !== null) markDeviceActive(host.db, viewer.session.deviceId)
     const frameAncestors = viewer.shared ? '*' : publicUrl
     const headers = viewer.shared ? sharedFrameHeaders : frameHeaders
     if (pathname.startsWith(API_PREFIX)) {
@@ -360,6 +466,7 @@ export function createAppHttp(options: {
         path: pathname.slice(API_PREFIX.length - 1),
         url: url.href,
         headers: uiHeaders(frameAncestors, await cspOf(app)),
+        caller: viewer.shared ? undefined : callerOf(viewer.session),
       })
     }
     if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', headers)
@@ -370,6 +477,22 @@ export function createAppHttp(options: {
   return {
     // True when the request is for an app origin rather than Hobwork itself.
     isAppRequest: (req: IncomingMessage) => origins.labelOf(req.headers.host) !== undefined,
+
+    // apple-app-site-association on the apps host itself, which iOS reads for
+    // `applinks:*.<apps host>`. Every hob shares it, so it has only the paths
+    // no hob page has; the app applies each hob's own rules.
+    handleAppsHost(req: IncomingMessage, res: ServerResponse): boolean {
+      let hostname: string
+      try {
+        hostname = new URL(`http://${req.headers.host}`).hostname
+      } catch {
+        return false
+      }
+      const { pathname } = new URL(req.url ?? '/', 'http://localhost')
+      if (hostname !== origins.domain || pathname !== AASA_PATH || !SAFE_METHODS.has(req.method ?? 'GET')) return false
+      sendAasa(res, linkRules(undefined, []))
+      return true
+    },
 
     handle(req: IncomingMessage, res: ServerResponse) {
       serveApp(req, res).catch((err: unknown) => sendRuntimeError(res, err))

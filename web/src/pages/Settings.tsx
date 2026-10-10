@@ -8,6 +8,7 @@ import { BackupSettings } from './BackupSettings.tsx'
 import { AiSection } from './settings/Ai.tsx'
 import { DevicesSection } from './settings/Devices.tsx'
 import { HomeAssistantSection } from './settings/HomeAssistant.tsx'
+import { TimeZoneSection } from './settings/TimeZone.tsx'
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err)
@@ -213,6 +214,8 @@ export function SettingsPage() {
           </ul>
         )}
       </section>
+
+      <TimeZoneSection />
 
       <DevicesSection />
 

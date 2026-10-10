@@ -6,6 +6,7 @@ import { purgeTrash } from './project-deletion.ts'
 import { listProjects } from './projects.ts'
 import { removeOrphanBuilds } from './runtime/build-cleanup.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import { expireUploads } from './runtime/uploads.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -15,8 +16,8 @@ type HousekeepingDeps = {
 }
 
 // Daily cleanup: deleted projects past their time in the trash, merged
-// branches nobody uses, builds nothing needs any more, old AI request records
-// and expired share links.
+// branches nobody uses, builds nothing needs any more, old AI request records,
+// expired share links and uploads nobody finished.
 export async function runHousekeeping(host: Host, deps: HousekeepingDeps = {}, now = Date.now()) {
   const { runtime, branches } = deps
   for (const entry of purgeTrash(host, now)) console.log(`Removed ${entry} from the trash`)
@@ -27,6 +28,7 @@ export async function runHousekeeping(host: Host, deps: HousekeepingDeps = {}, n
   for (const { name } of listProjects(host)) await runtime?.removeOldBuilds(name)
   pruneAiRequests(host.db, now)
   pruneShareLinks(host.db, now)
+  await expireUploads(host, now)
 }
 
 export function startHousekeeping(host: Host, deps: HousekeepingDeps = {}, intervalMs = DAY_MS) {

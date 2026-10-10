@@ -51,7 +51,7 @@ enum TagIntentError: Error, CustomLocalizedStringResourceConvertible {
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
-        case .notPaired: "Open Hobwork and connect this iPhone to your Hobwork host first."
+        case .notPaired: "Open Hobwork and connect it to your Hobwork host first."
         case let .unreachable(reason): "Couldn't reach your Hobwork host: \(reason)"
         }
     }
@@ -64,6 +64,18 @@ struct HobworkShortcuts: AppShortcutsProvider {
             phrases: ["Scan a tag with \(.applicationName)", "Scan an NFC tag with \(.applicationName)"],
             shortTitle: "Scan NFC Tag",
             systemImageName: "wave.3.right"
+        )
+        AppShortcut(
+            intent: RunHobIntent(),
+            phrases: ["Run \(\.$action) with \(.applicationName)", "Run a hob action with \(.applicationName)"],
+            shortTitle: "Run Hob Action",
+            systemImageName: "bolt"
+        )
+        AppShortcut(
+            intent: OpenHobPageIntent(),
+            phrases: ["Open \(\.$hob) in \(.applicationName)", "Open a hob in \(.applicationName)"],
+            shortTitle: "Open Hob Page",
+            systemImageName: "rectangle.portrait.on.rectangle.portrait"
         )
     }
 }

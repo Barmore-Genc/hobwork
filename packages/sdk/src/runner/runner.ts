@@ -169,6 +169,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         invocation,
         request: message.request ? toRequest(message.request) : undefined,
         params: message.params ?? {},
+        caller: message.caller ?? null,
         payload: message.payload,
         fetch: globalThis.fetch.bind(globalThis),
         log,
@@ -177,6 +178,10 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         ha,
         device: devices.device,
         devices: devices.devices,
+        people: devices.people,
+        person: devices.person,
+        notifications: devices.notifications,
+        liveActivities: devices.liveActivities,
         secrets,
       }
       const value = await current.run(invocation, () => handler(ctx))

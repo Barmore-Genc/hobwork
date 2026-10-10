@@ -116,14 +116,21 @@ test('update_ha_services follows hob access', async () => {
 
 test('hob access sets the models of its hobs, and only access to all hobs sets the host-wide ones', async () => {
   const limited = await connect({ readOnly: false, projects: ['filament'] })
-  const set = JSON.parse(textOf(await limited.call('set_ai_model', { hob: 'filament', model: 'google/gemini-2.5-flash', decisionModel: false })))
+  const set = JSON.parse(
+    textOf(await limited.call('set_ai_model', { hob: 'filament', model: 'google/gemini-2.5-flash', decisionModel: false, visionModel: 'qwen/qwen3-vl-8b-instruct' })),
+  )
   expect(set).toEqual({
-    hob: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null },
-    uses: { model: 'google/gemini-2.5-flash', decisionModel: null, embeddingModel: 'openai/text-embedding-3-small' },
+    hob: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null, visionModel: 'qwen/qwen3-vl-8b-instruct' },
+    uses: {
+      model: 'google/gemini-2.5-flash',
+      decisionModel: null,
+      embeddingModel: 'openai/text-embedding-3-small',
+      visionModel: 'qwen/qwen3-vl-8b-instruct',
+    },
   })
   expect(JSON.parse(textOf(await limited.call('get_hob', { hob: 'filament' }))).ai).toMatchObject({
     models: { model: 'google/gemini-2.5-flash', decisionModel: null },
-    ownModels: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null },
+    ownModels: { model: 'google/gemini-2.5-flash', decisionModel: false, embeddingModel: null, visionModel: 'qwen/qwen3-vl-8b-instruct' },
   })
   expect(projectAiSettings(mcp.host.db, requireProject(mcp.host, 'filament').id).updatedBy).toBe('agent-0')
   expect((await limited.call('set_ai_model', { hob: 'alarms', model: 'x/y' })).isError).toBe(true)
@@ -134,8 +141,13 @@ test('hob access sets the models of its hobs, and only access to all hobs sets t
   const full = await connect({ readOnly: false, projects: null })
   const hostWide = JSON.parse(textOf(await full.call('set_ai_model', { decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' })))
   expect(hostWide).toEqual({
-    host: { model: null, decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' },
-    uses: { model: 'deepseek/deepseek-v4.1-flash', decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b' },
+    host: { model: null, decisionModel: 'respan/span-01-lite', embeddingModel: 'qwen/qwen3-embedding-8b', visionModel: null },
+    uses: {
+      model: 'deepseek/deepseek-v4.1-flash',
+      decisionModel: 'respan/span-01-lite',
+      embeddingModel: 'qwen/qwen3-embedding-8b',
+      visionModel: 'google/gemini-3.1-flash-lite',
+    },
   })
   // Leaving a field out keeps it; null goes back to the level above.
   await full.call('set_ai_model', { hob: 'filament', model: null })
@@ -143,6 +155,7 @@ test('hob access sets the models of its hobs, and only access to all hobs sets t
     model: 'deepseek/deepseek-v4.1-flash',
     decisionModel: null,
     embeddingModel: 'qwen/qwen3-embedding-8b',
+    visionModel: 'qwen/qwen3-vl-8b-instruct',
   })
 
   const readOnly = await connect({ readOnly: true, projects: null })

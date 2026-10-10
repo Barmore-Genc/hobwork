@@ -19,7 +19,7 @@ import {
   type SpawnOptions,
 } from './sandbox.ts'
 import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
-import { hostMatches } from './egress.ts'
+import { egressAllows, egressHosts, egressRules, privateEgressAllows } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 import { checkIsolation, createVmDir, isolationMode, prepareQemu, startVfsWorker, type VfsWorker, type VmDir } from './isolation.ts'
 import { relativePaths, toProviders } from './mounts.ts'
@@ -48,24 +48,37 @@ const hostNetworks = hostNetworksBlockList()
 export async function createGondolinSandbox(options: SandboxOptions): Promise<Sandbox> {
   const internal = options.internal
   const egress = options.egress ?? []
+  const rules = egressRules(egress)
+  const privateEgress = options.privateEgress ?? []
   const onBlocked = options.onEgressBlocked
   const reportRefusal = refusalReporter(options.onSecretRefused)
   const hooks = createHttpHooks({
-    allowedHosts: egress,
+    allowedHosts: egressHosts(rules),
+    // isIpAllowed below refuses internal ranges itself, except for targets
+    // the host's operator allows.
+    blockInternalRanges: false,
     secrets: options.secrets,
     // Gondolin checks the allowlist only after resolving the name, so a host
     // that does not resolve would fail with a 502 and never reach the blocked
     // callback. Checking the name first answers 403 and reports it.
     isRequestAllowed: (request) => {
       const { hostname, port, protocol } = new URL(request.url)
-      if (hostname === INTERNAL_HOST || hostMatches(hostname, egress)) return true
-      onBlocked?.({ hostname, ip: '', port: Number(port) || (protocol === 'https:' ? 443 : 80) })
+      const target = Number(port) || (protocol === 'https:' ? 443 : 80)
+      if (hostname === INTERNAL_HOST || egressAllows(rules, hostname, target)) return true
+      onBlocked?.({ hostname, ip: '', port: target })
       return false
     },
     // Gondolin's own range check misses NAT64, 6to4 and IPv4-compatible
     // encodings of private IPv4 addresses and the LAN's global IPv6 prefixes,
-    // so an allowed name could still lead to a LAN device.
-    isIpAllowed: (info) => isPublicAddress(info.ip, { extraBlocked: hostNetworks() }),
+    // so an allowed name could still lead to a LAN device. It also runs on
+    // every connection, so a name that resolves differently later is checked again.
+    isIpAllowed: (info) => {
+      // isRequestAllowed already reported it.
+      if (!egressAllows(rules, info.hostname, info.port)) return false
+      if (isPublicAddress(info.ip, { extraBlocked: hostNetworks() }) || privateEgressAllows(privateEgress, info)) return true
+      onBlocked?.({ hostname: info.hostname, ip: info.ip, port: info.port, private: true })
+      return false
+    },
     // Streamed bodies have no size limit, so only hobwork.internal handlers,
     // which bound what they read, can opt in.
     streamRequestBody: (request) =>
@@ -88,21 +101,13 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   const hook = requestHook({
     internal,
     intercept: options.intercept,
-    egress,
+    egress: rules,
     upstream: upstreamFetch((request) => {
       const blocked = refuse(request)
       if (blocked) throw new Error(blocked)
       return fillSecrets(request)
     }),
   })
-  const isIpAllowed = hooks.httpHooks.isIpAllowed
-  if (isIpAllowed && onBlocked) {
-    hooks.httpHooks.isIpAllowed = async (info) => {
-      const allowed = await isIpAllowed(info)
-      if (!allowed) onBlocked({ hostname: info.hostname, ip: info.ip, port: info.port })
-      return allowed
-    }
-  }
 
   checkIsolation()
   const mounts = options.mounts ?? {}

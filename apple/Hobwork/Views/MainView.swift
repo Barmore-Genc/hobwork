@@ -4,10 +4,6 @@ import WebKit
 struct MainView: View {
     let model: AppModel
 
-    #if os(iOS)
-        @State private var showingSettings = false
-    #endif
-
     var body: some View {
         #if os(macOS)
             content
@@ -41,7 +37,7 @@ struct MainView: View {
                             Button("Home", systemImage: "house") { model.web.goHome() }
                             Spacer()
                             Button {
-                                showingSettings = true
+                                model.sheet = .settings
                             } label: {
                                 Label("Settings", systemImage: "gearshape")
                                     .overlay(alignment: .topTrailing) {
@@ -52,8 +48,20 @@ struct MainView: View {
                         }
                     }
             }
-            .sheet(isPresented: $showingSettings) {
-                SettingsView(model: model)
+            .sheet(item: sheet) { sheet in
+                switch sheet {
+                case .settings:
+                    SettingsView(model: model)
+                case .alarms:
+                    NavigationStack {
+                        AlarmsView(model: model)
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") { model.sheet = nil }
+                                }
+                            }
+                    }
+                }
             }
             .alert(model.nfcNotice ?? "", isPresented: nfcNoticeShown) {
                 Button("OK") {}
@@ -79,8 +87,12 @@ struct MainView: View {
     }
 
     #if os(iOS)
+        private var sheet: Binding<AppModel.Sheet?> {
+            Binding(get: { model.sheet }, set: { model.sheet = $0 })
+        }
+
         private var nfcNoticeShown: Binding<Bool> {
-            Binding(get: { model.nfcNotice != nil && !showingSettings }, set: { if !$0 { model.nfcNotice = nil } })
+            Binding(get: { model.nfcNotice != nil && model.sheet == nil }, set: { if !$0 { model.nfcNotice = nil } })
         }
     #endif
 }

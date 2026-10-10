@@ -1,14 +1,23 @@
-import type { Device, DeviceInfo } from './devices.ts'
+import type { Device, DeviceInfo, NotificationControl } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
+import type { LiveActivityControl } from './live-activities.ts'
+import type { Caller, Person, PersonDevices } from './people.ts'
 import type { FileInfo } from './runner/protocol.ts'
 
 export type * from './devices.ts'
 export type * from './homeassistant.ts'
+export type * from './people.ts'
+export type * from './live-activities.ts'
+export type * from './widgets.ts'
+export type * from './share-targets.ts'
+export * from './time.ts'
 export { DeviceError } from './runner/device-client.ts'
 export { FilesError } from './runner/files-client.ts'
 export type { FileInfo, FilesErrorCode } from './runner/protocol.ts'
 export { HomeAssistantError } from './runner/ha-client.ts'
 export * from './openrouter.ts'
+export { vector } from './vector.ts'
+export type { UploadEvent, UploadedFile } from './uploads.ts'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -31,6 +40,10 @@ export type Context = {
   request?: Request
   // Values of `:name` segments in the route path.
   params: Record<string, string>
+  // Who made the request, for routes called from the hob's UI by a signed-in
+  // person. null for crons, webhooks, triggers, manual invocations, share
+  // links and agents.
+  caller: Caller | null
   // The event for triggers (Home Assistant trigger variables, a DeviceEvent
   // such as NotificationActionEvent), or what a manual invocation passed.
   payload?: unknown
@@ -49,6 +62,15 @@ export type Context = {
   device(name: string): Device
   // Paired devices with their capabilities and whether they are connected.
   devices(): Promise<DeviceInfo[]>
+  // Everyone who can sign in to Hobwork.
+  people(): Promise<Person[]>
+  // A person's devices by Person.id, e.g. ctx.person(ctx.caller.person.id).lastActiveDevice().
+  person(id: number): PersonDevices
+  // Update or withdraw a notification sent with ctx.device or ctx.person, by its ID.
+  notifications: NotificationControl
+  // Update or end a Live Activity started with ctx.device or ctx.person, by its
+  // ID, on every device that shows it.
+  liveActivities: LiveActivityControl
   // Secret name -> placeholder. Send the placeholder over https in the
   // Authorization header (or a header the secret lists) to a host the secret is
   // bound to, and Hobwork replaces it with the real value on the way out. It is

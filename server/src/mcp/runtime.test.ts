@@ -27,6 +27,7 @@ beforeEach(async () => {
       crons: { cleanup: { schedule: '0 3 * * *', handler: 'src/cleanup.ts' } },
       webhooks: { scanned: { handler: 'src/scanned.ts' } },
       triggers: { button: { homeassistant: { trigger: 'state' }, handler: 'src/button.ts' } },
+      uploads: { inbox: { prefix: 'prints/inbox/' } },
     }),
     'handlers/spool.js': `export default async (ctx) => { console.log('looking up', ctx.params.id); return { id: ctx.params.id } }`,
     'handlers/cleanup.js': `export default async () => {
@@ -111,6 +112,12 @@ test('tail_logs returns lines logged while it waits', async () => {
 test('rotate_webhook_token returns a working URL on the hob app origin', async () => {
   const text = await ok('rotate_webhook_token', { hob: 'filament', webhook: 'scanned' })
   expect(text).toMatch(/https?:\/\/filament\.[^/\s]+\/_hobwork\/hooks\/scanned\/[\w-]{43}/)
+})
+
+test('rotate_upload_token returns a token and where scripts send files', async () => {
+  const text = await ok('rotate_upload_token', { hob: 'filament', upload: 'inbox' })
+  expect(text).toMatch(/^Upload token: hwu_[\w-]{43}\nPUT files to: https?:\/\/filament\.[^/\s]+\/_hobwork\/files\/prints\/inbox\/<name>$/)
+  expect((await mcp.call('rotate_upload_token', { hob: 'filament', upload: 'outbox' })).isError).toBe(true)
 })
 
 test('invoke runs a branch preview, and branch webhooks get their own URL', async () => {

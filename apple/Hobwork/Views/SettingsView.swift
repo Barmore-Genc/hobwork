@@ -42,9 +42,20 @@ struct SettingsView: View {
                     HealthSection(model: model)
                 #endif
 
+                HobPermissionsSection(router: model.web.bridge.router)
+
                 if model.pairing != nil {
                     Section {
+                        // On the button, so the iPad popover points at it inside the sheet.
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+                            .confirmationDialog("Sign out of this host?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+                                Button("Sign Out", role: .destructive) {
+                                    Task {
+                                        dismiss()
+                                        await model.signOut()
+                                    }
+                                }
+                            }
                     } footer: {
                         Text("Removes this device from the host. To use it again, connect it again.")
                     }
@@ -64,14 +75,6 @@ struct SettingsView: View {
                     }
                 }
             #endif
-            .confirmationDialog("Sign out of this host?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
-                Button("Sign Out", role: .destructive) {
-                    Task {
-                        dismiss()
-                        await model.signOut()
-                    }
-                }
-            }
             .task {
                 notifications = await model.notifier.authorizationStatus()
                 await model.refreshCapabilities()
@@ -127,12 +130,19 @@ private struct AlarmsSection: View {
 
     var body: some View {
         Section {
-            LabeledContent("Alarms and timers", value: model.capabilities.alarms ? "Allowed" : "Not allowed")
-            if !model.capabilities.alarms {
+            if model.capabilities.alarms {
+                NavigationLink {
+                    AlarmsView(model: model)
+                } label: {
+                    LabeledContent("Alarms and timers", value: "Allowed")
+                }
+            } else {
+                LabeledContent("Alarms and timers", value: "Not allowed")
                 Button("Allow Alarms") { Task { await model.requestAlarms() } }
             }
+            HobPermissionRows(router: model.web.bridge.router, key: "alarms")
         } footer: {
-            Text("Hobs can set alarms and timers that ring on this iPhone. If you declined before, allow alarms for Hobwork in the Settings app.")
+            Text("Hobs can set alarms and timers that ring on this \(DeviceModel.name), even in silent mode and Focus. A hob's page asks before it sets its first one. If you declined before, allow alarms for Hobwork in the Settings app.")
         }
     }
 }
@@ -173,9 +183,79 @@ private struct NFCSection: View {
             } else {
                 LabeledContent("NFC", value: "Not available")
             }
+            HobPermissionRows(router: model.web.bridge.router, key: "nfc.write")
         } footer: {
             Text("Scanning a tag written by a hob runs that hob's handler for it. Tags with other links go to the hobs that handle those links. To use a tag without opening Hobwork, create a personal automation for it in the Shortcuts app and add Send Tag to Hobwork with the tag's link.")
         }
     }
 }
 #endif
+
+/// The hobs that asked for one permission, with a switch each.
+private struct HobPermissionRows: View {
+    let router: BridgeRouter
+    let key: String
+
+    @State private var answers: [String: Bool] = [:]
+
+    var body: some View {
+        ForEach(answers.keys.sorted(), id: \.self) { hob in
+            Toggle(HobPermissionsSection.hobName(hob), isOn: Binding(
+                get: { answers[hob] ?? false },
+                set: { allowed in
+                    router.permissions.set(allowed, hob: hob, key: key)
+                    load()
+                }
+            ))
+        }
+        .task { load() }
+    }
+
+    private func load() {
+        answers = router.permissions.all.compactMapValues { $0[key] }
+    }
+}
+
+/// What each hob may do in the app, as answered when the hob first asked.
+private struct HobPermissionsSection: View {
+    let router: BridgeRouter
+
+    @State private var answers: [String: [String: Bool]] = [:]
+
+    var body: some View {
+        Section {
+            if answers.isEmpty {
+                Text("No hob has asked yet.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(answers.keys.sorted(), id: \.self) { hob in
+                ForEach(answers[hob, default: [:]].keys.sorted(), id: \.self) { key in
+                    Toggle(isOn: binding(hob: hob, key: key)) {
+                        Text(Self.hobName(hob))
+                        Text(router.permissionLabels[key] ?? key)
+                    }
+                }
+            }
+        } header: {
+            Text("Hob Permissions")
+        } footer: {
+            Text("Hobs ask before they use the camera, read your clipboard, write NFC tags or set alarms and timers.")
+        }
+        .task { answers = router.permissions.all }
+    }
+
+    private func binding(hob: String, key: String) -> Binding<Bool> {
+        Binding(
+            get: { answers[hob]?[key] ?? false },
+            set: { allowed in
+                router.permissions.set(allowed, hob: hob, key: key)
+                answers = router.permissions.all
+            }
+        )
+    }
+
+    /// Keys are `<apps host>/<hob>`.
+    static func hobName(_ key: String) -> String {
+        String(key.split(separator: "/").last ?? Substring(key))
+    }
+}

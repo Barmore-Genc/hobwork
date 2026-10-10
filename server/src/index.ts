@@ -12,6 +12,9 @@ import { createWorkspaceEnvironment } from './data/workspace-environment.ts'
 import { createDelivery } from './delivery.ts'
 import { branchFileReader } from './files.ts'
 import { createDevices } from './devices/devices.ts'
+import { loadPushKeys } from './devices/push/keys.ts'
+import { createRelayPush } from './devices/push/relay.ts'
+import { listPeople } from './people.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
 import { backfillHaEvents, backfillHaServices } from './homeassistant/services.ts'
@@ -22,6 +25,8 @@ import { startHousekeeping } from './housekeeping.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
+import { callRoute, jsonBody } from './runtime/http.ts'
+import { runUploadTriggers } from './runtime/uploads.ts'
 import { createRuntime } from './runtime/runtime.ts'
 import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
@@ -48,11 +53,27 @@ const aiConfig = { models: config.aiModels, catalog: openRouterCatalog() }
 const ai = createAiGateway(host, aiConfig)
 const devices = createDevices({
   host,
+  ...(config.push ? { relay: createRelayPush({ url: config.push.relayUrl, keys: loadPushKeys(config.push.keyDir) }) } : {}),
   allowlist: config.allowlist,
   publicUrl: config.publicUrl,
   triggers: async (project) => (await runtime.config(project)).config.triggers,
   invokeTrigger: (project, name, payload) => runtime.invoke(project, { kind: 'trigger', name, manual: false, payload }),
+  invokeRoute: async (project, request, caller) => {
+    const origin = appOrigins.origin({ project }) ?? config.publicUrl
+    const outcome = await callRoute(runtime, project, { ...request, url: `${origin}/api${request.path}`, caller })
+    if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
+    return outcome.response.status
+  },
+  callRoute: async (project, request, caller) => {
+    const origin = appOrigins.origin({ project }) ?? config.publicUrl
+    const outcome = await callRoute(runtime, project, { ...request, url: `${origin}/api${request.path}`, caller })
+    if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
+    return { status: outcome.response.status, body: jsonBody(outcome.response) }
+  },
+  declarations: async (project) => (await runtime.config(project)).config,
+  uploaded: (project, done, caller) => runUploadTriggers(runtime, project, undefined, done, caller),
 })
+const appOrigins = createAppOrigins(config.appsUrl)
 const homeAssistant = createHomeAssistant({
   connection: () => homeAssistantSettings.connection(),
   logger: homeAssistantClientLogger(host, () =>
@@ -68,7 +89,7 @@ const vmScheduler = createVmScheduler({
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? {
       image,
-      createSandbox: budgetedSandboxFactory(createGondolinSandbox, vmScheduler),
+      createSandbox: budgetedSandboxFactory((options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }), vmScheduler),
       log: (message) => console.warn(message),
       readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
@@ -107,6 +128,7 @@ const runtime = createRuntime(host, {
   triggers,
   homeAssistant,
   devices,
+  people: () => listPeople(host.db, config.allowlist),
   data,
   secrets,
   ai,
@@ -116,7 +138,7 @@ const delivery = createDelivery(host, {
   pipeline: pipelineVms && { startVm: pipelineVms.start, migrationDryRun: data.migrationDryRun },
   deploy: runtime.deploy,
 })
-const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: createAppOrigins(config.appsUrl).origin })
+const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: appOrigins.origin })
 await backfillHaServices(host)
 await backfillHaEvents(host)
 homeAssistant.start()
@@ -164,6 +186,7 @@ const server = createApp(host, {
     webDist: config.webDist,
     appleAppId: config.appleAppId,
     trustedProxies: config.trustedProxies,
+    privateEgress: config.privateEgress,
   },
 })
 

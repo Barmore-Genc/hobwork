@@ -4,6 +4,7 @@
 // no versioning.
 import type { HaServiceTarget, HaStatesFilter } from '../homeassistant.ts'
 import type { Invocation, LogLevel } from '../index.ts'
+import type { Caller } from '../people.ts'
 
 // Here rather than in homeassistant.ts, since runtime VMs get the runner
 // directory without the rest of the SDK and only type imports may leave it.
@@ -44,6 +45,8 @@ export type InvokeRequest = {
   request?: SerializedRequest
   params?: Record<string, string>
   payload?: unknown
+  // Set by the host from the session that made the request.
+  caller?: Caller
 }
 
 export type SerializedError = { name: string; message: string; stack?: string }
@@ -110,8 +113,19 @@ export type HaResponse = { ok: true; result: unknown } | { ok: false; error: { c
 
 // POST http://hobwork.internal/v1/devices
 export type DeviceRequest = (
-  | { action: 'list' }
+  // With person, only that person's devices, most recently used first.
+  | { action: 'list'; person?: number }
+  | { action: 'people' }
   | { action: 'call'; device: string; capability: string; method: string; args?: unknown }
+  // PersonNotification as args.
+  | { action: 'notify'; person: number; args?: unknown }
+  | { action: 'updateNotification'; id: string; args?: unknown }
+  | { action: 'withdrawNotification'; id: string }
+  // Live Activities: start (args is the activity), update (args the changes)
+  // or end (args the options) on one device, a person's devices, or (update
+  // and end without device or person) every device that shows it.
+  | { action: 'liveActivity'; op: 'start' | 'update' | 'end'; device?: string; person?: number; id?: string; args?: unknown }
+  | { action: 'reloadWidgets'; device?: string; person?: number }
 ) & {
   // Set by the runner inside an invocation, so the call is logged with it.
   invocation?: number

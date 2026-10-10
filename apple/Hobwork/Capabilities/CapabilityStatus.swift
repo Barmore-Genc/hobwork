@@ -1,4 +1,5 @@
 #if os(iOS)
+    import ActivityKit
     import AlarmKit
     import CoreNFC
     import FamilyControls
@@ -18,6 +19,9 @@ struct CapabilityStatus: Equatable, Sendable {
     #if os(iOS)
         var nfc = false
         var health = false
+        var liveActivities = false
+        /// The widget extension ships with the iOS app.
+        var widgets = true
     #endif
 
     var reported: [String] {
@@ -29,6 +33,8 @@ struct CapabilityStatus: Equatable, Sendable {
                 (focus, FocusCapability.capability),
                 (nfc, NFCCapability.capability),
                 (health, HealthCapability.capability),
+                (liveActivities, LiveActivities.capability),
+                (widgets, WidgetsCapability.capability),
             ].filter(\.0).map(\.1)
         #else
             [
@@ -48,7 +54,8 @@ struct CapabilityStatus: Equatable, Sendable {
                 screenTime: ScreenTimeAuthorization.isApproved,
                 focus: FocusLabels.file.read().setUp,
                 nfc: NFCNDEFReaderSession.readingAvailable,
-                health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty
+                health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty,
+                liveActivities: ActivityAuthorizationInfo().areActivitiesEnabled
             )
         #else
             return CapabilityStatus(

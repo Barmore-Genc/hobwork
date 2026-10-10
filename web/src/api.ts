@@ -14,6 +14,10 @@ export type Session = {
 
 export type ProjectStatus = 'ready' | 'running' | 'updating'
 
+// timeZone is null until a browser or app reports one, and hobs use host's
+// until then. manual: chosen in Settings, so reports leave it alone.
+export type TimeZoneSetting = { timeZone: string | null; manual: boolean; host: string }
+
 export type Version = {
   number: number
   summary: string
@@ -55,14 +59,19 @@ export type LastRun = { id: number; status: InvocationStatus; startedAt: string 
 
 export type EntryPoints = {
   routes: { key: string; lastRun: LastRun }[]
-  crons: { name: string; schedule: string; nextRun: string | null; lastRun: LastRun }[]
+  // timeZone: an IANA zone, "person" for one run per person in their zone, or null for the host's.
+  crons: { name: string; schedule: string; timeZone: string | null; nextRun: string | null; lastRun: LastRun }[]
   webhooks: { name: string; tokenCreatedAt: string | null; lastRun: LastRun }[]
   triggers: {
     name: string
     homeassistant: Record<string, unknown> | null
     device: { capability: string; event: string; device?: string; url?: string } | null
+    // The upload whose files run the trigger.
+    upload: string | null
     lastRun: LastRun
   }[]
+  // Folders of the hob's files that the app and scripts with a token can upload to.
+  uploads: { name: string; prefix: string; maxBytes: number; types: string[]; tokenCreatedAt: string | null }[]
 }
 
 export type DbStatus = {
@@ -82,7 +91,7 @@ export type ProjectDetail = {
   iconUrl: string
   entryPoints: EntryPoints | null
   configError?: string
-  egress: string[]
+  egress: EgressTarget[]
   database: DbStatus | null
   storage?: StorageUse | null
   // The running version has a page to open.
@@ -354,10 +363,19 @@ export type AiUsageTotals = {
 }
 
 // The models hobs get. decisionModel null: none, so the model answers decisions too.
-export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string }
+// A host (or host:port) the hob may reach. Private ones are on the home
+// network or tailnet, which the server has to allow as well.
+export type EgressTarget = { target: string; private: boolean; allowed: boolean }
+
+export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string; visionModel: string }
 
 // null: the level above picks. decisionModel false: no decision model.
-export type ModelChoice = { model: string | null; decisionModel: string | false | null; embeddingModel: string | null }
+export type ModelChoice = {
+  model: string | null
+  decisionModel: string | false | null
+  embeddingModel: string | null
+  visionModel: string | null
+}
 
 export type AiSettings = ModelChoice & {
   // What hobs get with these settings.
@@ -452,6 +470,10 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 
 export const api = {
   session: () => request<Session>('GET', '/api/session'),
+  timeZone: () => request<TimeZoneSetting>('GET', '/api/me/time-zone'),
+  // null follows the zone your browser and apps report.
+  setTimeZone: (timeZone: string | null) => request<TimeZoneSetting>('PUT', '/api/me/time-zone', { timeZone }),
+  reportTimeZone: (timeZone: string) => request<TimeZoneSetting>('POST', '/api/me/time-zone/report', { timeZone }),
   signOut: () => request<void>('POST', '/auth/logout'),
   projects: (q = '') => request<ProjectSummary[]>('GET', `/api/projects${query({ q: q.trim() || undefined })}`),
   starProject: (project: string, starred: boolean) =>
@@ -512,6 +534,11 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/logs${query(options)}`,
       undefined,
       signal,
+    ),
+  rotateUploadToken: (project: string, name: string) =>
+    request<{ token: string; url: string }>(
+      'POST',
+      `/api/projects/${encodeURIComponent(project)}/uploads/${encodeURIComponent(name)}/token`,
     ),
   rotateWebhook: (project: string, name: string) =>
     request<{ url: string }>(

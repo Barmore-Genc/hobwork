@@ -57,6 +57,11 @@ const HANDLERS: Record<string, string> = {
     try { await ctx.device('nope').notifications.send({ title: 'Hi' }) } catch (err) { error = [err.name, err.code, err.message] }
     return { sent, devices: await ctx.devices(), error }
   }`,
+  'handlers/src/people.js': `export default async (ctx) => {
+    const people = await ctx.people()
+    const last = await ctx.person(people[0].id).lastActiveDevice()
+    return { caller: ctx.caller, people, last }
+  }`,
 }
 
 function write(files: Record<string, string>) {
@@ -119,9 +124,11 @@ beforeEach(async () => {
         const request = JSON.parse(data) as DeviceRequest
         deviceRequests.push(request)
         const response =
-          request.action === 'list'
-            ? { ok: true, result: [{ name: 'kaan-iphone' }] }
-            : request.device === 'kaan-iphone'
+          request.action === 'people'
+            ? { ok: true, result: [{ id: 1, name: 'Kaan', email: null, timeZone: 'Europe/Istanbul' }] }
+            : request.action === 'list'
+            ? { ok: true, result: request.person === 1 ? [{ name: 'kaan-mac' }, { name: 'kaan-iphone' }] : [{ name: 'kaan-iphone' }] }
+            : request.action === 'call' && request.device === 'kaan-iphone'
               ? { ok: true, result: { id: 'n1', delivery: 'app' } }
               : { ok: false, error: { code: 'unknown_device', message: 'No device called "nope"' } }
         res.writeHead(response.ok ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(response))
@@ -244,6 +251,22 @@ test('handlers reach devices with ctx.device and ctx.devices, and failures throw
     { action: 'call', device: 'nope', capability: 'notifications', method: 'send', args: { title: 'Hi' }, invocation: result.id },
     { action: 'list', invocation: result.id },
   ])
+})
+
+test('handlers see the caller the host sends, and list people and their devices', async () => {
+  await start()
+  const caller = { person: { id: 1, name: 'Kaan', email: 'kaan@example.com', timeZone: 'Europe/Istanbul' }, device: { name: 'kaan-mac', platform: 'macos' as const } }
+  const result = await invoke('src/people.ts', { caller })
+  expect(JSON.parse(body(result))).toEqual({
+    caller,
+    people: [{ id: 1, name: 'Kaan', email: null, timeZone: 'Europe/Istanbul' }],
+    last: { name: 'kaan-mac' },
+  })
+  expect(deviceRequests).toEqual([
+    { action: 'people', invocation: result.id },
+    { action: 'list', person: 1, invocation: result.id },
+  ])
+  expect(JSON.parse(body(await invoke('src/people.ts'))).caller).toBeNull()
 })
 
 test('rejects requests without the token, including /ready', async () => {

@@ -12,15 +12,18 @@ use ed25519_dalek::{Signature as EdSignature, VerifyingKey as EdKey};
 use hmac::{Hmac, KeyInit, Mac};
 use ipnet::IpNet;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde_json::{Number, Value, json};
 use sha2::Sha256;
 
 use crate::apns::{Apns, ApnsOutcome, ApnsRequest, MAX_PAYLOAD_BYTES, PushType};
 use crate::attest::Verifier;
 use crate::limits::Limits;
-use crate::payload::{self, Kind};
-use crate::store::{AttestKey, ConfirmOutcome, Environment, Event, Grant, PendingToken, Registration, Store};
+use crate::payload::{self, ActivityEvent, Kind, LiveActivity};
+use crate::store::{
+    ActivityKind, ActivityToken, AttestKey, ConfirmOutcome, Environment, Event, Grant, PendingToken, Registration,
+    Store,
+};
 use crate::util::{b64, constant_time_eq, from_b64, random_token, sha256};
 
 pub const MINUTE: i64 = 60;
@@ -31,6 +34,10 @@ pub const GRANT_TTL: i64 = 30 * DAY;
 pub const RENEW_AFTER: i64 = 15 * DAY;
 pub const SIGNATURE_WINDOW: i64 = 5 * MINUTE;
 pub const IP_KEY_MAX_AGE: i64 = 7 * DAY;
+/// A Live Activity runs for at most 8 hours and stays on the lock screen for
+/// up to 4 more, so its update token is of no use after that.
+pub const ACTIVITY_TOKEN_TTL: i64 = 13 * 60 * MINUTE;
+pub const MAX_UPDATE_TOKENS: usize = 16;
 const MAX_BODY_BYTES: usize = 32 * 1024;
 const MAX_EXPIRATION: i64 = 30 * DAY;
 
@@ -224,6 +231,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/registrations/{id}/grants", post(create_grant))
         .route("/v1/registrations/{id}/grants/{grant}", delete(revoke_grant))
         .route("/v1/registrations/{id}/grants/{grant}/renew", post(renew_grant))
+        .route(
+            "/v1/registrations/{id}/grants/{grant}/activity-tokens",
+            post(create_activity_token),
+        )
+        .route(
+            "/v1/registrations/{id}/grants/{grant}/activity-tokens/{token}",
+            delete(delete_activity_token),
+        )
         .route("/v1/grants/{grant}/push", post(push))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
@@ -404,8 +419,9 @@ struct AttestationBody {
 struct RegisterBody {
     token: String,
     environment: Environment,
-    #[serde(default)]
-    filtering: bool,
+    /// Accepted because older apps send it.
+    #[serde(default, rename = "filtering")]
+    _filtering: Option<IgnoredAny>,
     attestation: Option<AttestationBody>,
 }
 
@@ -469,7 +485,6 @@ async fn register(state: &State, ip: IpAddr, body: &[u8], audit: &mut Audit) -> 
         token: None,
         environment: None,
         pending: None,
-        filtering: body.filtering,
         attest,
         created_at: now,
         gone_at: None,
@@ -515,7 +530,6 @@ async fn get_registration(
         "id": registration.id,
         "status": registration_status(&registration),
         "environment": registration.environment,
-        "filtering": registration.filtering,
         "attested": registration.attest.is_some(),
         "grants": grants,
     })))
@@ -526,7 +540,9 @@ async fn get_registration(
 struct UpdateBody {
     token: String,
     environment: Environment,
-    filtering: Option<bool>,
+    /// Accepted because older apps send it.
+    #[serde(default, rename = "filtering")]
+    _filtering: Option<IgnoredAny>,
 }
 
 async fn update_registration(
@@ -544,9 +560,6 @@ async fn update_registration(
         let registration = authorize(&state, &id, &method, &uri, &headers, &body).await?;
         let update: UpdateBody = parse_json(&body)?;
         let token = parse_token(&update.token)?;
-        if let Some(filtering) = update.filtering {
-            state.store.set_filtering(&id, filtering)?;
-        }
         if registration.token.as_deref() == Some(token.as_str()) && registration.environment == Some(update.environment)
         {
             return Ok(ok(json!({ "status": "active" })));
@@ -786,6 +799,94 @@ async fn revoke_grant(
     state.finish(ip, audit, result)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ActivityTokenBody {
+    kind: ActivityKind,
+    token: String,
+}
+
+async fn create_activity_token(
+    AxumState(state): AxumState<AppState>,
+    ClientIp(ip): ClientIp,
+    Path((id, grant_id)): Path<(String, String)>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let mut audit = Audit::new("activity_token");
+    audit.registration_id = Some(id.clone());
+    audit.grant_id = Some(grant_id.clone());
+    let result = async {
+        let registration = authorize(&state, &id, &method, &uri, &headers, &body).await?;
+        if registration.token.is_none() {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "not_active",
+                "The registration has no confirmed token.",
+            ));
+        }
+        if !state.limits.ip_grant.check(&limit_key(ip)) {
+            return Err(rate_limited());
+        }
+        let grant = state
+            .store
+            .grant(&grant_id)?
+            .filter(|g| g.registration_id == id)
+            .ok_or_else(unknown_grant)?;
+        let now = state.now();
+        if grant.expires_at <= now {
+            return Err(expired());
+        }
+        let request: ActivityTokenBody = parse_json(&body)?;
+        let token = parse_token(&request.token)?;
+        let stored = state.store.put_activity_token(
+            &ActivityToken {
+                id: random_token(16),
+                grant_id: grant.id,
+                kind: request.kind,
+                token,
+                created_at: now,
+                expires_at: match request.kind {
+                    ActivityKind::Start => None,
+                    ActivityKind::Update => Some(now + ACTIVITY_TOKEN_TTL),
+                },
+            },
+            MAX_UPDATE_TOKENS,
+        )?;
+        Ok(created(json!({ "id": stored.id, "expiresAt": stored.expires_at })))
+    }
+    .await;
+    state.finish(ip, audit, result)
+}
+
+async fn delete_activity_token(
+    AxumState(state): AxumState<AppState>,
+    ClientIp(ip): ClientIp,
+    Path((id, grant_id, token_id)): Path<(String, String, String)>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let mut audit = Audit::new("activity_token_delete");
+    audit.registration_id = Some(id.clone());
+    audit.grant_id = Some(grant_id.clone());
+    let result = async {
+        authorize(&state, &id, &method, &uri, &headers, &body).await?;
+        state
+            .store
+            .grant(&grant_id)?
+            .filter(|g| g.registration_id == id)
+            .ok_or_else(unknown_grant)?;
+        state.store.delete_activity_token(&grant_id, &token_id)?;
+        Ok(no_content())
+    }
+    .await;
+    state.finish(ip, audit, result)
+}
+
 fn gone() -> ApiError {
     api_error(
         StatusCode::GONE,
@@ -808,10 +909,75 @@ struct PushBody {
     collapse_id: Option<String>,
     key_id: String,
     ciphertext: String,
+    activity: Option<String>,
+    event: Option<ActivityEvent>,
+    timestamp: Option<i64>,
+    stale_date: Option<i64>,
+    dismissal_date: Option<i64>,
+    relevance_score: Option<Number>,
 }
 
 fn default_priority() -> u8 {
     10
+}
+
+fn unknown_activity() -> ApiError {
+    api_error(
+        StatusCode::NOT_FOUND,
+        "unknown_activity",
+        "There is no such activity token, or it does not fit the event.",
+    )
+}
+
+/// The Live Activity fields of a `liveactivity` push, refused on other kinds.
+fn live_activity_fields(request: &PushBody) -> Result<Option<(String, LiveActivity)>, ApiError> {
+    if request.kind != Kind::LiveActivity {
+        if request.activity.is_some()
+            || request.event.is_some()
+            || request.timestamp.is_some()
+            || request.stale_date.is_some()
+            || request.dismissal_date.is_some()
+            || request.relevance_score.is_some()
+        {
+            return Err(bad_request(
+                "activity, event, timestamp, staleDate, dismissalDate and relevanceScore are only for liveactivity.",
+            ));
+        }
+        return Ok(None);
+    }
+    if request.collapse_id.is_some() {
+        return Err(bad_request("collapseId is not allowed for liveactivity."));
+    }
+    if request.priority == 1 {
+        return Err(bad_request("priority must be 5 or 10 for liveactivity."));
+    }
+    let (Some(activity), Some(event), Some(timestamp)) = (&request.activity, request.event, request.timestamp) else {
+        return Err(bad_request("liveactivity needs activity, event and timestamp."));
+    };
+    if [Some(timestamp), request.stale_date, request.dismissal_date]
+        .into_iter()
+        .flatten()
+        .any(|time| time < 0)
+    {
+        return Err(bad_request(
+            "timestamp, staleDate and dismissalDate must be Unix seconds.",
+        ));
+    }
+    if let Some(score) = &request.relevance_score
+        && !score.as_f64().is_some_and(|s| s.is_finite() && s >= 0.0)
+    {
+        return Err(bad_request("relevanceScore must be a number of 0 or more."));
+    }
+    Ok(Some((
+        activity.clone(),
+        LiveActivity {
+            event,
+            timestamp,
+            stale_date: request.stale_date,
+            dismissal_date: request.dismissal_date,
+            relevance_score: request.relevance_score.clone(),
+        },
+    )))
 }
 
 /// What the sidecar signs: `hobwork-push-v1`, the timestamp, the nonce, the
@@ -943,7 +1109,27 @@ async fn send_push(
     if from_b64(&request.ciphertext).is_none_or(|c| c.is_empty()) {
         return Err(bad_request("ciphertext must be base64."));
     }
-    let payload = payload::push(request.kind, &grant.id, &request.key_id, &request.ciphertext).to_string();
+    let live_activity = live_activity_fields(&request)?;
+    let activity_token = match &live_activity {
+        Some((activity_id, activity)) => {
+            let wanted = match activity.event {
+                ActivityEvent::Start => ActivityKind::Start,
+                ActivityEvent::Update | ActivityEvent::End => ActivityKind::Update,
+            };
+            let stored = state
+                .store
+                .activity_token(activity_id)?
+                .filter(|t| t.grant_id == grant.id && t.kind == wanted && t.expires_at.is_none_or(|at| at > now))
+                .ok_or_else(unknown_activity)?;
+            Some(stored)
+        }
+        None => None,
+    };
+    let payload = match &live_activity {
+        Some((_, activity)) => payload::live_activity(activity, &grant.id, &request.key_id, &request.ciphertext),
+        None => payload::push(request.kind, &grant.id, &request.key_id, &request.ciphertext),
+    }
+    .to_string();
     if payload.len() > MAX_PAYLOAD_BYTES {
         return Err(ApiError {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -960,9 +1146,18 @@ async fn send_push(
         .apns
         .send(&ApnsRequest {
             environment,
-            token,
-            push_type: PushType::Alert,
-            priority: request.priority,
+            token: activity_token.as_ref().map_or(token, |t| t.token.clone()),
+            push_type: match request.kind {
+                Kind::Background => PushType::Background,
+                Kind::LiveActivity => PushType::LiveActivity,
+                Kind::Alert | Kind::Command | Kind::Prompt => PushType::Alert,
+            },
+            // APNs refuses background pushes at a priority other than 5.
+            priority: if request.kind == Kind::Background {
+                5
+            } else {
+                request.priority
+            },
             expiration,
             collapse_id: request.collapse_id,
             payload: payload.into_bytes(),
@@ -971,10 +1166,21 @@ async fn send_push(
     audit.apns_status = outcome.status();
     match outcome {
         ApnsOutcome::Sent { apns_id } => Ok(ok(json!({ "apnsId": apns_id }))),
-        outcome if outcome.token_gone() => {
-            state.store.mark_gone(&registration.id, now)?;
-            Err(gone())
-        }
+        // A gone activity token says nothing about the registration's token.
+        outcome if outcome.token_gone() => match activity_token {
+            Some(activity_token) => {
+                state.store.delete_activity_token(&grant.id, &activity_token.id)?;
+                Err(api_error(
+                    StatusCode::GONE,
+                    "activity_gone",
+                    "The Live Activity token no longer takes pushes. Forget it.",
+                ))
+            }
+            None => {
+                state.store.mark_gone(&registration.id, now)?;
+                Err(gone())
+            }
+        },
         outcome => Err(push_failed(&outcome)),
     }
 }

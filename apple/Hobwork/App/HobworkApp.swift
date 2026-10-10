@@ -26,6 +26,11 @@ import SwiftUI
         func application(_ application: NSApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
             model.didRegisterForPush(token: deviceToken)
         }
+
+        func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+            let info = UncheckedUserInfo(userInfo)
+            Task { await model.didReceiveBackgroundPush(info.value) }
+        }
     }
 #else
     final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -44,8 +49,26 @@ import SwiftUI
         func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
             model.didRegisterForPush(token: deviceToken)
         }
+
+        /// Background pushes: relay renewals, and notifications a hob withdrew.
+        func application(
+            _ application: UIApplication,
+            didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+            fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+        ) {
+            let info = UncheckedUserInfo(userInfo)
+            Notifier.complete(MainCompletion(completionHandler), with: .newData) {
+                await self.model.didReceiveBackgroundPush(info.value)
+            }
+        }
     }
 #endif
+
+/// Push payloads are property lists, which the system hands over as non-Sendable dictionaries.
+private struct UncheckedUserInfo: @unchecked Sendable {
+    let value: [AnyHashable: Any]
+    init(_ value: [AnyHashable: Any]) { self.value = value }
+}
 
 @main
 struct HobworkApp: App {

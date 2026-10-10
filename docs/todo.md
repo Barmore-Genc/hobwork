@@ -161,6 +161,18 @@ Left from `ctx.caller`, `ctx.people()` and per-person time zones (People and tim
 
 - `get_hob` lists `egress` as written. It does not say which private targets the host allows, which the web UI shows; agents learn it from the `egress-blocked` log line.
 
+## Web bridge
+
+See Web bridge in `docs/architecture.md`.
+
+- Tested in unit tests and in a web view with pages loaded under hob origins, not on a device: haptics, printing to an AirPrint printer (paper choice, `print(to:)` without the dialog, printer names from `contactPrinter`), the share sheet, the clipboard prompts and iPad popovers need a check on hardware.
+- The app derives the apps host from the Hobwork host. A host with `HOBWORK_APPS_URL` somewhere else gets no bridge (nor in-app links). `/.well-known/hobwork` could name the apps host.
+- Popovers point at the edge of the web view, not at the button. The page could send the button's rect, but a hob page in the web UI's iframe does not know its offset; the web UI could tell the app where the frame is.
+- No native paste control (`UIPasteControl`): it would have to sit over the page's button. Clipboard reads rely on the per-hob question and iOS's "Allow Paste" prompt, and the app does not check that a read follows a tap.
+- Local notifications have no actions. Actions that run without the app would need the host to know the notification; a hob can send through its own route instead.
+- Printer and media lists: iOS has no API for them outside the picker and a print. macOS could list `NSPrinter.printerNames` and their papers.
+- Permissions are per hob and shared with its branch previews. A preview with new code reads the clipboard if main was allowed.
+
 ## Share links
 
 See Share links in `docs/architecture.md`.

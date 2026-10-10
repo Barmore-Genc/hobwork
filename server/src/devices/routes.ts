@@ -198,6 +198,12 @@ export function createDeviceRoutes(options: {
   }
 
   // Signing out in the app, which removes the device like Settings does.
+  // What the app tells hob UIs about the device and its owner (the bridge's app.info).
+  async function describeSelf(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    json(res, 200, { id: device.id, name: device.name, platform: device.platform, person: { id: device.userId, name: device.owner } })
+  }
+
   async function removeSelf(req: IncomingMessage, res: ServerResponse) {
     const device = requireDevice(req)
     devices.revoke(device.id)
@@ -260,13 +266,14 @@ export function createDeviceRoutes(options: {
     res.writeHead(204).end()
   }
 
-  const endpoints: Record<string, { method: string; handle: (req: IncomingMessage, res: ServerResponse) => Promise<void> }> = {
-    [TOKEN_PATH]: { method: 'POST', handle: token },
-    [WEB_SESSION_PATH]: { method: 'POST', handle: webSession },
-    [PUSH_PATH]: { method: 'PUT', handle: push },
-    [EVENTS_PATH]: { method: 'POST', handle: events },
-    [RESULTS_PATH]: { method: 'POST', handle: results },
-    [SELF_PATH]: { method: 'DELETE', handle: removeSelf },
+  type Handle = (req: IncomingMessage, res: ServerResponse) => Promise<void>
+  const endpoints: Record<string, Record<string, Handle>> = {
+    [TOKEN_PATH]: { POST: token },
+    [WEB_SESSION_PATH]: { POST: webSession },
+    [PUSH_PATH]: { PUT: push },
+    [EVENTS_PATH]: { POST: events },
+    [RESULTS_PATH]: { POST: results },
+    [SELF_PATH]: { GET: describeSelf, DELETE: removeSelf },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {
@@ -317,12 +324,13 @@ export function createDeviceRoutes(options: {
     }
     const endpoint = endpoints[pathname]
     if (!endpoint) return false
-    if (req.method !== endpoint.method) {
-      res.writeHead(405, { allow: endpoint.method }).end()
+    const handle = endpoint[req.method ?? '']
+    if (!handle) {
+      res.writeHead(405, { allow: Object.keys(endpoint).join(', ') }).end()
       return true
     }
     try {
-      await endpoint.handle(req, res)
+      await handle(req, res)
     } catch (err) {
       if (err instanceof HttpError) json(res, err.status, { error: err.message })
       else throw err

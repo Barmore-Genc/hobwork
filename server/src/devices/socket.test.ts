@@ -413,6 +413,19 @@ test('a device whose owner is off the allowlist gets 403 not_allowed, and works 
   await client.hello()
 })
 
+test('the app reads its own device and owner', async () => {
+  const device = await pairDevice(app.base, cookie)
+  const res = await deviceRequest('/api/devices/self', 'GET', device.token)
+  expect(res.status).toBe(200)
+  const self = (await res.json()) as { id: number; name: string; platform: string; person: { id: number; name: string } }
+  expect(self).toMatchObject({ id: device.deviceId, name: device.name, platform: 'ios' })
+  expect(self.person.id).toBe(getDevice(host.db, device.deviceId)!.userId)
+  expect((await deviceRequest('/api/devices/self', 'GET', 'hwd_wrong')).status).toBe(401)
+  const put = await deviceRequest('/api/devices/self', 'PUT', device.token)
+  expect(put.status).toBe(405)
+  expect(put.headers.get('allow')).toBe('GET, DELETE')
+})
+
 test('the app removes its own device when signing out', async () => {
   const device = await pairDevice(app.base, cookie)
   const push = { grant: 'R3JhbnQtZm9yLXRoZS1hcHA', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }

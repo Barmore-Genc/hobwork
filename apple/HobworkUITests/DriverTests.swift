@@ -1,5 +1,6 @@
 #if HOBWORK_DRIVER
     import Darwin
+    import UIKit
     import XCTest
 
     /// The device driver: serves a command API for `scripts/drive` while it runs. Skipped
@@ -78,8 +79,7 @@
                     "foreground": app.state == .runningForeground,
                 ])
             case ("GET", "/screenshot"):
-                let screenshot = XCUIScreen.main.screenshot()
-                return DriverResponse(status: 200, contentType: "image/png", body: screenshot.pngRepresentation)
+                return DriverResponse(status: 200, contentType: "image/png", body: Self.orientedPNG())
             case ("POST", "/tap"):
                 guard let x = request.number("x"), let y = request.number("y") else {
                     return .error("tap needs x and y", status: 400)
@@ -113,13 +113,26 @@
             }
         }
 
+        /// `pngRepresentation` is in the panel's native orientation, which is sideways while
+        /// an iPad is in landscape. Redrawing applies the interface orientation, so pixels
+        /// line up with the points `tap` takes.
+        private static func orientedPNG() -> Data {
+            let image = XCUIScreen.main.screenshot().image
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = image.scale
+            return UIGraphicsImageRenderer(size: image.size, format: format).pngData { _ in
+                image.draw(at: .zero)
+            }
+        }
+
         /// The app while it is in front, otherwise the home screen.
         private var foreground: XCUIApplication {
             app.state == .runningForeground ? app : springboard
         }
 
+        /// Relative to the home screen, since the app's window may not fill the screen.
         private func point(_ x: Double, _ y: Double) -> XCUICoordinate {
-            foreground.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y))
+            springboard.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y))
         }
 
         /// System alerts and sheets belong to SpringBoard, so it is searched after the app.

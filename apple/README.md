@@ -20,7 +20,7 @@ Every `just` recipe regenerates the project first. Targets:
 - `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
 - `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers, with Pause, Resume, Cancel and Stop buttons. The buttons run `AlarmControlIntent` (`Hobwork/Alarms/AlarmControlIntent.swift`), a `LiveActivityIntent` that is part of both the app and the extension, as Apple requires; iOS runs it in the app, which AlarmKit authorized. It also has hobs' Live Activities, the hob widget and the Hob Action and Hob Page controls (see Live Activities, widgets and intents).
 - `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
-- `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it.
+- `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it, and the device driver (see "Device driver").
 
 Sources in `Hobwork/Shared/` are compiled into the app and the notification service extension: the command runner (`Commands/`), the host API and credentials, and the capabilities that run without the app on screen. The monitor and widget extensions take only the files they need (see `project.yml`). NFC, the Focus filter and Health background delivery are in `Hobwork/Capabilities/`, app only.
 
@@ -72,7 +72,7 @@ just run-mac local        # signed to run on this Mac only
 
 Team signing needs an Apple account of team 63QQLP356Q in Xcode, as for iPhone builds; `-allowProvisioningUpdates` registers the Mac and adds the macOS platform to the App IDs `dev.bgenc.hobwork` and `dev.bgenc.hobwork.NotificationService`. Both apps share the bundle ID, so pushes use the same APNs topic. With `local` (all macOS recipes take it), the app is signed ad hoc with `Hobwork/Hobwork-macOS-Local.entitlements`: it pairs, shows the web UI and keeps the socket open, but gets no push token, has no app group, and keeps its device token in the file-based keychain, since the data protection keychain needs a provisioning profile.
 
-Plain http works for `localhost`, `*.localhost`, `.local` names and IP addresses, so the app can pair with a development host at `http://hobwork.localhost:7420`. Everything else needs https.
+Plain http works for `localhost`, `*.localhost`, `.local` names and IP addresses, so the app can pair with a development host at `http://hobwork.localhost:7420`. Debug builds also allow it for `sslip.io` names, so a device can reach a development host on the Mac at `http://hobwork.192-168-1-20.sslip.io:7420`. A build phase adds that exception to the built `Info.plist` from `HOBWORK_INSECURE_HTTP_DOMAINS`, which only the Debug configuration sets. Everything else needs https.
 
 ## Tests
 
@@ -96,6 +96,40 @@ just test-host http://hobwork.localhost:7420 'hobwork_session=...'
 It pairs a device, asks for a web session, sets and clears the push token, connects the socket, then removes the device and checks that the app treats that as unpaired. It also signs a second device out with `DELETE /api/devices/self`.
 
 `smoke` stops at the host's sign-in page unless the pairing sheet's browser is already signed in to the host.
+
+## Device driver
+
+`scripts/drive` (or `just drive …`) drives the Debug app on a connected iPhone or iPad from the Mac: screenshots, taps, typing and JavaScript in the web view, for testing by hand or by an agent.
+
+```sh
+just drive start 00008142-001059640CD8401C   # UDID, CoreDevice identifier or device name
+just drive screenshot out.png                 # the whole screen, system alerts and sheets included
+just drive tap 248 277                        # points from the top left of the screen
+just drive tap-label "Allow"                  # accessibility label or identifier, app first, then system alerts
+just drive type "hello"                       # into the focused field
+just drive swipe up                           # or: swipe X1 Y1 X2 Y2
+just drive home                               # Home button; `activate` brings the app back
+just drive tree                               # accessibility tree of the app in front
+just drive info                               # screen size in points and scale
+just drive js "document.title"                # completion value of a script in the web view
+just drive js-async "return await (await fetch('/api/session')).json()"
+just drive open https://hobwork.example.com/  # load a URL in the web view
+just drive web                                # URL and title of the web view
+just drive quit
+```
+
+Screenshots are in pixels (`info` gives the scale) and in the orientation the screen shows; `tap` and `swipe` take points. `start [minutes]` stops the driver after that long, 120 minutes by default.
+
+`start` builds the `HobworkUITests` scheme in Debug for the device and runs `DriverTests/testDrive` in the background (log in `build/drive/xcodebuild.log`). The test launches the app and serves a small HTTP API until `quit` or the time is up. Commands for the web view go on to a hook in the app (`Hobwork/Driver/DriverHook.swift`), which runs only when the test launches the app with a port argument and a token.
+
+The device needs Developer Mode on, and the first build needs the team's signing, as for `just run-device`.
+
+Safeguards:
+
+- The driver exists only in Debug builds. Its code is behind the `HOBWORK_DRIVER` compilation condition, set only for the Debug configuration of the app and the UI tests, so Release, TestFlight and App Store builds contain none of it. `just check-release` builds Debug and Release and checks that Release has no driver code and no `sslip.io` exception, and that Debug has both.
+- The test listens only on the device's address in the CoreDevice tunnel to the Mac (`tunnelIPAddress` from `xcrun devicectl device info details`), a unique local IPv6 address on a point-to-point interface. It refuses any other address, so it is never reachable from Wi-Fi or cellular. The app's hook listens on `127.0.0.1`.
+- `start` generates a random token for each run and passes it to the test in its environment. Requests without it get 401. The token is kept in `build/drive/` (gitignored, readable only by you) and sent from a header file, so it does not show in the process list. The app's hook has its own token from the test.
+- The driver stops on `quit`, when its time is up, or when the test run ends.
 
 ## Device capabilities
 

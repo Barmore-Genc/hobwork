@@ -276,8 +276,10 @@ export function createDevices(options: {
   expiry.unref()
   // Wakes up for the next notification waiting for deliverAt, if any.
   let schedule: NodeJS.Timeout | undefined
+  let closed = false
   function scheduleNext() {
     clearTimeout(schedule)
+    if (closed) return
     const next = nextDelivery(host.db)
     if (next === undefined) return
     schedule = setTimeout(
@@ -285,7 +287,8 @@ export function createDevices(options: {
         notifications
           .deliverDue()
           .catch((err: unknown) => console.error('Sending scheduled notifications failed', err))
-          .finally(scheduleNext)
+          .then(scheduleNext)
+          .catch((err: unknown) => console.error('Scheduling notifications failed', err))
       },
       Math.min(Math.max(next - now(), 0), MAX_SCHEDULE_WAIT_MS),
     )
@@ -959,6 +962,7 @@ export function createDevices(options: {
       closers.push(closer)
     },
     close() {
+      closed = true
       clearInterval(expiry)
       clearTimeout(schedule)
       for (const waiter of waiters.values()) {

@@ -42,6 +42,14 @@ test('accepts egress hosts with and without ports', () => {
   expect(validate({ egress }), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts uploads and triggers for them', () => {
+  const config = {
+    uploads: { inbox: { prefix: 'prints/inbox/', maxBytes: 209715200, types: ['image/*', '.3mf', 'application/pdf'] } },
+    triggers: { arrived: { upload: 'inbox', handler: 'src/arrived.ts' } },
+  }
+  expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -61,6 +69,11 @@ test.each([
   ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
   ['egress with a URL', { egress: ['https://api.example.com'] }],
+  ['upload prefix without a trailing slash', { uploads: { inbox: { prefix: 'inbox' } } }],
+  ['upload prefix going up', { uploads: { inbox: { prefix: '../inbox/' } } }],
+  ['upload over 1 GB', { uploads: { inbox: { prefix: 'inbox/', maxBytes: 2147483648 } } }],
+  ['upload type that is neither MIME type nor extension', { uploads: { inbox: { prefix: 'inbox/', types: ['3mf'] } } }],
+  ['trigger with an upload and a device', { triggers: { a: { upload: 'inbox', device: { capability: 'nfc', event: 'scanned' }, handler: 'src/a.ts' } } }],
   ['egress with a named port', { egress: ['api.example.com:https'] }],
   ['crossAppRequests with a URL', { crossAppRequests: ['https://filament.apps.example.com'] }],
   ['crossAppRequests with a wildcard', { crossAppRequests: ['*'] }],

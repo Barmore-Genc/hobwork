@@ -19,6 +19,7 @@ Every `just` recipe regenerates the project first. Targets:
 - `HobworkNotificationService`: notification service extension, for iOS and macOS. It opens sealed relay pushes and answers the relay's proof and renewal pushes (see Push). Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
 - `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
 - `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers, with Pause, Resume, Cancel and Stop buttons. The buttons run `AlarmControlIntent` (`Hobwork/Alarms/AlarmControlIntent.swift`), a `LiveActivityIntent` that is part of both the app and the extension, as Apple requires; iOS runs it in the app, which AlarmKit authorized. It also has hobs' Live Activities, the hob widget and the Hob Action and Hob Page controls (see Live Activities, widgets and intents).
+- `HobworkShare` (iOS only): the share extension, "Hobwork" in the share sheet. It lists the hobs' share targets that take what was shared, uploads files in parts from disk and runs the target's route (see Share targets in `docs/architecture.md`). Sources: `ShareExtension/` and `Hobwork/Shared/Share/`, which the app compiles too so the tests reach it.
 - `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
 - `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it, and the device driver (see "Device driver").
 
@@ -36,6 +37,7 @@ State shared with the extensions lives in the app group `group.dev.bgenc.hobwork
 | HobworkNotificationService | App Groups, HealthKit, Family Controls |
 | HobworkDeviceActivityMonitor | App Groups, Family Controls |
 | HobworkWidgets | App Groups |
+| HobworkShare | App Groups |
 | Hobwork (macOS) | Push, App Attest, App Sandbox with outgoing connections, App Groups |
 | HobworkNotificationService (macOS) | App Sandbox with outgoing connections, App Groups |
 
@@ -45,6 +47,8 @@ Two build settings pick the iOS entitlements files:
 
 - `HOBWORK_FAMILY_CONTROLS` (default `YES`): `NO` signs every target without Family Controls (the `-NoFamilyControls` files). The development entitlement works for Xcode builds; TestFlight and the App Store need the distribution entitlement, which Apple approves on request. Until then `just testflight` archives with `NO`, and that build does not offer Screen Time.
 - `HOBWORK_APPLINKS_HOST` (default empty): a host name such as `hobwork.example.com` adds `applinks:<host>` and `webcredentials:<host>` (the `-AppLinks` files), so NFC tags with `https://<host>/nfc/<tag>` open the app and pairing with that host finishes on the universal link `https://<host>/devices/paired`, which only this app can claim. Pairing with any other host falls back to `hobwork://paired`. The host serves the matching `apple-app-site-association`.
+
+- `HOBWORK_APPS_HOST` (default `apps.<HOBWORK_APPLINKS_HOST>`): with `HOBWORK_APPLINKS_HOST` set, adds `applinks:*.<apps host>`, so links to hob pages (`https://filament.apps.hobwork.example.com/spool/78`) open the app. Set it when hob apps live elsewhere, such as `apps.example.com` next to `hobwork.example.com`. The host serves the association file on the apps host and every hob origin; the app applies each hob's `appLinks` rules itself (see Links to hob pages in `docs/architecture.md`).
 
 For example `xcodebuild ... HOBWORK_APPLINKS_HOST=hobwork.example.com`.
 
@@ -158,7 +162,8 @@ Unit tests cover argument checks, command dedup and expiry, result, event and sa
 - Screen Time: the Family Controls prompt, the app picker, shields from ManagedSettings, and that DeviceActivity calls the monitor extension at interval start, end and threshold (limits, schedules, the end of timed blocks).
 - Commands run by the notification service extension: whether ManagedSettings, DeviceActivity and HealthKit calls work from it at runtime (AlarmKit does not: on an iPad the extension's authorization stays `notDetermined`), how long they take against the 30 second limit, and that the summary replaces the text.
 - AlarmKit alarms and timers ringing, the timer's Live Activity and its buttons, the authorization prompt after tapping an alarm prompt push, and the countdown on the Alarms and Timers screen (read from `Activity.activities`).
-- NFC reading and writing (the simulator has no NFC), universal links, and iOS background tag reading.
+- NFC reading and writing (the simulator has no NFC), universal links (to the host and to hob pages), and iOS background tag reading.
+- The share extension against a paired host: in the simulator it shows in Safari's share sheet for a link, and says to connect the app first when it is not paired.
 - The Scan NFC Tag and Send Tag to Hobwork actions from Shortcuts, the Action Button and a "When I tap an NFC tag" automation.
 - Health: authorization, queries while locked (`locked`) and background delivery waking the app.
 - The Focus filter running when a Focus turns on and off, on iOS and macOS.

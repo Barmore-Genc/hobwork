@@ -4,11 +4,15 @@ use std::sync::Mutex;
 use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::{AttestKey, ConfirmOutcome, Environment, Event, Grant, PendingToken, Registration, Retention, Store};
+use super::{
+    ActivityKind, ActivityToken, AttestKey, ConfirmOutcome, Environment, Event, Grant, PendingToken, Registration,
+    Retention, Store,
+};
 
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_init.sql"),
     include_str!("../../migrations/0002_drop_filtering.sql"),
+    include_str!("../../migrations/0003_activity_tokens.sql"),
 ];
 
 pub struct SqliteStore {
@@ -112,6 +116,21 @@ fn grant_from_row(row: &Row) -> rusqlite::Result<Grant> {
         renewed_at: row.get(5)?,
         expires_at: row.get(6)?,
         next_renewal_push_at: row.get(7)?,
+    })
+}
+
+const ACTIVITY_TOKEN_COLUMNS: &str = "id, grant_id, kind, token, created_at, expires_at";
+
+fn activity_token_from_row(row: &Row) -> rusqlite::Result<ActivityToken> {
+    let kind: String = row.get(2)?;
+    Ok(ActivityToken {
+        id: row.get(0)?,
+        grant_id: row.get(1)?,
+        kind: ActivityKind::parse(&kind)
+            .ok_or_else(|| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, kind.into()))?,
+        token: row.get(3)?,
+        created_at: row.get(4)?,
+        expires_at: row.get(5)?,
     })
 }
 
@@ -330,6 +349,61 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn put_activity_token(&self, t: &ActivityToken, max_update: usize) -> Result<ActivityToken> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let existing = tx
+            .query_row(
+                &format!(
+                    "SELECT {ACTIVITY_TOKEN_COLUMNS} FROM activity_tokens WHERE grant_id = ? AND kind = ? AND token = ?"
+                ),
+                params![t.grant_id, t.kind.as_str(), t.token],
+                activity_token_from_row,
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            return Ok(existing);
+        }
+        if t.kind == ActivityKind::Start {
+            tx.execute(
+                "DELETE FROM activity_tokens WHERE grant_id = ? AND kind = 'start'",
+                [&t.grant_id],
+            )?;
+        }
+        tx.execute(
+            &format!("INSERT INTO activity_tokens ({ACTIVITY_TOKEN_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)"),
+            params![t.id, t.grant_id, t.kind.as_str(), t.token, t.created_at, t.expires_at],
+        )?;
+        if t.kind == ActivityKind::Update {
+            tx.execute(
+                "DELETE FROM activity_tokens WHERE id IN (
+                   SELECT id FROM activity_tokens WHERE grant_id = ? AND kind = 'update'
+                   ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)",
+                params![t.grant_id, max_update as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(t.clone())
+    }
+
+    fn activity_token(&self, id: &str) -> Result<Option<ActivityToken>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!("SELECT {ACTIVITY_TOKEN_COLUMNS} FROM activity_tokens WHERE id = ?"),
+                [id],
+                activity_token_from_row,
+            )
+            .optional()?)
+    }
+
+    fn delete_activity_token(&self, grant_id: &str, id: &str) -> Result<bool> {
+        Ok(self.conn().execute(
+            "DELETE FROM activity_tokens WHERE id = ? AND grant_id = ?",
+            params![id, grant_id],
+        )? > 0)
+    }
+
     fn use_request_nonce(&self, grant_id: &str, nonce: &str, expires_at: i64) -> Result<bool> {
         Ok(self.conn().execute(
             "INSERT INTO request_nonces (grant_id, nonce, expires_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
@@ -398,6 +472,7 @@ impl Store for SqliteStore {
         tx.execute("DELETE FROM ip_keys WHERE created_at <= ?", [now - retention.ip_key])?;
         tx.execute("DELETE FROM request_nonces WHERE expires_at <= ?", [now])?;
         tx.execute("DELETE FROM attest_challenges WHERE expires_at <= ?", [now])?;
+        tx.execute("DELETE FROM activity_tokens WHERE expires_at <= ?", [now])?;
         tx.execute(
             "DELETE FROM registrations WHERE token IS NULL AND gone_at IS NULL AND created_at <= ?",
             [now - retention.unconfirmed_registration],
@@ -481,5 +556,74 @@ mod tests {
             .unwrap();
         assert_eq!(events, 1);
         assert!(store.registration("r").unwrap().is_none());
+    }
+
+    fn store_with_grant() -> SqliteStore {
+        let store = SqliteStore::memory().unwrap();
+        let registration = Registration {
+            id: "r".into(),
+            secret_hash: vec![0; 32],
+            token: None,
+            environment: None,
+            pending: None,
+            attest: None,
+            created_at: 0,
+            gone_at: None,
+        };
+        store.create_registration(&registration, 0).unwrap();
+        store
+            .put_grant(&Grant {
+                id: "g".into(),
+                registration_id: "r".into(),
+                pairing: "p".into(),
+                public_key: vec![0; 32],
+                created_at: 0,
+                renewed_at: 0,
+                expires_at: 100,
+                next_renewal_push_at: 100,
+            })
+            .unwrap();
+        store
+    }
+
+    fn update_token(id: &str, token: &str, created_at: i64) -> ActivityToken {
+        ActivityToken {
+            id: id.into(),
+            grant_id: "g".into(),
+            kind: ActivityKind::Update,
+            token: token.into(),
+            created_at,
+            expires_at: Some(created_at + 10),
+        }
+    }
+
+    #[test]
+    fn update_tokens_are_trimmed_oldest_first() {
+        let store = store_with_grant();
+        store.put_activity_token(&update_token("a", "aa", 1), 2).unwrap();
+        store.put_activity_token(&update_token("b", "bb", 2), 2).unwrap();
+        store.put_activity_token(&update_token("c", "cc", 2), 2).unwrap();
+        assert!(store.activity_token("a").unwrap().is_none());
+        assert!(store.activity_token("b").unwrap().is_some());
+        assert!(store.activity_token("c").unwrap().is_some());
+    }
+
+    #[test]
+    fn expired_activity_tokens_are_cleaned_up_and_go_with_their_grant() {
+        let store = store_with_grant();
+        let retention = Retention {
+            events: 10,
+            ip_key: 10,
+            unconfirmed_registration: 1000,
+            expired_grant: 1000,
+            gone_registration: 1000,
+        };
+        store.put_activity_token(&update_token("a", "aa", 0), 16).unwrap();
+        store.put_activity_token(&update_token("b", "bb", 5), 16).unwrap();
+        store.cleanup(10, &retention).unwrap();
+        assert!(store.activity_token("a").unwrap().is_none());
+        assert!(store.activity_token("b").unwrap().is_some());
+        store.delete_grant("r", "g").unwrap();
+        assert!(store.activity_token("b").unwrap().is_none());
     }
 }

@@ -70,6 +70,43 @@ pub struct Grant {
     pub next_renewal_push_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ActivityKind {
+    /// Push-to-start: starts a new Live Activity.
+    Start,
+    /// Updates or ends one running Live Activity.
+    Update,
+}
+
+impl ActivityKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActivityKind::Start => "start",
+            ActivityKind::Update => "update",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "start" => Some(ActivityKind::Start),
+            "update" => Some(ActivityKind::Update),
+            _ => None,
+        }
+    }
+}
+
+/// An ActivityKit push token, which is an APNs token like the registration's.
+#[derive(Debug, Clone)]
+pub struct ActivityToken {
+    pub id: String,
+    pub grant_id: String,
+    pub kind: ActivityKind,
+    pub token: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfirmOutcome {
     Confirmed,
@@ -122,6 +159,13 @@ pub trait Store: Send + Sync {
     /// Unexpired grants of live registrations whose renewal push is due.
     fn due_renewals(&self, now: i64) -> Result<Vec<Grant>>;
     fn set_next_renewal_push(&self, grant_ids: &[String], at: i64) -> Result<()>;
+
+    /// Returns the grant's token of the same kind and value when there is one.
+    /// Otherwise stores `token`, deleting the grant's other start token, or
+    /// its oldest update tokens past `max_update`.
+    fn put_activity_token(&self, token: &ActivityToken, max_update: usize) -> Result<ActivityToken>;
+    fn activity_token(&self, id: &str) -> Result<Option<ActivityToken>>;
+    fn delete_activity_token(&self, grant_id: &str, id: &str) -> Result<bool>;
 
     /// Returns false when the nonce was already used with this grant.
     fn use_request_nonce(&self, grant_id: &str, nonce: &str, expires_at: i64) -> Result<bool>;

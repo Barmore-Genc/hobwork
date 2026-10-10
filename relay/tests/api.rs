@@ -954,6 +954,312 @@ async fn registrations_are_rate_limited_per_ip() {
     assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
 }
 
+fn activity_hex(i: u32) -> String {
+    format!("{:064x}", 0xac00 + i)
+}
+
+fn live(activity: &str, event: &str, timestamp: i64) -> Value {
+    json!({
+        "kind": "liveactivity",
+        "keyId": "k1",
+        "ciphertext": "AAAA",
+        "activity": activity,
+        "event": event,
+        "timestamp": timestamp,
+    })
+}
+
+impl Harness {
+    async fn activity_token(&self, reg: &Reg, grant: &str, kind: &str, token: &str) -> (StatusCode, Value) {
+        self.app_call(
+            reg,
+            "POST",
+            &format!("/v1/registrations/{}/grants/{grant}/activity-tokens", reg.id),
+            Some(&json!({ "kind": kind, "token": token })),
+        )
+        .await
+    }
+
+    async fn activity_id(&self, reg: &Reg, grant: &str, kind: &str, token: &str) -> String {
+        let (status, body) = self.activity_token(reg, grant, kind, token).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body["id"].as_str().unwrap().into()
+    }
+}
+
+#[tokio::test]
+async fn start_tokens_replace_each_other_and_repeat_their_id() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+
+    let (status, body) = h.activity_token(&reg, &grant, "start", &activity_hex(1)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["expiresAt"], Value::Null);
+    let first = body["id"].as_str().unwrap().to_owned();
+    let upper = activity_hex(1).to_uppercase();
+    assert_eq!(h.activity_id(&reg, &grant, "start", &upper).await, first, "same token");
+
+    let second = h.activity_id(&reg, &grant, "start", &activity_hex(2)).await;
+    assert_ne!(second, first);
+    let (status, body) = h.push(&grant, &key, &live(&first, "start", h.now())).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("unknown_activity")),
+        "replaced"
+    );
+    assert_eq!(
+        h.push(&grant, &key, &live(&second, "start", h.now())).await.0,
+        StatusCode::OK
+    );
+
+    let (status, _) = h.activity_token(&reg, &grant, "start", "xyz").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = h.activity_token(&reg, &grant, "other", &activity_hex(3)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn update_tokens_expire_and_are_kept_to_16_per_grant() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+
+    let (status, body) = h.activity_token(&reg, &grant, "update", &activity_hex(0)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["expiresAt"], h.now() + 13 * 3600);
+    let oldest = body["id"].as_str().unwrap().to_owned();
+    h.advance(1);
+    let mut ids = Vec::new();
+    for i in 1..=16 {
+        ids.push(h.activity_id(&reg, &grant, "update", &activity_hex(i)).await);
+    }
+    assert_eq!(
+        h.push(&grant, &key, &live(&oldest, "update", h.now())).await.0,
+        StatusCode::NOT_FOUND,
+        "trimmed"
+    );
+    assert_eq!(
+        h.push(&grant, &key, &live(&ids[0], "update", h.now())).await.0,
+        StatusCode::OK
+    );
+
+    h.advance(13 * 3600);
+    let (status, body) = h.push(&grant, &key, &live(&ids[0], "end", h.now())).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("unknown_activity")),
+        "expired"
+    );
+}
+
+#[tokio::test]
+async fn activity_tokens_belong_to_one_grant() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let other = h.register(OTHER_TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+    let second_grant = h.grant(&reg, "pairing-2", &key).await;
+    let other_grant = h.grant(&other, "pairing-1", &key).await;
+
+    let (status, body) = h.activity_token(&reg, &other_grant, "start", &activity_hex(1)).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("unknown_grant"))
+    );
+
+    let id = h.activity_id(&reg, &grant, "update", &activity_hex(1)).await;
+    let (status, body) = h.push(&second_grant, &key, &live(&id, "update", h.now())).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("unknown_activity"))
+    );
+
+    let path = |grant: &str, id: &str| format!("/v1/registrations/{}/grants/{grant}/activity-tokens/{id}", reg.id);
+    let (status, _) = h.app_call(&reg, "DELETE", &path(&second_grant, &id), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        h.push(&grant, &key, &live(&id, "update", h.now())).await.0,
+        StatusCode::OK,
+        "another grant's ID"
+    );
+    let (status, _) = h.app_call(&reg, "DELETE", &path(&grant, &id), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        h.push(&grant, &key, &live(&id, "update", h.now())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, _) = h.app_call(&reg, "DELETE", &path(&grant, &id), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "unknown IDs too");
+    let (status, _) = h.app_call(&reg, "DELETE", &path(&other_grant, &id), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn live_activity_pushes_go_to_the_activity_token() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+    let start = h.activity_id(&reg, &grant, "start", &activity_hex(1)).await;
+    let update = h.activity_id(&reg, &grant, "update", &activity_hex(2)).await;
+    let envelope = json!({ "v": 1, "grant": grant, "keyId": "k1", "ciphertext": "AAAA" });
+
+    let mut body = live(&start, "start", h.now());
+    body["staleDate"] = json!(h.now() + 600);
+    body["relevanceScore"] = json!(50);
+    let (status, response) = h.push(&grant, &key, &body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let sent = h.apns.last();
+    assert_eq!(sent.push_type, PushType::LiveActivity);
+    assert_eq!(sent.token, activity_hex(1));
+    assert_eq!(sent.environment, Environment::Sandbox);
+    assert_eq!(sent.priority, 10);
+    assert_eq!(sent.collapse_id, None);
+    assert_eq!(sent.expiration, h.now() + DAY);
+    assert_eq!(
+        h.apns.last_payload(),
+        json!({ "aps": {
+            "timestamp": h.now(),
+            "event": "start",
+            "content-state": { "hobwork": envelope },
+            "stale-date": h.now() + 600,
+            "relevance-score": 50,
+            "attributes-type": "HobworkActivityAttributes",
+            "attributes": { "hobwork": envelope },
+            "alert": { "title": "Hobwork", "body": "A hob started a Live Activity." },
+            "input-push-token": 1,
+        } })
+    );
+
+    let mut body = live(&update, "update", h.now());
+    body["priority"] = json!(5);
+    body["expiration"] = json!(0);
+    let (status, _) = h.push(&grant, &key, &body).await;
+    assert_eq!(status, StatusCode::OK);
+    let sent = h.apns.last();
+    assert_eq!((sent.token, sent.priority, sent.expiration), (activity_hex(2), 5, 0));
+    assert_eq!(
+        h.apns.last_payload(),
+        json!({ "aps": { "timestamp": h.now(), "event": "update", "content-state": { "hobwork": envelope } } })
+    );
+
+    let mut body = live(&update, "end", h.now());
+    body["dismissalDate"] = json!(h.now() + 60);
+    assert_eq!(h.push(&grant, &key, &body).await.0, StatusCode::OK);
+    assert_eq!(h.apns.last_payload()["aps"]["event"], "end");
+    assert_eq!(h.apns.last_payload()["aps"]["dismissal-date"], h.now() + 60);
+
+    let before = h.apns.count();
+    assert_eq!(
+        h.push(&grant, &key, &live(&update, "start", h.now())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.push(&grant, &key, &live(&start, "update", h.now())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.push(&grant, &key, &live(&start, "end", h.now())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(h.apns.count(), before);
+}
+
+#[tokio::test]
+async fn live_activity_fields_are_checked() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+    let id = h.activity_id(&reg, &grant, "update", &activity_hex(1)).await;
+    let before = h.apns.count();
+
+    let with = |field: &str, value: Value| {
+        let mut body = live(&id, "update", h.now());
+        body[field] = value;
+        body
+    };
+    let without = |field: &str| {
+        let mut body = live(&id, "update", h.now());
+        body.as_object_mut().unwrap().remove(field);
+        body
+    };
+    let mut alert_with_event = alert();
+    alert_with_event["event"] = json!("update");
+    let mut alert_with_timestamp = alert();
+    alert_with_timestamp["timestamp"] = json!(h.now());
+    for (body, why) in [
+        (alert_with_event, "event on an alert"),
+        (alert_with_timestamp, "timestamp on an alert"),
+        (with("collapseId", json!("c1")), "collapseId"),
+        (with("priority", json!(1)), "priority 1"),
+        (with("event", json!("pause")), "unknown event"),
+        (with("relevanceScore", json!(-1)), "negative relevance"),
+        (with("staleDate", json!(-5)), "negative staleDate"),
+        (with("title", json!("hi")), "unknown field"),
+        (without("activity"), "no activity"),
+        (without("event"), "no event"),
+        (without("timestamp"), "no timestamp"),
+    ] {
+        let (status, response) = h.push(&grant, &key, &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {response}");
+    }
+    assert_eq!(h.apns.count(), before);
+
+    let big = with("ciphertext", json!(b64(&[1u8; 3000])));
+    let (status, body) = h.push(&grant, &key, &big).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::PAYLOAD_TOO_LARGE, Some("too_large"))
+    );
+}
+
+#[tokio::test]
+async fn a_gone_activity_token_leaves_the_registration_alone() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+    let first = h.activity_id(&reg, &grant, "update", &activity_hex(1)).await;
+    let second = h.activity_id(&reg, &grant, "update", &activity_hex(2)).await;
+
+    h.apns.fail_next(410, "Unregistered");
+    let (status, body) = h.push(&grant, &key, &live(&first, "update", h.now())).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::GONE, Some("activity_gone"))
+    );
+    h.apns.fail_next(400, "BadDeviceToken");
+    let (status, body) = h.push(&grant, &key, &live(&second, "update", h.now())).await;
+    assert_eq!(body["error"], "activity_gone", "{status}");
+    assert_eq!(
+        h.push(&grant, &key, &live(&first, "update", h.now())).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    let (_, body) = h
+        .app_call(&reg, "GET", &format!("/v1/registrations/{}", reg.id), None)
+        .await;
+    assert_eq!(body["status"], "active");
+    assert_eq!(h.push(&grant, &key, &alert()).await.0, StatusCode::OK);
+
+    let third = h.activity_id(&reg, &grant, "update", &activity_hex(3)).await;
+    h.apns.fail_next(429, "TooManyRequests");
+    let (status, body) = h.push(&grant, &key, &live(&third, "update", h.now())).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_GATEWAY, Some("push_failed"))
+    );
+    assert_eq!(
+        h.push(&grant, &key, &live(&third, "update", h.now())).await.0,
+        StatusCode::OK
+    );
+}
+
 #[test]
 fn client_ip_trusts_only_configured_proxies() {
     let proxies = hobwork_relay::config::parse_proxies("10.0.0.0/8, 127.0.0.1").unwrap();

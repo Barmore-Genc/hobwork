@@ -54,6 +54,21 @@ final class BridgeRouter {
         capabilities.mapValues { $0.methods.sorted() }
     }
 
+    var permissions: any BridgePermissionStore {
+        gatekeeper.store
+    }
+
+    /// Permission key to what Settings calls it.
+    var permissionLabels: [String: String] {
+        var labels: [String: String] = [:]
+        for capability in capabilities.values {
+            for method in capability.methods {
+                if let permission = capability.permission(for: method) { labels[permission.key] = permission.label }
+            }
+        }
+        return labels
+    }
+
     /// Answers a message body `{ capability, method, args, page? }` from a page on `origin`
     /// with `{ ok: true, value }` or `{ ok: false, error: { code, message } }`.
     func handle(body: JSONValue, origin: HobOrigin, frame: Frame, presenter: any BridgePresenter) async -> JSONValue {

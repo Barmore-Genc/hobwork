@@ -42,6 +42,8 @@ struct SettingsView: View {
                     HealthSection(model: model)
                 #endif
 
+                HobPermissionsSection(router: model.web.bridge.router)
+
                 if model.pairing != nil {
                     Section {
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
@@ -185,3 +187,47 @@ private struct NFCSection: View {
     }
 }
 #endif
+
+/// What each hob may do in the app, as answered when the hob first asked.
+private struct HobPermissionsSection: View {
+    let router: BridgeRouter
+
+    @State private var answers: [String: [String: Bool]] = [:]
+
+    var body: some View {
+        Section {
+            if answers.isEmpty {
+                Text("No hob has asked yet.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(answers.keys.sorted(), id: \.self) { hob in
+                ForEach(answers[hob, default: [:]].keys.sorted(), id: \.self) { key in
+                    Toggle(isOn: binding(hob: hob, key: key)) {
+                        Text(Self.hobName(hob))
+                        Text(router.permissionLabels[key] ?? key)
+                    }
+                }
+            }
+        } header: {
+            Text("Hob Permissions")
+        } footer: {
+            Text("Hobs ask before they read your clipboard.")
+        }
+        .task { answers = router.permissions.all }
+    }
+
+    private func binding(hob: String, key: String) -> Binding<Bool> {
+        Binding(
+            get: { answers[hob]?[key] ?? false },
+            set: { allowed in
+                router.permissions.set(allowed, hob: hob, key: key)
+                answers = router.permissions.all
+            }
+        )
+    }
+
+    /// Keys are `<apps host>/<hob>`.
+    private static func hobName(_ key: String) -> String {
+        String(key.split(separator: "/").last ?? Substring(key))
+    }
+}

@@ -230,4 +230,40 @@ struct CameraBridgeTests {
         let small = try #require(CameraPhoto.jpeg(image, options: CameraPhotoOptions(maxDimension: 4096, quality: 0.5)))
         #expect(small.width == 4000)
     }
+
+    @Test func turnsScannerStillsToTheScreen() throws {
+        let portrait = CGSize(width: 900, height: 1600)
+        #expect(CameraPhoto.quarterTurns(for: .landscapeRight, imageSize: portrait) == -1)
+        #expect(CameraPhoto.quarterTurns(for: .landscapeLeft, imageSize: portrait) == 1)
+        #expect(CameraPhoto.quarterTurns(for: .portrait, imageSize: portrait) == 0)
+        #expect(CameraPhoto.quarterTurns(for: .landscapeRight, imageSize: CGSize(width: 1600, height: 900)) == 0)
+
+        // Red on top; a counterclockwise turn puts it on the left.
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: portrait, format: format).image { context in
+            UIColor.blue.setFill()
+            context.fill(CGRect(origin: .zero, size: portrait))
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 900, height: 800))
+        }
+        let photo = try #require(CameraPhoto.jpeg(image, options: CameraPhotoOptions(maxDimension: 1600, quality: 0.9), quarterTurns: -1))
+        #expect(photo.width == 1600)
+        #expect(photo.height == 900)
+        let decoded = try #require(UIImage(data: photo.jpeg)?.cgImage)
+        let left = try #require(pixel(decoded, x: 100, y: 450))
+        let right = try #require(pixel(decoded, x: 1500, y: 450))
+        #expect(left.red > 200 && left.blue < 60)
+        #expect(right.blue > 200 && right.red < 60)
+    }
+
+    private func pixel(_ image: CGImage, x: Int, y: Int) -> (red: UInt8, blue: UInt8)? {
+        var data = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(
+            data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        return (data[0], data[2])
+    }
 }

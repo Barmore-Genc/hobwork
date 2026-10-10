@@ -363,20 +363,36 @@
     }
 
     extension CameraPhoto {
-        /// A JPEG of `image` with its longer side at most `maxDimension` pixels, upright.
-        static func jpeg(_ image: UIImage, options: CameraPhotoOptions) -> CameraPhoto? {
+        /// A JPEG of `image` with its longer side at most `maxDimension` pixels, upright, then
+        /// turned clockwise by `quarterTurns` (negative for counterclockwise).
+        static func jpeg(_ image: UIImage, options: CameraPhotoOptions, quarterTurns: Int = 0) -> CameraPhoto? {
             let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
             guard pixels.width >= 1, pixels.height >= 1 else { return nil }
             let factor = min(1, CGFloat(options.maxDimension) / max(pixels.width, pixels.height))
-            let size = CGSize(width: max(1, (pixels.width * factor).rounded()), height: max(1, (pixels.height * factor).rounded()))
+            let drawn = CGSize(width: max(1, (pixels.width * factor).rounded()), height: max(1, (pixels.height * factor).rounded()))
+            let size = quarterTurns % 2 != 0 ? CGSize(width: drawn.height, height: drawn.width) : drawn
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             format.opaque = true
-            let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
+            let resized = UIGraphicsImageRenderer(size: size, format: format).image { context in
+                context.cgContext.translateBy(x: size.width / 2, y: size.height / 2)
+                context.cgContext.rotate(by: CGFloat(quarterTurns) * .pi / 2)
+                image.draw(in: CGRect(x: -drawn.width / 2, y: -drawn.height / 2, width: drawn.width, height: drawn.height))
             }
             guard let data = resized.jpegData(compressionQuality: options.quality) else { return nil }
             return CameraPhoto(jpeg: data, width: Int(size.width), height: Int(size.height))
+        }
+
+        /// The scanner's stills are upright for a device held in portrait whatever the screen
+        /// shows, so they are turned to match the screen. Stills that already match are left alone.
+        static func quarterTurns(for interface: UIInterfaceOrientation, imageSize: CGSize) -> Int {
+            let portraitImage = imageSize.height > imageSize.width
+            switch interface {
+            case .landscapeRight: return portraitImage ? -1 : 0
+            case .landscapeLeft: return portraitImage ? 1 : 0
+            case .portraitUpsideDown: return 2
+            default: return 0
+            }
         }
     }
 #endif

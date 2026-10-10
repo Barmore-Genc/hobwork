@@ -72,8 +72,8 @@
         }
 
         /// Big photos take a while to scale and compress.
-        nonisolated static func encode(_ image: UIImage, options: CameraPhotoOptions) async -> CameraPhoto? {
-            await Task.detached(priority: .userInitiated) { CameraPhoto.jpeg(image, options: options) }.value
+        nonisolated static func encode(_ image: UIImage, options: CameraPhotoOptions, quarterTurns: Int = 0) async -> CameraPhoto? {
+            await Task.detached(priority: .userInitiated) { CameraPhoto.jpeg(image, options: options, quarterTurns: quarterTurns) }.value
         }
 
         private static func top(_ presenter: any BridgePresenter) -> UIViewController? {
@@ -333,13 +333,17 @@
                 shutterButton.isEnabled = true
             }
             flash()
+            let interface = view.window?.windowScene?.effectiveGeometry.interfaceOrientation ?? .portrait
             let image: UIImage
             do {
                 image = try await scanner.capturePhoto()
             } catch {
                 throw .failed("The photo couldn't be taken: \(error.localizedDescription)")
             }
-            guard let photo = await VisionKitCamera.encode(image, options: photoOptions) else { throw .failed("Couldn't save the photo") }
+            let turns = CameraPhoto.quarterTurns(for: interface, imageSize: image.size)
+            guard let photo = await VisionKitCamera.encode(image, options: photoOptions, quarterTurns: turns) else {
+                throw .failed("Couldn't save the photo")
+            }
             return photo
         }
 

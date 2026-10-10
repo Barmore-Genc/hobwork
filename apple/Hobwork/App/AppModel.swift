@@ -203,12 +203,11 @@ final class AppModel {
             guard pairing != nil else { return }
             do {
                 let records = try await nfc.read(sheet: NFCSheet()).records
-                guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
+                guard let url = records.first(where: { $0.type == .url }).flatMap({ URL(string: $0.value) }) else {
                     nfcNotice = "This tag has no link, so there is nothing to send to your hobs."
                     return
                 }
-                await send(event)
-                nfcNotice = "Tag scanned."
+                await scanned(url, records: records)
             } catch .cancelled {
                 return
             } catch {
@@ -234,26 +233,39 @@ final class AppModel {
         /// the app stays where it is.
         func open(_ url: URL) {
             guard let pairing else { return }
-            let router = web.bridge.router
-            if let tag = NFCTagLink.tag(from: url, host: pairing.host) {
-                let link = pairing.host.appending(path: "nfc/\(tag)")
-                Task {
-                    await send(NFCTagLink.event(tag: tag))
-                    if let hob = try? await api?.nfcTagHob(url: link), router.listens("nfc.scanned", hob: hob) {
-                        router.emit("nfc.scanned", data: .object(["url": .string(link.absoluteString), "tag": .string(tag)]), toHob: hob)
-                    } else {
-                        nfcNotice = "Tag scanned."
-                    }
-                }
+            if NFCTagLink.tag(from: url, host: pairing.host) != nil {
+                Task { await scanned(url, records: nil) }
                 return
             }
             guard let origin = web.linkPolicy?.hobOrigin(of: url) else { return }
-            if router.listens("nfc.scanned", origin: origin) {
-                router.emit("nfc.scanned", data: .object(["url": .string(url.absoluteString)]), to: origin)
-                Task { await send(NFCTagLink.event(url: url, host: pairing.host)) }
+            if web.bridge.router.listens("nfc.scanned", origin: origin) {
+                Task { await scanned(url, records: nil) }
             } else {
                 web.open(link: url.absoluteString)
             }
+        }
+
+        /// Sends a scanned link to the host's triggers and, when a page of the hob that wrote the
+        /// tag (or of the hob the link points to) listens, to that page as `nfc.scanned`.
+        private func scanned(_ url: URL, records: [NFCRecord]?) async {
+            guard let pairing else { return }
+            let router = web.bridge.router
+            await send(NFCTagLink.event(url: url, records: records, host: pairing.host))
+            var data: [String: JSONValue] = ["url": .string(url.absoluteString)]
+            if let records { data["records"] = .array(records.map { .object(["type": .string($0.type.rawValue), "value": .string($0.value)]) }) }
+            if let tag = NFCTagLink.tag(from: url, host: pairing.host) {
+                let link = pairing.host.appending(path: "nfc/\(tag)")
+                data["url"] = .string(link.absoluteString)
+                data["tag"] = .string(tag)
+                if let hob = try? await api?.nfcTagHob(url: link), router.listens("nfc.scanned", hob: hob) {
+                    router.emit("nfc.scanned", data: .object(data), toHob: hob)
+                    return
+                }
+            } else if let origin = web.linkPolicy?.hobOrigin(of: url), router.listens("nfc.scanned", origin: origin) {
+                router.emit("nfc.scanned", data: .object(data), to: origin)
+                return
+            }
+            nfcNotice = "Tag scanned."
         }
 
         /// Reports rings, stops and repeats of hobs' alarms while the app runs. The Stop and

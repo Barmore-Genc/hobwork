@@ -240,6 +240,26 @@ struct BridgeTests {
         #expect(router.subscriptionCount == 0)
     }
 
+    @Test func sendsHobEventsToItsBranchPreviewsToo() async throws {
+        var scripts: [String] = []
+        let router = router { _, script in
+            scripts.append(script)
+            return true
+        }
+        let preview = policy.hobOrigin(scheme: "https", host: "add-spools--filament.apps.hobwork.example.com", port: nil)!
+        let subscribe = body("bridge", "subscribe", .object(["event": .string("alarms.fired")]))
+        _ = await router.handle(body: subscribe, origin: preview, frame: Frame(), presenter: presenter)
+        _ = await router.handle(body: body("bridge", "subscribe", .object(["event": .string("alarms.fired")]), page: "p2"), origin: sleep, frame: Frame(), presenter: presenter)
+        #expect(router.listens("alarms.fired", hob: "filament"))
+        #expect(!router.listens("alarms.fired", origin: filament))
+        #expect(router.listens("alarms.fired", origin: preview))
+        #expect(!router.listens("nfc.scanned", hob: "filament"))
+        router.emit("alarms.fired", data: .object(["id": .string("a1")]), toHob: "filament")
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(scripts.count == 1)
+        #expect(scripts.first?.contains(preview.host) == true)
+    }
+
     @Test func anotherHobCannotUnsubscribeAPage() async {
         let router = router()
         _ = await router.handle(body: body("bridge", "subscribe", .object(["event": .string("echo.pong")])), origin: filament, frame: Frame(), presenter: presenter)

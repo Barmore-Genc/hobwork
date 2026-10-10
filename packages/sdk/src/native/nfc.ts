@@ -36,7 +36,8 @@ export type NfcWriteResult = {
   device?: string
 }
 
-export type NfcScanned = { url: string; tag?: string }
+// records when the app read the tag itself (the Scan NFC Tag action).
+export type NfcScanned = { url: string; tag?: string; records?: NfcTagRecord[] }
 
 export type NfcSessionEnd = {
   // stopped: the page stopped it. timeout: iOS ends sessions after 60 seconds;
@@ -75,8 +76,8 @@ export const nfc = {
   // device shows a notification to tap and the call waits up to two minutes.
   write: (write: NfcWrite) => call<NfcWriteResult>('nfc', 'write', write),
   // Reads tags one after another in one sheet: a scan chain, or a bin that
-  // keeps listening. One session at a time per device; starting another ends
-  // the first with "failed".
+  // keeps listening. A tag left on the reader counts once. One session at a
+  // time per device: starting another while one runs fails with reason "busy".
   async session(options: NfcSessionOptions): Promise<NfcSession> {
     const { onTag, onEnd, ...args } = options
     let id: string | undefined
@@ -127,7 +128,8 @@ export const nfc = {
     }
   },
   // A tag scanned outside the page while it is open: iOS background reading of
-  // a Hobwork tag of this hob, or of a link to this hob, opened the app. The
-  // app stays on the page.
+  // a Hobwork tag this hob wrote, or the Scan NFC Tag action (Action Button,
+  // Control Center) reading a Hobwork tag of this hob or a link to this hob's
+  // origin. The app stays on the page, and the hob's nfc/scanned triggers run too.
   onScanned: (listener: (scan: NfcScanned) => void) => on<NfcScanned>('nfc.scanned', listener),
 }

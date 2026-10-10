@@ -173,6 +173,14 @@ See Web bridge in `docs/architecture.md`.
 - Printer and media lists: iOS has no API for them outside the picker and a print. macOS could list `NSPrinter.printerNames` and their papers.
 - Permissions are per hob and shared with its branch previews. A preview with new code reads the clipboard if main was allowed.
 
+## Camera
+
+- Untested on hardware (unit tests with a fake camera only): `DataScannerViewController` with the page's symbologies, region and highlighting, `capturePhoto()` while scanning, the torch through `AVCaptureDevice` while VisionKit owns the capture session (VisionKit may switch it off when it reconfigures), the glass controls and the `UIImagePickerController` photo path.
+- The page cannot draw over the viewfinder (the design's `ScannerOverlay`): that needs a transparent web view over a native preview layer and touches passed between them. Pages get a status pill and up to 3 buttons instead.
+- No camera on Macs: VisionKit's data scanner is iOS only. A Mac could use `AVCaptureSession` with Vision barcode requests and Continuity Camera.
+- A scan stays open when the page that started it navigates away; its events then reach no one, and the person closes it.
+- Photos come back as base64 in the reply. A hob that wants many full-size photos would rather have the app upload them into a `files.upload` folder and answer with the path.
+
 ## NFC and alarms
 
 - Untested on hardware (unit tests with fake sessions and a fake AlarmKit only): `NFCTagReaderSession` with NTAG21x, ISO 15693 and Type 4 tags (UIDs, read-back after write, `restartPolling` in sessions and how often a tag left on the reader is found again), the 60 second end of a session, the iPad to iPhone hand-off end to end, AlarmKit's repeat button with `.countdown` behavior, whether AlarmKit runs `secondaryIntent` for a `.countdown` button (if not, `repeated` comes only from `alarmUpdates` while the app runs), the stop and repeat intents launching the app in the background, and the Live Activity's subtitle, tint and repeat button.

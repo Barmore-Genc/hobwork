@@ -27,6 +27,7 @@ import { createSecretStore, type Actor } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
 import { createWorkspaceManager, type ExecWorkspaceVm } from '../workspaces.ts'
 import { triggerRegistryLogger } from './homeassistant.ts'
+import { callRoute } from './http.ts'
 import { getInvocation, listInvocations, queryLogs, startInvocation } from './logs.ts'
 import { createRuntime, type Runtime, type RuntimeOptions } from './runtime.ts'
 import { FAKE_PLACEHOLDER_PREFIX, fakeRuntimeSandboxes, type FakeRuntimeSandboxes } from './test-sandbox.ts'
@@ -780,6 +781,65 @@ test('handlers notify devices, and a tapped notification action runs the device 
   expect(logged).toEqual([
     { device: 'kaan-iphone', capability: 'notifications', event: 'action', notificationId: body.sent.id, action: 'order', data: { spool: 4 } },
   ])
+})
+
+test('a notification action runs its route as the person and device that tapped', async () => {
+  const devices = createDevices({
+    host,
+    invokeRoute: async (project, request, caller) => {
+      const outcome = await callRoute(runtime, project, { ...request, url: `http://filament.apps.test/api${request.path}`, caller })
+      return outcome.ok ? outcome.response.status : 500
+    },
+  })
+  start({ devices })
+  const { user } = signedIn(host)
+  const { verifier, challenge } = pkce()
+  const code = createPairingCode(host.db, { userId: user.id, name: 'kaan-iphone', platform: 'ios', codeChallenge: challenge })
+  const { device } = exchangePairingCode(host.db, code, verifier)
+  recordHello(host.db, device.id, { appVersion: '1.0', capabilities: ['notifications'] })
+  const shown: { id: string }[] = []
+  const app: DeviceConnection = {
+    deviceId: device.id,
+    send(message) {
+      if (message.type !== 'call') return
+      shown.push(message.args as { id: string })
+      queueMicrotask(() => devices.registry.result(app, { id: message.id, ok: true, value: null }))
+    },
+    close() {},
+  }
+  devices.registry.attach(app)
+
+  await deploy(
+    projectFiles({
+      hobwork: { ...HOBWORK_JSON, routes: { ...HOBWORK_JSON.routes, 'POST /jobs/:id/claim': { handler: 'src/claim.ts' } } },
+      handlers: {
+        'handlers/spools.js': `export default async (ctx) => {
+          const person = (await ctx.people())[0]
+          return ctx.person(person.id).notifications.send({ id: 'print:42', title: 'Gojira stopped', actions: [{ id: 'claim', title: "I'm on it", route: '/jobs/42/claim' }] })
+        }`,
+        'handlers/claim.js': `export default async (ctx) => {
+          console.log(JSON.stringify({ job: ctx.params.id, body: await ctx.request.json(), caller: ctx.caller }))
+          await ctx.notifications.withdraw('print:42')
+          return { ok: true }
+        }`,
+      },
+    }),
+  )
+  const outcome = await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true })
+  expect(bodyOf(outcome)).toEqual({ id: 'print:42', scheduled: false, devices: [{ device: 'kaan-iphone', delivery: 'app' }] })
+
+  await devices.handleEvent(device.id, { capability: 'notifications', name: 'action', data: { id: shown[0]!.id, action: 'claim' } })
+  const runs = () => listInvocations(host, { project: 'filament', kind: 'route', limit: 5 }).filter((r) => r.name === 'POST /jobs/:id/claim')
+  await until(() => runs()[0]?.status === 'ok')
+  const logged = queryLogs(host, { project: 'filament', invocationId: runs()[0]!.id, limit: 5 }).map((l) => l.message)
+  expect(logged).toContain('Withdrew notification "print:42"')
+  expect(JSON.parse(logged.find((m) => m.startsWith('{'))!)).toEqual({
+    job: '42',
+    body: { notificationId: 'print:42', action: 'claim' },
+    caller: { person: expect.objectContaining({ id: user.id, name: 'Kaan' }), device: { name: 'kaan-iphone', platform: 'ios' } },
+  })
+  await until(() => shown.length === 2)
+  expect(shown[1]).toEqual({ ids: [shown[0]!.id] })
 })
 
 test('handlers run device commands and get the answer', async () => {

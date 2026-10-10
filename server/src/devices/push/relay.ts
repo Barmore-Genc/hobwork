@@ -10,7 +10,8 @@ const REQUEST_TIMEOUT_MS = 10_000
 const GRANT_ID_LENGTH = 22
 const KEY_ID_LENGTH = 11
 
-export type PushKind = 'alert' | 'command' | 'prompt'
+// background wakes the app without showing anything (content-available).
+export type PushKind = 'alert' | 'command' | 'prompt' | 'background'
 
 // What the app reported in hello: its grant and its X25519 key for this host.
 export type PushTarget = { grant: string; key: string }
@@ -47,16 +48,20 @@ export type PushSender = {
 }
 
 // The relay's text for each kind, from relay/src/payload.rs. Only its length matters here.
-const FALLBACK_BODY: Record<PushKind, string> = {
+const FALLBACK_BODY: Record<Exclude<PushKind, 'background'>, string> = {
   alert: 'You have a new notification.',
   command: 'A hob sent a request to this device. Open Hobwork if it did not apply.',
   prompt: 'A hob is waiting. Tap to continue.',
 }
 
 export function envelopeSize(kind: PushKind, grant: string, keyId: string, ciphertextBytes: number): number {
-  const aps: Record<string, unknown> = { alert: { title: 'Hobwork', body: FALLBACK_BODY[kind] }, 'mutable-content': 1 }
-  if (kind === 'command') aps['interruption-level'] = 'passive'
-  else aps.sound = 'default'
+  let aps: Record<string, unknown>
+  if (kind === 'background') aps = { 'content-available': 1 }
+  else {
+    aps = { alert: { title: 'Hobwork', body: FALLBACK_BODY[kind] }, 'mutable-content': 1 }
+    if (kind === 'command') aps['interruption-level'] = 'passive'
+    else aps.sound = 'default'
+  }
   const ciphertext = 'A'.repeat(Math.ceil(ciphertextBytes / 3) * 4)
   return Buffer.byteLength(JSON.stringify({ aps, hobwork: { v: 1, grant, keyId, ciphertext } }))
 }

@@ -7,15 +7,15 @@ import type {
   NfcRecord,
   NfcScannedEvent,
   NotificationActionEvent,
-  SentNotification,
 } from '../../../packages/sdk/src/devices.ts'
-import type { Person } from '../../../packages/sdk/src/people.ts'
+import type { Caller, Person } from '../../../packages/sdk/src/people.ts'
 import { isAllowed } from '../auth/users.ts'
 import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
 import { getPerson, listPeople } from '../people.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
+import { createNotifications } from './notifications.ts'
 import { MAX_PAYLOAD_BYTES, PayloadTooLarge, pushSize, type PushInfo, type PushMessage, type PushSender } from './push/relay.ts'
 import { commandSpec, fallbackBody, HEALTH_TYPES, knownMethods, promptAlert } from './commands.ts'
 import {
@@ -30,12 +30,10 @@ import {
 import {
   NFC_TAG_ID,
   answerCommand,
-  answerNotification,
   COMMAND_TTL_MS,
   deleteNfcTag,
   expireCommands,
   findDeviceByName,
-  findNotification,
   getCommand,
   getDevice,
   listDevices,
@@ -44,7 +42,6 @@ import {
   pendingCommands,
   recordCommand,
   recordNfcTag,
-  recordNotification,
   revokeDevice,
   setPush,
   type CommandRecord,
@@ -70,8 +67,6 @@ export type DeviceSummary = DeviceInfo & {
   ownerAllowed: boolean
 }
 
-// Delivery through the app's socket failed in a way that push can fix.
-const TRANSPORT_ERRORS = new Set(['not_connected', 'disconnected', 'timeout'])
 export const BACKGROUND_WAIT_MS = 30_000
 export const FOREGROUND_WAIT_MS = 120_000
 // A background command sent over a socket that stays silent this long also
@@ -87,15 +82,8 @@ const MAX_SCANNED_RECORDS = 16
 const MAX_SCANNED_RECORD_BYTES = 8192
 const NFC_RECORD_TYPES = ['url', 'text', 'other']
 const MAX_LOGGED_RESULT = 500
-const MAX_ACTIONS = 4
-const MAX_TITLE_BYTES = 200
-const MAX_BODY_BYTES = 2000
-const MAX_DATA_BYTES = 4096
-const ACTION_ID = /^[A-Za-z0-9_-]{1,64}$/
-// Same length as a real notification ID, for measuring the payload before one exists.
-const SAMPLE_ID = '00000000-0000-0000-0000-000000000000'
-
-type ParsedNotification = { title: string; body?: string; actions: { id: string; title: string }[]; data?: unknown }
+// How often notifications waiting for deliverAt are checked.
+export const SCHEDULE_INTERVAL_MS = 5_000
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -105,81 +93,12 @@ function bad(message: string): never {
   throw new DeviceError('bad_request', message)
 }
 
-export function parseNotification(args: unknown): ParsedNotification {
-  if (!isObject(args)) bad('The notification must be an object with a title')
-  const { title, body, actions, data } = args
-  if (typeof title !== 'string' || !title.trim()) bad('title must be a non-empty string')
-  if (Buffer.byteLength(title) > MAX_TITLE_BYTES) bad(`title must be at most ${MAX_TITLE_BYTES} bytes as UTF-8`)
-  if (body !== undefined && typeof body !== 'string') bad('body must be a string')
-  if (typeof body === 'string' && Buffer.byteLength(body) > MAX_BODY_BYTES) {
-    bad(`body must be at most ${MAX_BODY_BYTES} bytes as UTF-8`)
-  }
-  const parsedActions: ParsedNotification['actions'] = []
-  if (actions !== undefined) {
-    if (!Array.isArray(actions) || actions.length > MAX_ACTIONS) bad(`actions must be a list of at most ${MAX_ACTIONS}`)
-    for (const action of actions) {
-      if (!isObject(action) || typeof action.id !== 'string' || !ACTION_ID.test(action.id)) {
-        bad('Each action needs an id of letters, digits, "-" and "_" (at most 64)')
-      }
-      if (typeof action.title !== 'string' || !action.title.trim() || action.title.length > 64) {
-        bad('Each action needs a title of at most 64 characters')
-      }
-      if (parsedActions.some((a) => a.id === action.id)) bad(`Action id "${action.id}" is used twice`)
-      parsedActions.push({ id: action.id, title: action.title })
-    }
-  }
-  if (data !== undefined && Buffer.byteLength(JSON.stringify(data) ?? '') > MAX_DATA_BYTES) {
-    bad(`data must be at most ${MAX_DATA_BYTES} bytes as JSON`)
-  }
-  return { title, ...(typeof body === 'string' ? { body } : {}), actions: parsedActions, ...(data !== undefined ? { data } : {}) }
-}
-
-function appNotification(id: string, project: string, n: ParsedNotification) {
-  return { id, project, title: n.title, ...(n.body !== undefined ? { body: n.body } : {}), actions: n.actions }
-}
-
-export function pushPayload(id: string, project: string, n: ParsedNotification) {
-  return {
-    aps: {
-      alert: { title: n.title, ...(n.body !== undefined ? { body: n.body } : {}) },
-      sound: 'default',
-      'thread-id': project,
-      // Actions differ per notification, so the app's notification service
-      // extension registers a category with this ID from hobwork.actions
-      // before iOS shows it.
-      ...(n.actions.length ? { category: `hobwork.${id}`, 'mutable-content': 1 } : {}),
-    },
-    // Title and body are in aps.alert only: repeating them here could take a
-    // valid notification past APNs' 4 KB.
-    hobwork: { id, project, actions: n.actions },
-  }
-}
-
-const NOTIFICATION_TTL_S = 24 * 60 * 60
-
-function notificationPush(id: string, project: string, n: ParsedNotification, now: number): PushMessage {
-  return { id, kind: 'alert', payload: pushPayload(id, project, n), expiresAt: Math.floor(now / 1000) + NOTIFICATION_TTL_S }
-}
-
 function commandPush(project: string, command: CommandRecord, foreground: boolean): PushMessage {
   return {
     id: command.id,
     kind: foreground ? 'prompt' : 'command',
     payload: commandPushPayload(project, command, foreground),
     expiresAt: Math.floor(Date.parse(command.expiresAt) / 1000),
-  }
-}
-
-// Fields within their limits can be too large together once escaped,
-// compressed and encrypted, so the push itself is measured. This runs before
-// any delivery, so every notification that is accepted can also go by push.
-function checkPushSize(project: string, n: ParsedNotification, now: number) {
-  const size = pushSize(notificationPush(SAMPLE_ID, project, n, now), now)
-  if (size > MAX_PAYLOAD_BYTES) {
-    throw new DeviceError(
-      'too_large',
-      `The notification is ${size} bytes as a push, and Apple allows ${MAX_PAYLOAD_BYTES}. Shorten the title, body or action titles`,
-    )
   }
 }
 
@@ -291,9 +210,13 @@ export function createDevices(options: {
   // The deployed version's device triggers of a project, from hobwork.json.
   triggers?: (project: string) => Promise<Record<string, { device?: DeviceTrigger }>>
   invokeTrigger?: (project: string, name: string, payload: DeviceEvent) => Promise<unknown>
+  // Runs a route of the deployed version for a notification action. Resolves
+  // with the status the handler answered.
+  invokeRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<number>
   // Tests shorten how long calls wait and move the clock.
   waitMs?: { background: number; foreground: number }
   socketFallbackMs?: number
+  withdrawWaitMs?: number
   now?: () => number
 }) {
   const { host, relay } = options
@@ -312,6 +235,16 @@ export function createDevices(options: {
     }
   }, EXPIRY_INTERVAL_MS)
   expiry.unref()
+  let delivering = false
+  const schedule = setInterval(() => {
+    if (delivering) return
+    delivering = true
+    notifications
+      .deliverDue()
+      .catch((err: unknown) => console.error('Sending scheduled notifications failed', err))
+      .finally(() => (delivering = false))
+  }, SCHEDULE_INTERVAL_MS)
+  schedule.unref()
 
   function ownerAllowed(device: Device): boolean {
     if (!options.allowlist) return true
@@ -387,48 +320,25 @@ export function createDevices(options: {
     )
   }
 
-  async function sendNotification(project: string, deviceName: string, args: unknown): Promise<SentNotification> {
-    const device = findReachable(deviceName)
-    if (!device.capabilities.includes('notifications')) {
-      throw new DeviceError('unsupported', `${device.name} has not said it can show notifications. Open the Hobwork app on it and allow notifications`)
-    }
-    const notification = parseNotification(args)
-    const projectRow = getProject(host, project)
-    if (!projectRow) throw new DeviceError('bad_request', `Hob "${project}" does not exist`)
-    checkPushSize(project, notification, now())
-    const id = recordNotification(host.db, {
-      deviceId: device.id,
-      projectId: projectRow.id,
-      actions: notification.actions.map((a) => a.id),
-      data: notification.data,
-    })
-
-    let socketError: DeviceError | undefined
-    if (registry.connected(device.id)) {
-      try {
-        await registry.call(device.id, 'notifications', 'send', appNotification(id, project, notification))
-        return { id, delivery: 'app' }
-      } catch (err) {
-        if (!(err instanceof DeviceError) || !TRANSPORT_ERRORS.has(err.code)) throw err
-        socketError = err
-      }
-    }
-    const offline = socketError ? `${device.name} did not answer (${socketError.message})` : `${device.name} is not connected`
-    if (!relay) throw new DeviceError('unreachable', `${offline}, and this Hobwork host does not send push notifications`)
-    if (!device.push) throw new DeviceError('unreachable', `${offline}, and it has not registered for push notifications`)
-    let result
-    try {
-      result = await relay.send(device.push, notificationPush(id, project, notification, now()))
-    } catch (err) {
-      if (err instanceof PayloadTooLarge) throw new DeviceError('too_large', err.message)
-      throw new DeviceError('push_failed', `Could not reach the push relay for ${device.name}: ${(err as Error).message}`)
-    }
-    if (!result.ok) {
-      if (result.gone) setPush(host.db, device.id, null)
-      throw new DeviceError('push_failed', `The push relay refused the notification for ${device.name}: ${result.reason}`)
-    }
-    return { id, delivery: 'push' }
+  function personDevices(id: number): Device[] | undefined {
+    if (!getPerson(host.db, options.allowlist ?? EVERYONE, id)) return undefined
+    return listDevices(host.db)
+      .filter((d) => d.userId === id && reachable(d))
+      .sort((a, b) => (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? ''))
   }
+
+  const notifications = createNotifications({
+    host,
+    registry,
+    ...(relay ? { relay } : {}),
+    now,
+    findReachable,
+    personDevices,
+    reachable,
+    projectLog,
+    ...(options.invokeRoute ? { invokeRoute: options.invokeRoute } : {}),
+    ...(options.withdrawWaitMs !== undefined ? { withdrawWaitMs: options.withdrawWaitMs } : {}),
+  })
 
   const CAPABILITY_NAMES: Record<string, string> = {
     alarms: 'alarms',
@@ -600,6 +510,9 @@ export function createDevices(options: {
   // Every hello: commands still pending go to the app again, oldest first.
   // The app runs each command once, however often it arrives.
   function resendPending(deviceId: number) {
+    notifications
+      .resendWithdrawals(deviceId)
+      .catch((err: unknown) => console.error(`Withdrawing notifications from device ${deviceId} failed`, err))
     expire()
     for (const command of pendingCommands(host.db, deviceId, now())) {
       const waiter = waiters.get(command.id)
@@ -793,19 +706,26 @@ export function createDevices(options: {
     return true
   }
 
-  // An action no trigger took stays unanswered, so a retry from the app can
-  // still run it.
+  // A tapped action runs its route, or else the hob's notification action
+  // triggers. An action no trigger took stays unanswered, so a retry from the
+  // app can still run it.
   async function notificationAction(device: Device, data: Record<string, unknown>): Promise<void> {
     const { id, action } = data
     if (typeof id !== 'string' || typeof action !== 'string') return
-    const record = findNotification(host.db, id, device.id, action)
-    if (!record) return
+    const found = notifications.tapped(device, id, action)
+    if (!found) return
+    const { row, action: tapped } = found
+    if (tapped.route !== undefined) {
+      if (notifications.answer(id, device.id)) notifications.runRoute(device, row, tapped)
+      return
+    }
+    if (tapped.open !== undefined) return
     let entries: Record<string, { device?: DeviceTrigger }>
     try {
-      entries = (await options.triggers?.(record.project)) ?? {}
+      entries = (await options.triggers?.(row.project)) ?? {}
     } catch (err) {
       projectLog(
-        record.project,
+        row.project,
         'warn',
         `${device.name}: action "${action}" was tapped, but the hob's triggers could not be read: ${(err as Error).message}`,
       )
@@ -814,22 +734,22 @@ export function createDevices(options: {
     const names = matching(entries, 'notifications', 'action', device.name)
     if (!names.length) {
       projectLog(
-        record.project,
+        row.project,
         'warn',
-        `${device.name}: action "${action}" was tapped on a notification, but no trigger handles notification actions. Add one with "device": { "capability": "notifications", "event": "action" } to hobwork.json`,
+        `${device.name}: action "${action}" was tapped on a notification, but no trigger handles notification actions. Give the action a route, or add a trigger with "device": { "capability": "notifications", "event": "action" } to hobwork.json`,
       )
       return
     }
-    if (!answerNotification(host.db, id)) return
+    if (!notifications.answer(id, device.id)) return
     const payload: NotificationActionEvent = {
       device: device.name,
       capability: 'notifications',
       event: 'action',
-      notificationId: id,
+      notificationId: row.key,
       action,
-      ...(record.data !== undefined ? { data: record.data } : {}),
+      ...(row.content.data !== undefined ? { data: row.content.data } : {}),
     }
-    run(record.project, names, payload)
+    run(row.project, names, payload)
   }
 
   return {
@@ -843,12 +763,16 @@ export function createDevices(options: {
     people: (): Person[] => listPeople(host.db, options.allowlist ?? EVERYONE),
     // Most recently used first. Undefined when there is no such person.
     personDevices(id: number): DeviceInfo[] | undefined {
-      if (!getPerson(host.db, options.allowlist ?? EVERYONE, id)) return undefined
-      return info()
-        .filter((d) => d.ownerId === id)
-        .sort((a, b) => (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? ''))
+      const owned = personDevices(id)
+      if (!owned) return undefined
+      const listed = new Map(info().map((d) => [d.name, d]))
+      return owned.map((d) => listed.get(d.name)!).filter(Boolean)
     },
-    sendNotification,
+    sendNotification: notifications.sendToDevice,
+    notifyPerson: notifications.sendToPerson,
+    updateNotification: notifications.update,
+    withdrawNotification: notifications.withdraw,
+    deliverDue: notifications.deliverDue,
     callCommand,
     handleResult,
     resendPending,
@@ -867,6 +791,7 @@ export function createDevices(options: {
     },
     close() {
       clearInterval(expiry)
+      clearInterval(schedule)
       for (const waiter of waiters.values()) {
         forget(waiter)
         waiter.reject(new DeviceError('unreachable', 'Hobwork is shutting down'))

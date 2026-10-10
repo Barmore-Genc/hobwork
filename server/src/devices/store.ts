@@ -1,12 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { publishChange } from '../changes.ts'
 import { hashSecret, newSecret, s256 } from '../oauth/secrets.ts'
 
 export const DEVICE_TOKEN_PREFIX = 'hwd_'
 export const PAIRING_CODE_TTL_MS = 5 * 60 * 1000
 export const WEB_SESSION_LINK_TTL_MS = 60 * 1000
-export const NOTIFICATION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_DEVICE_NAME = 40
 // Custom-scheme redirect of apps that were not built with the host's domain in
 // Associated Domains.
@@ -278,62 +277,6 @@ export function redeemWebSessionLink(
     .get(hashSecret(token), iso(now))
   const device = row && getDevice(db, Number(row.device_id))
   return device && { device, returnTo: String(row.return_to) }
-}
-
-export type NotificationRecord = {
-  id: string
-  deviceId: number
-  project: string
-  actions: string[]
-  data: unknown
-}
-
-export function recordNotification(
-  db: DatabaseSync,
-  record: { deviceId: number; projectId: number; actions: string[]; data: unknown },
-  now = Date.now(),
-): string {
-  db.prepare('DELETE FROM device_notifications WHERE created_at <= ?').run(iso(now - NOTIFICATION_TTL_MS))
-  const id = randomUUID()
-  db.prepare('INSERT INTO device_notifications (id, device_id, project_id, actions, data, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id,
-    record.deviceId,
-    record.projectId,
-    JSON.stringify(record.actions),
-    record.data === undefined ? null : JSON.stringify(record.data),
-    iso(now),
-  )
-  return id
-}
-
-// An unanswered notification of this device that has this action.
-export function findNotification(db: DatabaseSync, id: string, deviceId: number, action: string): NotificationRecord | undefined {
-  const row = db
-    .prepare(
-      `SELECT n.id, n.device_id, p.name AS project, n.actions, n.data FROM device_notifications n
-       JOIN projects p ON p.id = n.project_id
-       WHERE n.id = ? AND n.device_id = ? AND n.answered_at IS NULL
-         AND EXISTS (SELECT 1 FROM json_each(n.actions) WHERE value = ?)`,
-    )
-    .get(id, deviceId, action)
-  if (!row) return undefined
-  return {
-    id: String(row.id),
-    deviceId: Number(row.device_id),
-    project: String(row.project),
-    actions: JSON.parse(String(row.actions)) as string[],
-    data: row.data === null ? undefined : JSON.parse(String(row.data)),
-  }
-}
-
-// Marks the notification answered. False when it was answered before: the
-// app may send an action twice (over the socket and by HTTP after a
-// reconnect), and the project must see it once.
-export function answerNotification(db: DatabaseSync, id: string, now = Date.now()): boolean {
-  const result = db
-    .prepare('UPDATE device_notifications SET answered_at = ? WHERE id = ? AND answered_at IS NULL')
-    .run(iso(now), id)
-  return Number(result.changes) > 0
 }
 
 export const COMMAND_TTL_MS = 10 * 60 * 1000

@@ -1,4 +1,4 @@
-import type { Device, DeviceInfo } from '../devices.ts'
+import type { Device, DeviceInfo, NotificationControl } from '../devices.ts'
 import type { Person, PersonDevices } from '../people.ts'
 import { internalPost } from './internal-fetch.ts'
 import type { DeviceRequest, DeviceResponse } from './protocol.ts'
@@ -35,6 +35,7 @@ export type DeviceClient = {
   devices(): Promise<DeviceInfo[]>
   people(): Promise<Person[]>
   person(id: number): PersonDevices
+  notifications: NotificationControl
 }
 
 export function createDeviceClient(send: DeviceSend): DeviceClient {
@@ -73,6 +74,7 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
     return {
       devices,
       lastActiveDevice: async () => (await devices())[0],
+      notifications: { send: (args) => call({ action: 'notify', person: id, args }) },
     }
   }
 
@@ -81,6 +83,10 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
     devices: () => call<DeviceInfo[]>({ action: 'list' }),
     people: () => call<Person[]>({ action: 'people' }),
     person,
+    notifications: {
+      update: (id, args) => call({ action: 'updateNotification', id, args }),
+      withdraw: (id) => call({ action: 'withdrawNotification', id }),
+    },
   }
 }
 

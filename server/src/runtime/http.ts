@@ -4,7 +4,7 @@ import type { SerializedRequest } from '../../../packages/sdk/src/runner/protoco
 import type { Host } from '../host.ts'
 import { getProjectOrRenamed, ProjectError } from '../projects.ts'
 import { matchRoute } from './routes.ts'
-import type { Runtime } from './runtime.ts'
+import type { InvokeOutcome, Runtime } from './runtime.ts'
 import { LEGACY_HOOKS_PREFIX } from './webhooks.ts'
 
 export const PROJECT_PREFIX = '/p/'
@@ -128,6 +128,34 @@ export async function serveRoute(
     headers,
     sandboxed,
   )
+}
+
+// Runs a route of the deployed version for the host itself, such as a
+// notification action someone tapped, as JSON. Throws when no route matches.
+export async function callRoute(
+  runtime: Runtime,
+  project: string,
+  options: { method: string; path: string; url: string; body?: unknown; caller?: Caller },
+): Promise<InvokeOutcome> {
+  const { routes } = await runtime.route(project)
+  const pathname = options.path.split('?')[0]!
+  const match = matchRoute(routes, options.method, pathname)
+  if (!match || 'methodNotAllowed' in match) throw new Error(`The hob has no route for ${options.method} ${pathname}`)
+  const json = options.body === undefined ? undefined : JSON.stringify(options.body)
+  const request: SerializedRequest = {
+    method: options.method,
+    url: options.url,
+    headers: json === undefined ? [] : [['content-type', 'application/json']],
+    ...(json === undefined ? {} : { body: Buffer.from(json).toString('base64') }),
+  }
+  return runtime.invoke(project, {
+    kind: 'route',
+    name: match.route.key,
+    manual: false,
+    request,
+    params: match.params,
+    ...(options.caller ? { caller: options.caller } : {}),
+  })
 }
 
 // Calls a webhook whose token the caller has already checked. The response is

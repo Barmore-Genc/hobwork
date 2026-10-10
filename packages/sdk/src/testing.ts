@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
-import type { Device, DeviceInfo } from './devices.ts'
+import type { Device, DeviceInfo, NotificationControl, PersonNotifications } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
@@ -143,10 +143,17 @@ function byLastActive(a: DeviceInfo, b: DeviceInfo): number {
   return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? '')
 }
 
-export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
+export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device' | 'notifications'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
   device?: (name: string) => DeviceStub
+  notifications?: Partial<NotificationControl>
+  // ctx.person(id).notifications.
+  personNotifications?: (id: number) => Partial<PersonNotifications>
+}
+
+function unstubbed(what: string, hint: string) {
+  return () => Promise.reject(new Error(`${what} is not stubbed in this test. Pass ${hint} to createTestContext`))
 }
 
 // A handler context for tests. `db` defaults to a fresh test DB and `files` to
@@ -169,8 +176,17 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
     person: (id) => ({
       devices: () => personDevices(id),
       lastActiveDevice: async () => (await personDevices(id))[0],
+      notifications: {
+        send: unstubbed(`ctx.person(${id}).notifications.send`, 'personNotifications: (id) => ({ send })'),
+        ...overrides.personNotifications?.(id),
+      },
     }),
     ...overrides,
+    notifications: {
+      update: unstubbed('ctx.notifications.update', 'notifications: { update }'),
+      withdraw: unstubbed('ctx.notifications.withdraw', 'notifications: { withdraw }'),
+      ...overrides.notifications,
+    },
     devices,
     ha: { ...unstubbedHa(), ...overrides.ha },
     device: (name) => stubbedDevice(name, overrides.device?.(name)),

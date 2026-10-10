@@ -117,6 +117,10 @@ export type DeviceRequest = (
   | { action: 'list'; person?: number }
   | { action: 'people' }
   | { action: 'call'; device: string; capability: string; method: string; args?: unknown }
+  // PersonNotification as args.
+  | { action: 'notify'; person: number; args?: unknown }
+  | { action: 'updateNotification'; id: string; args?: unknown }
+  | { action: 'withdrawNotification'; id: string }
 ) & {
   // Set by the runner inside an invocation, so the call is logged with it.
   invocation?: number

@@ -128,7 +128,7 @@ beforeEach(async () => {
             ? { ok: true, result: [{ id: 1, name: 'Kaan', email: null, timeZone: 'Europe/Istanbul' }] }
             : request.action === 'list'
             ? { ok: true, result: request.person === 1 ? [{ name: 'kaan-mac' }, { name: 'kaan-iphone' }] : [{ name: 'kaan-iphone' }] }
-            : request.device === 'kaan-iphone'
+            : request.action === 'call' && request.device === 'kaan-iphone'
               ? { ok: true, result: { id: 'n1', delivery: 'app' } }
               : { ok: false, error: { code: 'unknown_device', message: 'No device called "nope"' } }
         res.writeHead(response.ok ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(response))

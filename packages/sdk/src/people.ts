@@ -1,4 +1,4 @@
-import type { DeviceInfo, DevicePlatform } from './devices.ts'
+import type { DeviceInfo, DevicePlatform, PersonNotifications } from './devices.ts'
 
 // Someone who can sign in to Hobwork.
 export type Person = {
@@ -33,6 +33,9 @@ export interface PersonDevices {
   // The device they used last (see DeviceInfo.lastActiveAt), or undefined when
   // they have none, e.g. to send a notification where they will see it.
   lastActiveDevice(): Promise<DeviceInfo | undefined>
+  // Notifications to their devices, e.g. person.notifications.send({ title,
+  // devices: 'lastActive' }).
+  notifications: PersonNotifications
 }
 
 // ctx.payload of a cron with "timeZone": "person" in hobwork.json: it runs once

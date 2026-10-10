@@ -25,6 +25,7 @@ import { startHousekeeping } from './housekeeping.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
+import { callRoute } from './runtime/http.ts'
 import { createRuntime } from './runtime/runtime.ts'
 import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
@@ -56,7 +57,14 @@ const devices = createDevices({
   publicUrl: config.publicUrl,
   triggers: async (project) => (await runtime.config(project)).config.triggers,
   invokeTrigger: (project, name, payload) => runtime.invoke(project, { kind: 'trigger', name, manual: false, payload }),
+  invokeRoute: async (project, request, caller) => {
+    const origin = appOrigins.origin({ project }) ?? config.publicUrl
+    const outcome = await callRoute(runtime, project, { ...request, url: `${origin}/api${request.path}`, caller })
+    if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
+    return outcome.response.status
+  },
 })
+const appOrigins = createAppOrigins(config.appsUrl)
 const homeAssistant = createHomeAssistant({
   connection: () => homeAssistantSettings.connection(),
   logger: homeAssistantClientLogger(host, () =>
@@ -121,7 +129,7 @@ const delivery = createDelivery(host, {
   pipeline: pipelineVms && { startVm: pipelineVms.start, migrationDryRun: data.migrationDryRun },
   deploy: runtime.deploy,
 })
-const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: createAppOrigins(config.appsUrl).origin })
+const workspaceApi = createWorkspaceApi({ host, workspaces, delivery, runtime, appOrigin: appOrigins.origin })
 await backfillHaServices(host)
 await backfillHaEvents(host)
 homeAssistant.start()

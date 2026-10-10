@@ -1,4 +1,4 @@
-import type { Device, DeviceInfo } from './devices.ts'
+import type { Device, DeviceInfo, NotificationControl } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 import type { Caller, Person, PersonDevices } from './people.ts'
 import type { FileInfo } from './runner/protocol.ts'
@@ -60,6 +60,8 @@ export type Context = {
   people(): Promise<Person[]>
   // A person's devices by Person.id, e.g. ctx.person(ctx.caller.person.id).lastActiveDevice().
   person(id: number): PersonDevices
+  // Update or withdraw a notification sent with ctx.device or ctx.person, by its ID.
+  notifications: NotificationControl
   // Secret name -> placeholder. Send the placeholder over https in the
   // Authorization header (or a header the secret lists) to a host the secret is
   // bound to, and Hobwork replaces it with the real value on the way out. It is

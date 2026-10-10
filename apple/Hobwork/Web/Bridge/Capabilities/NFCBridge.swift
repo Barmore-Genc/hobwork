@@ -42,8 +42,15 @@ final class NFCBridge: BridgeCapability {
             key: "nfc.write",
             label: "Write NFC tags",
             title: { "Let “\($0)” write NFC tags?" },
-            message: "It can then write links to tags you hold near your iPhone."
+            message: writeMessage
         )
+    }
+
+    private var writeMessage: String {
+        #if os(iOS)
+            if session?.isAvailable == true { return "It can then write links to tags you hold near your \(DeviceModel.name)." }
+        #endif
+        return "It can then write links to tags with your other devices that read NFC."
     }
 
     func call(_ method: String, args: JSONValue, context: BridgeContext) async throws -> JSONValue {

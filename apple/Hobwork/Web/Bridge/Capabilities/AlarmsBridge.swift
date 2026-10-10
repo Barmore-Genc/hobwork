@@ -22,7 +22,7 @@
                 key: "alarms",
                 label: "Set alarms and timers",
                 title: { "Let “\($0)” set alarms and timers?" },
-                message: "They ring on this iPhone even in silent mode and Focus."
+                message: "They ring on this \(DeviceModel.name) even in silent mode and Focus."
             )
         }
 

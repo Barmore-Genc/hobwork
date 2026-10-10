@@ -46,7 +46,16 @@ struct SettingsView: View {
 
                 if model.pairing != nil {
                     Section {
+                        // On the button, so the iPad popover points at it inside the sheet.
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+                            .confirmationDialog("Sign out of this host?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+                                Button("Sign Out", role: .destructive) {
+                                    Task {
+                                        dismiss()
+                                        await model.signOut()
+                                    }
+                                }
+                            }
                     } footer: {
                         Text("Removes this device from the host. To use it again, connect it again.")
                     }
@@ -66,14 +75,6 @@ struct SettingsView: View {
                     }
                 }
             #endif
-            .confirmationDialog("Sign out of this host?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
-                Button("Sign Out", role: .destructive) {
-                    Task {
-                        dismiss()
-                        await model.signOut()
-                    }
-                }
-            }
             .task {
                 notifications = await model.notifier.authorizationStatus()
                 await model.refreshCapabilities()

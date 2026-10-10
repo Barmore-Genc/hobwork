@@ -6,7 +6,7 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 
 - `hobwork.json`: entry points, `egress` hosts, `csp` sources and settings, with comments allowed. Only what is declared here runs. `@hobwork/sdk/hobwork.schema.json` describes every field.
 - Hob icon: set `icon` in hobwork.json (emoji or image path).
-- `src/`: handlers. Each default-exports a function typed `Handler` (`RequestHandler` for routes and webhooks) from `@hobwork/sdk`. It gets `ctx`: `request`, `params`, `payload`, `invocation`, `fetch`, `log`, `db`, `files`, `secrets`, `ha`, `device(name)`, `devices()`.
+- `src/`: handlers. Each default-exports a function typed `Handler` (`RequestHandler` for routes and webhooks) from `@hobwork/sdk`. It gets `ctx`: `request`, `params`, `payload`, `invocation`, `caller`, `fetch`, `log`, `db`, `files`, `secrets`, `ha`, `device(name)`, `devices()`, `people()`, `person(id)`.
 - `ui/`, `index.html`: the dashboard (React + Tailwind) at the hob's app origin, also shown in the Hobwork app. Call routes with `api` from `@hobwork/sdk/browser` (`api.get('spools')`, `api.post('spools', body)`). Style with theme utilities (`bg-bg`, `bg-surface`, `border-border`, `text-fg`, `text-muted`, `bg-accent`, `text-accent-fg`, `text-danger`, ...), not fixed colors or `dark:`. `/_hobwork/` is reserved. A hob that needs no UI deletes both; the build then skips it.
 - Other hobs' apps cannot send requests to this app, whatever the method. To let one, list its name in `hobwork.json`: `"crossAppRequests": ["other-hob"]`. The app's own UI and the Hobwork UI need no entry.
 - The app runs under a strict Content-Security-Policy: scripts only from the app's own origin (no inline `<script>`, no `eval`, no CDN scripts), and connections, images, fonts and styles from its own origin (plus `data:`/`blob:` images and inline styles). Bundle dependencies with Vite instead of loading them from a CDN. If the UI really needs another source, add it in `hobwork.json`, e.g. `"csp": { "connect-src": ["https://api.example.com"], "img-src": ["https://*.tiles.example.com"] }` (directives: `script-src`, `style-src`, `img-src`, `font-src`, `connect-src`, `media-src`, `frame-src`, `worker-src`, `manifest-src`, `form-action`; sources are `https://host`, `wss://host` or `data:`/`blob:`). `'unsafe-inline'` and `'unsafe-eval'` are only accepted in `script-src` and remove the protection against injected scripts, so avoid them.
@@ -18,7 +18,9 @@ This is a hob, a Hobwork project: handlers (routes, crons, webhooks, triggers) a
 ## Handlers
 
 - Route `"GET /spools/:id"` answers `GET /api/spools/42` on the app origin, with `ctx.params.id`. A returned `Response` is sent as is, other values as JSON, `undefined` as 204. A thrown error answers 500.
-- Crons use 5-field syntax in the host's time zone. Webhooks are called at a secret URL on the hob's own app address (`https://<hob>.<apps host>/_hobwork/hooks/<name>/<token>`) from `rotate_webhook_token`, which returns the full URL once.
+- Crons use 5-field syntax in the host's time zone. Add `"timeZone": "Europe/Istanbul"` for another zone, or `"timeZone": "person"` to run once per person at that time in their own zone (`ctx.payload.person`).
+- `ctx.caller` is `{ person, device }` for routes called from the UI by a signed-in person (`device` is set in the Hobwork app), and null otherwise. Key per-person data by `person.id`. `localTime(person)` and `fromLocalTime(person, date, time)` from `@hobwork/sdk` convert to and from their local time.
+- Webhooks are called at a secret URL on the hob's own app address (`https://<hob>.<apps host>/_hobwork/hooks/<name>/<token>`) from `rotate_webhook_token`, which returns the full URL once.
 - Handlers work like AWS Lambda functions: nothing in memory survives between invocations, and there are no servers, timers or background loops. Keep state in `ctx.db`, use a cron for recurring work.
 - `ctx.fetch` only reaches hosts in `egress` and the hosts of assigned secrets. Blocked requests get a 403 and an `egress-blocked` log line. In a workspace, changes to `egress` apply from the next `bash` command after you `commit` them, since the workspace VM is set up from the committed `hobwork.json`. Changes to a secret's hosts apply right away.
 - Delete the greeting examples once the hob has its own handlers.
@@ -57,6 +59,7 @@ The user creates secrets and their hosts in the Hobwork UI. Find one with `list_
 `list_devices` shows paired devices and their `capabilities`; a call to one a device does not list fails with `unsupported`. Types are in `@hobwork/sdk` (`Device`, `DeviceEvent`).
 
 - `ctx.device(name).notifications.send({ title, body, actions, data })`.
+- `ctx.person(id).lastActiveDevice()` is the device the person used last, to reach them where they are; `ctx.person(id).devices()` lists theirs, most recently used first.
 - `alarms`: `set({ title, at | time, days })`, `timer({ title, seconds })`, `cancel({ id })`, `list()`.
 - `screenTime`: block app sets the person made in the app, by name: `sets()`, `block({ set, until })`, `unblock`, `schedule({ name, set, start, end, days })`, `limit({ name, set, minutes })`, `status()`.
 - `focus.status()`, `nfc.write({ text })` (a Hobwork tag) or `nfc.write({ url, text })` (any http/https/mailto/tel/sms link) / `nfc.read()` (the person taps a notification and holds the phone to a tag; waits up to 2 minutes), `health.query({ type, from, to })`.

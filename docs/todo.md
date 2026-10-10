@@ -131,6 +131,16 @@ The relay keeps the `filtering` flag, so the entitlement can be added later if A
 - **macOS extension, first**: every relayed push needs the notification service extension to decrypt it. Apple documents it for macOS 10.14, but developer forum threads from 2019 to 2025 report it never being called on macOS, or killed for "sluggish startup", with no answer from Apple. Test it with a team-signed Mac build and a real APNs push before building the rest. If it does not run, Mac notifications show only the generic alert, and content still arrives over the socket, which the Mac app keeps open.
 - On a real iPhone and Mac: ownership-proof and renewal push delivery. Only the socket paths have run on devices so far.
 
+## People and callers
+
+Left from `ctx.caller`, `ctx.people()` and per-person time zones (People and time zones in `docs/architecture.md`):
+
+- Agents see no people: `list_devices` shows owner names, but no MCP tool lists people with their IDs and time zones, so an agent cannot look up the `Person.id` a hob keys data by.
+- Route calls by agents (`/p/<hob>/api/...` with a token) get `caller: null`. A caller kind for agents would let hobs tell them apart from people.
+- Requests of the app's web view to the Hobwork origin (the web UI, not a hob) do not count as device activity; only hob app origins, `hello` and user events do.
+- The Devices section in Settings shows when a device was last seen, not when it was last used.
+- The project page shows no next run for a per-person cron.
+
 ## Share links
 
 See Share links in `docs/architecture.md`.

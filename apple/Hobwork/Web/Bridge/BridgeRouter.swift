@@ -76,7 +76,7 @@ final class BridgeRouter {
             return try .object(["ok": .bool(true), "value": await call(body: body, origin: origin, frame: frame, presenter: presenter)])
         } catch {
             let error = error as? BridgeError ?? .failed(error.localizedDescription)
-            return .object(["ok": .bool(false), "error": .object(["code": .string(error.code.rawValue), "message": .string(error.message)])])
+            return .object(["ok": .bool(false), "error": error.json])
         }
     }
 
@@ -127,9 +127,28 @@ final class BridgeRouter {
     /// Sends `event` with `data` to every page of the hob at `origin` that listens for it.
     /// Pages that are gone are forgotten.
     func emit(_ event: String, data: JSONValue, to origin: HobOrigin) {
-        for (key, subscription) in subscriptions where subscription.origin == origin && subscription.events.contains(event) {
+        emit(event, data: data) { $0 == origin }
+    }
+
+    /// Sends `event` to every listening page of `hob`, on its own origin and its branch previews.
+    func emit(_ event: String, data: JSONValue, toHob hob: String) {
+        emit(event, data: data) { $0.hob == hob }
+    }
+
+    /// Whether a page on `origin` listens for `event`.
+    func listens(_ event: String, origin: HobOrigin) -> Bool {
+        subscriptions.values.contains { $0.origin == origin && $0.events.contains(event) }
+    }
+
+    /// Whether a page of `hob` listens for `event`.
+    func listens(_ event: String, hob: String) -> Bool {
+        subscriptions.values.contains { $0.origin.hob == hob && $0.events.contains(event) }
+    }
+
+    private func emit(_ event: String, data: JSONValue, where matches: (HobOrigin) -> Bool) {
+        for (key, subscription) in subscriptions where matches(subscription.origin) && subscription.events.contains(event) {
             let page = String(key.split(separator: "\n", maxSplits: 1).last ?? "")
-            let script = Self.dispatchScript(page: page, origin: origin.string, event: event, data: data)
+            let script = Self.dispatchScript(page: page, origin: subscription.origin.string, event: event, data: data)
             Task {
                 if await deliver(subscription.frame, script) == false {
                     subscriptions[key] = nil

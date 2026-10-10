@@ -26,6 +26,11 @@ struct Arguments {
         return values[key] != .null
     }
 
+    /// The value as sent, `.null` included.
+    func raw(_ key: String) -> JSONValue? {
+        values[key]
+    }
+
     func string(_ key: String) throws(CallError) -> String {
         guard let value = try optionalString(key) else { throw .badRequest("\(call) needs \(key)") }
         return value

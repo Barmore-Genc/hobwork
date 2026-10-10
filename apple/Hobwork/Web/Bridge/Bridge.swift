@@ -15,11 +15,28 @@ struct BridgeError: Error, Equatable, Sendable {
 
     var code: Code
     var message: String
+    /// A finer reason pages can act on, such as `too_small` for an NFC write.
+    var reason: String?
+
+    init(code: Code, message: String, reason: String? = nil) {
+        self.code = code
+        self.message = message
+        self.reason = reason
+    }
+
+    /// The reply's `error` object.
+    var json: JSONValue {
+        var error: [String: JSONValue] = ["code": .string(code.rawValue), "message": .string(message)]
+        if let reason { error["reason"] = .string(reason) }
+        return .object(error)
+    }
 
     static func unavailable(_ message: String) -> BridgeError { BridgeError(code: .unavailable, message: message) }
     static func denied(_ message: String) -> BridgeError { BridgeError(code: .denied, message: message) }
     static func cancelled(_ message: String) -> BridgeError { BridgeError(code: .cancelled, message: message) }
-    static func failed(_ message: String) -> BridgeError { BridgeError(code: .failed, message: message) }
+    static func failed(_ message: String, reason: String? = nil) -> BridgeError {
+        BridgeError(code: .failed, message: message, reason: reason)
+    }
 }
 
 /// A question the person answers once per hob before a sensitive method first runs.

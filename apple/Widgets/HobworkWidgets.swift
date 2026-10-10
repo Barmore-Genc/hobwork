@@ -21,6 +21,11 @@ struct AlarmLiveActivity: Widget {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(context.attributes.metadata?.title ?? "Hobwork")
                             .font(.headline)
+                        if let subtitle = context.attributes.metadata?.subtitle {
+                            Text(subtitle)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                        }
                         AlarmStatusText(state: context.state)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -29,7 +34,7 @@ struct AlarmLiveActivity: Widget {
                     AlarmCountdown(state: context.state)
                         .font(.title.monospacedDigit())
                 }
-                AlarmControls(state: context.state, tint: context.attributes.tintColor)
+                AlarmControls(state: context.state, tint: context.attributes.tintColor, repeatTitle: context.attributes.metadata?.repeatTitle)
             }
             .padding()
         } dynamicIsland: { context in
@@ -44,10 +49,11 @@ struct AlarmLiveActivity: Widget {
                         .font(.title2.monospacedDigit())
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    AlarmControls(state: context.state, tint: context.attributes.tintColor)
+                    AlarmControls(state: context.state, tint: context.attributes.tintColor, repeatTitle: context.attributes.metadata?.repeatTitle)
                 }
             } compactLeading: {
                 Image(systemName: "timer")
+                    .foregroundStyle(context.attributes.tintColor)
             } compactTrailing: {
                 AlarmCountdown(state: context.state)
                     .monospacedDigit()
@@ -81,6 +87,7 @@ private struct AlarmCountdown: View {
 private struct AlarmControls: View {
     let state: AlarmPresentationState
     let tint: Color
+    let repeatTitle: String?
 
     var body: some View {
         HStack {
@@ -93,6 +100,9 @@ private struct AlarmControls: View {
                 control(.cancel, "Cancel", systemImage: "xmark", tint: .gray)
             case .alert:
                 control(.stop, "Stop", systemImage: "stop.fill", tint: .red)
+                if let repeatTitle {
+                    control(.repeat, LocalizedStringKey(repeatTitle), systemImage: "repeat", tint: tint)
+                }
             @unknown default:
                 EmptyView()
             }

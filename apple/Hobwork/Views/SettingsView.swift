@@ -139,8 +139,9 @@ private struct AlarmsSection: View {
                 LabeledContent("Alarms and timers", value: "Not allowed")
                 Button("Allow Alarms") { Task { await model.requestAlarms() } }
             }
+            HobPermissionRows(router: model.web.bridge.router, key: "alarms")
         } footer: {
-            Text("Hobs can set alarms and timers that ring on this \(DeviceModel.name). If you declined before, allow alarms for Hobwork in the Settings app.")
+            Text("Hobs can set alarms and timers that ring on this \(DeviceModel.name), even in silent mode and Focus. A hob's page asks before it sets its first one. If you declined before, allow alarms for Hobwork in the Settings app.")
         }
     }
 }
@@ -181,12 +182,38 @@ private struct NFCSection: View {
             } else {
                 LabeledContent("NFC", value: "Not available")
             }
+            HobPermissionRows(router: model.web.bridge.router, key: "nfc.write")
         } footer: {
             Text("Scanning a tag written by a hob runs that hob's handler for it. Tags with other links go to the hobs that handle those links. To use a tag without opening Hobwork, create a personal automation for it in the Shortcuts app and add Send Tag to Hobwork with the tag's link.")
         }
     }
 }
 #endif
+
+/// The hobs that asked for one permission, with a switch each.
+private struct HobPermissionRows: View {
+    let router: BridgeRouter
+    let key: String
+
+    @State private var answers: [String: Bool] = [:]
+
+    var body: some View {
+        ForEach(answers.keys.sorted(), id: \.self) { hob in
+            Toggle(HobPermissionsSection.hobName(hob), isOn: Binding(
+                get: { answers[hob] ?? false },
+                set: { allowed in
+                    router.permissions.set(allowed, hob: hob, key: key)
+                    load()
+                }
+            ))
+        }
+        .task { load() }
+    }
+
+    private func load() {
+        answers = router.permissions.all.compactMapValues { $0[key] }
+    }
+}
 
 /// What each hob may do in the app, as answered when the hob first asked.
 private struct HobPermissionsSection: View {
@@ -211,7 +238,7 @@ private struct HobPermissionsSection: View {
         } header: {
             Text("Hob Permissions")
         } footer: {
-            Text("Hobs ask before they read your clipboard.")
+            Text("Hobs ask before they read your clipboard, write NFC tags or set alarms and timers.")
         }
         .task { answers = router.permissions.all }
     }
@@ -227,7 +254,7 @@ private struct HobPermissionsSection: View {
     }
 
     /// Keys are `<apps host>/<hob>`.
-    private static func hobName(_ key: String) -> String {
+    static func hobName(_ key: String) -> String {
         String(key.split(separator: "/").last ?? Substring(key))
     }
 }

@@ -22,21 +22,27 @@ struct AlarmControlIntent: LiveActivityIntent {
         self.alarmID = alarmID.uuidString
     }
 
-    func perform() throws -> some IntentResult {
+    @MainActor
+    func perform() async throws -> some IntentResult {
         guard let id = UUID(uuidString: alarmID) else { return .result() }
         let manager = AlarmManager.shared
         switch action {
         case .pause: try manager.pause(id: id)
         case .resume: try manager.resume(id: id)
         case .cancel: try manager.cancel(id: id)
-        case .stop: try manager.stop(id: id)
+        case .stop:
+            try manager.stop(id: id)
+            await AlarmEventHook.report?(.stopped, id)
+        case .repeat:
+            try manager.countdown(id: id)
+            await AlarmEventHook.report?(.repeated, id)
         }
         return .result()
     }
 }
 
 enum AlarmControl: String, AppEnum {
-    case pause, resume, cancel, stop
+    case pause, resume, cancel, stop, `repeat`
 
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Action"
     static let caseDisplayRepresentations: [AlarmControl: DisplayRepresentation] = [
@@ -44,5 +50,6 @@ enum AlarmControl: String, AppEnum {
         .resume: "Resume",
         .cancel: "Cancel",
         .stop: "Stop",
+        .repeat: "Repeat",
     ]
 }

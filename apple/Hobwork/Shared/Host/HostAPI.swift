@@ -158,6 +158,32 @@ struct HostAPI: Sendable {
         try await decode(DeviceSelf.self, request(method: "GET", path: "api/devices/self"))
     }
 
+    /// Runs a command on another device of the same person, such as an NFC write from an iPad
+    /// on their iPhone, and returns `{ ok, device?, value? | error? }` once that device answered.
+    func handoff(hob: String, device: String, capability: String, method: String, args: JSONValue) async throws -> JSONValue {
+        try await decode(JSONValue.self, handoffRequest(hob: hob, device: device, capability: capability, method: method, args: args))
+    }
+
+    func handoffRequest(hob: String, device: String, capability: String, method: String, args: JSONValue) -> URLRequest {
+        var request = request(method: "POST", path: "api/devices/handoff", body: JSONValue.object([
+            "hob": .string(hob), "device": .string(device), "capability": .string(capability),
+            "method": .string(method), "args": args,
+        ]))
+        // The host waits up to two minutes for the other device's person to tap and hold a tag.
+        request.timeoutInterval = 150
+        return request
+    }
+
+    /// The hob that wrote a Hobwork tag of this host, or nil for other links.
+    func nfcTagHob(url: URL) async throws -> String? {
+        struct Response: Decodable { var hob: String }
+        do {
+            return try await decode(Response.self, request(method: "POST", path: "api/devices/nfc/lookup", body: ["url": url.absoluteString])).hob
+        } catch HostError.failed(status: 404, _) {
+            return nil
+        }
+    }
+
     /// Removes this device from the host, as removing it in the web UI does.
     func removeDevice() async throws {
         _ = try await send(removeRequest)

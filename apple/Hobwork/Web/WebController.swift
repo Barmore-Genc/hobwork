@@ -71,6 +71,10 @@ final class WebController: NSObject {
         }
     }
 
+    var linkPolicy: LinkPolicy? {
+        policy
+    }
+
     func goHome() {
         Task { await open(path: "/") }
     }

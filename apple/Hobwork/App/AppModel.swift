@@ -1,4 +1,5 @@
 #if os(iOS)
+    import AlarmKit
     import FamilyControls
     import HealthKit
     import UIKit
@@ -41,7 +42,10 @@ final class AppModel {
     )
     #if os(iOS)
         @ObservationIgnored let alarms = AlarmKitScheduler()
-        @ObservationIgnored let nfc = NDEFTagSession()
+        @ObservationIgnored let nfc = CoreNFCTagSession()
+        @ObservationIgnored private(set) lazy var alarmEvents = AlarmEventReporter { [weak self] report in
+            await self?.deliver(report)
+        }
         @ObservationIgnored let healthStore = HKHealthStore()
         @ObservationIgnored private(set) lazy var health = HealthDelivery(store: healthStore) { [weak self] event in
             await self?.send(event)
@@ -71,6 +75,7 @@ final class AppModel {
         }
         #if os(iOS)
             health.start()
+            watchAlarms()
         #endif
     }
 
@@ -197,7 +202,7 @@ final class AppModel {
         func scanTag() async {
             guard pairing != nil else { return }
             do {
-                let records = try await nfc.read()
+                let records = try await nfc.read(sheet: NFCSheet()).records
                 guard let event = NFCTagLink.event(records: records, host: pairing?.host) else {
                     nfcNotice = "This tag has no link, so there is nothing to send to your hobs."
                     return
@@ -223,13 +228,58 @@ final class AppModel {
 
         @ObservationIgnored private var scanWhenActive = false
 
-        /// `hobwork://nfc/<tag>` and universal links to `<host>/nfc/<tag>`.
+        /// `hobwork://nfc/<tag>`, universal links to `<host>/nfc/<tag>`, and links to hob apps.
+        /// A tag scanned in the background while a page of the hob that wrote it is open goes
+        /// to that page (`nfc.scanned`), as does a link to a hob page that listens for it, and
+        /// the app stays where it is.
         func open(_ url: URL) {
-            guard pairing != nil, let tag = NFCTagLink.tag(from: url, host: pairing?.host) else { return }
-            Task {
-                await send(NFCTagLink.event(tag: tag))
-                nfcNotice = "Tag scanned."
+            guard let pairing else { return }
+            let router = web.bridge.router
+            if let tag = NFCTagLink.tag(from: url, host: pairing.host) {
+                let link = pairing.host.appending(path: "nfc/\(tag)")
+                Task {
+                    await send(NFCTagLink.event(tag: tag))
+                    if let hob = try? await api?.nfcTagHob(url: link), router.listens("nfc.scanned", hob: hob) {
+                        router.emit("nfc.scanned", data: .object(["url": .string(link.absoluteString), "tag": .string(tag)]), toHob: hob)
+                    } else {
+                        nfcNotice = "Tag scanned."
+                    }
+                }
+                return
             }
+            guard let origin = web.linkPolicy?.hobOrigin(of: url) else { return }
+            if router.listens("nfc.scanned", origin: origin) {
+                router.emit("nfc.scanned", data: .object(["url": .string(url.absoluteString)]), to: origin)
+                Task { await send(NFCTagLink.event(url: url, host: pairing.host)) }
+            } else {
+                web.open(link: url.absoluteString)
+            }
+        }
+
+        /// Reports rings, stops and repeats of hobs' alarms while the app runs. The Stop and
+        /// repeat intents report the rest.
+        private func watchAlarms() {
+            AlarmEventHook.report = { [weak self] kind, id in await self?.alarmEvents.answered(kind, id: id) }
+            Task { [weak self] in
+                for await alarms in AlarmManager.shared.alarmUpdates {
+                    let scheduled = alarms.map { ScheduledAlarm(id: $0.id, state: AlarmKitScheduler.state($0.state)) }
+                    await self?.alarmEvents.observe(scheduled)
+                }
+            }
+        }
+
+        private func deliver(_ report: AlarmEventReporter.Report) async {
+            web.bridge.router.emit("alarms.\(report.kind.rawValue)", data: report.data, toHob: report.hob)
+            var data = report.data.objectValue ?? [:]
+            data["hob"] = .string(report.hob)
+            await send(DeviceEvent(capability: AlarmsCapability.capability, name: report.kind.rawValue, data: .object(data)))
+        }
+
+        /// Asks iOS the first time a hob sets an alarm from its page.
+        func authorizeAlarms() async -> Bool {
+            if alarms.isAuthorized { return true }
+            await requestAlarms()
+            return alarms.isAuthorized
         }
     #endif
 
@@ -284,8 +334,19 @@ final class AppModel {
         router.register(LocalNotificationsBridge())
         router.register(PrintBridge(memory: printers))
         router.register(ShareBridge())
+        let handoff: NFCBridge.Handoff = { [weak self] hob, device, method, args in
+            guard let api = self?.api else { throw HostError.unreachable("This device isn't connected to a Hobwork host") }
+            return try await api.handoff(hob: hob, device: device, capability: "nfc", method: method, args: args)
+        }
+        let host: () -> URL? = { [weak self] in self?.pairing?.host }
         #if os(iOS)
             router.register(HapticsBridge())
+            router.register(NFCBridge(session: nfc, host: host, handoff: handoff))
+            router.register(AlarmsBridge(capability: AlarmsCapability(scheduler: alarms)) { [weak self] in
+                await self?.authorizeAlarms() ?? false
+            })
+        #else
+            router.register(NFCBridge(host: host, handoff: handoff))
         #endif
     }
 

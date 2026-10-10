@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
-import type { Device } from './devices.ts'
+import type { Device, DeviceInfo } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
@@ -138,6 +138,11 @@ function stubbedDevice(name: string, stub: DeviceStub = {}): Device {
   return device as unknown as Device
 }
 
+// Most recently used first, as the host orders a person's devices.
+function byLastActive(a: DeviceInfo, b: DeviceInfo): number {
+  return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? '')
+}
+
 export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
@@ -147,15 +152,26 @@ export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device'> & {
 // A handler context for tests. `db` defaults to a fresh test DB and `files` to
 // empty test files; `fetch`, `ha` and devices reject until a test stubs them,
 // since tests should not reach the network, change the home or notify anyone.
+// `caller` defaults to null. ctx.person(id) reads the stubbed ctx.devices(),
+// so stub devices with ownerId and lastActiveAt to test who gets notified.
 export function createTestContext(overrides: TestContextOverrides = {}): Context {
+  const devices =
+    overrides.devices ?? (() => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')))
+  const personDevices = async (id: number) => (await devices()).filter((d) => d.ownerId === id).sort(byLastActive)
   return {
     invocation: { id: 1, kind: 'route', name: 'test', manual: true },
     params: {},
+    caller: null,
     fetch: () => Promise.reject(new Error('ctx.fetch is not stubbed in this test. Pass fetch to createTestContext')),
     log: silent,
     secrets: {},
-    devices: () => Promise.reject(new Error('ctx.devices is not stubbed in this test. Pass devices to createTestContext')),
+    people: () => Promise.reject(new Error('ctx.people is not stubbed in this test. Pass people to createTestContext')),
+    person: (id) => ({
+      devices: () => personDevices(id),
+      lastActiveDevice: async () => (await personDevices(id))[0],
+    }),
     ...overrides,
+    devices,
     ha: { ...unstubbedHa(), ...overrides.ha },
     device: (name) => stubbedDevice(name, overrides.device?.(name)),
     db: overrides.db ?? createTestDb(),

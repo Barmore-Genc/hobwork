@@ -13,7 +13,10 @@ import type { Runtime } from '../runtime/runtime.ts'
 import { THEME_PREFIX } from '../static.ts'
 import { parseLabel, type AppOrigins, type AppTarget } from './origins.ts'
 import { HOOKS_PREFIX, verifyBranchWebhookToken, verifyWebhookToken } from '../runtime/webhooks.ts'
-import { createAppCode, findAppSession, redeemAppCode, type AppScope } from './sessions.ts'
+import { createAppCode, findAppSession, redeemAppCode, type AppScope, type AppSession } from './sessions.ts'
+import type { Caller } from '../../../packages/sdk/src/people.ts'
+import { getDevice, markDeviceActive } from '../devices/store.ts'
+import { personOf } from '../people.ts'
 import { findShareLink, isShareToken } from './share-links.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
@@ -34,7 +37,7 @@ type Resolved = { project: Project; target: AppTarget; origin: string; scope: Ap
 
 // Who a request to an app origin acts for: a signed-in user's app session, or
 // a share link (as a cookie, or as a bearer token from an agent).
-type Viewer = { shared: false } | { shared: true; readOnly: boolean; bearer: boolean }
+type Viewer = { shared: false; session: AppSession } | { shared: true; readOnly: boolean; bearer: boolean }
 
 const EXPIRED_LINK = 'This link has expired or was revoked. Ask for a new one, or open the app from Hobwork.'
 
@@ -184,11 +187,21 @@ export function createAppHttp(options: {
       const link = findShareLink(host.db, bearer, app.scope)
       return link ? { shared: true, readOnly: link.readOnly, bearer: true } : 'expired'
     }
-    if (appUser(req, app)) return { shared: false }
+    const session = appUser(req, app)
+    if (session) return { shared: false, session }
     const cookie = parseCookies(req.headers.cookie).get(shareCookieName)
     if (cookie === undefined || !shareCookieUsable(req, pathname)) return undefined
     const link = findShareLink(host.db, cookie, app.scope)
     return link ? { shared: true, readOnly: link.readOnly, bearer: false } : 'expired'
+  }
+
+  // Read on every request, so a renamed device or a new time zone shows at once.
+  function callerOf(session: AppSession): Caller {
+    const device = session.deviceId === null ? undefined : getDevice(host.db, session.deviceId)
+    return {
+      person: personOf(host.db, session.user),
+      device: device ? { name: device.name, platform: device.platform } : null,
+    }
   }
 
   // `listed`: the request comes from an app that hobwork.json lets in, so a
@@ -344,6 +357,7 @@ export function createAppHttp(options: {
       if (page) return redirect(res, signInUrl(app, `${app.origin}${pathname}${search}`), frameHeaders)
       return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
     }
+    if (!viewer.shared && viewer.session.deviceId !== null) markDeviceActive(host.db, viewer.session.deviceId)
     const frameAncestors = viewer.shared ? '*' : publicUrl
     const headers = viewer.shared ? sharedFrameHeaders : frameHeaders
     if (pathname.startsWith(API_PREFIX)) {
@@ -360,6 +374,7 @@ export function createAppHttp(options: {
         path: pathname.slice(API_PREFIX.length - 1),
         url: url.href,
         headers: uiHeaders(frameAncestors, await cspOf(app)),
+        caller: viewer.shared ? undefined : callerOf(viewer.session),
       })
     }
     if (pathname.startsWith(RESERVED_PREFIX)) return sendText(res, 404, 'Not found', headers)

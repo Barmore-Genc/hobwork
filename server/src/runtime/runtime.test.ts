@@ -5,7 +5,7 @@ import { createAgentToken } from '../agents.ts'
 import { createAiGateway, OPENROUTER_HOSTS } from '../ai/gateway.ts'
 import { DEFAULT_LIMITS, saveHostAiSettings } from '../ai/settings.ts'
 import { createApp } from '../app.ts'
-import { onChange, type Change } from '../changes.ts'
+import { onChange, publishChange, type Change } from '../changes.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
 import { createDelivery } from '../delivery.ts'
@@ -226,6 +226,30 @@ test('runs crons by hand with their log lines', async () => {
   expect(lines.map((l) => l.message)).toEqual(['tick true', 'done'])
   expect(runtime.crons('filament')).toEqual([expect.objectContaining({ name: 'tick', schedule: '0 8 * * *' })])
   await expect(runtime.invoke('filament', { kind: 'cron', name: 'nope', manual: true })).rejects.toThrow('has no cron "nope"')
+})
+
+test('a per-person cron runs at the time in each person’s zone, with the person as payload', async () => {
+  const people = [{ id: 7, name: 'Kaan', email: null, timeZone: 'Europe/Istanbul' }]
+  start({ people: () => people })
+  const hobwork = { crons: { morning: { schedule: '0 8 * * *', timeZone: 'person', handler: 'src/morning.ts' } } }
+  await deploy(
+    projectFiles({
+      hobwork,
+      handlers: { 'handlers/morning.js': 'export default async (ctx) => { console.log("morning", ctx.payload.person.name) }' },
+    }),
+  )
+  expect(runtime.crons('filament')).toEqual([expect.objectContaining({ name: 'morning', timeZone: 'person' })])
+  // Half a second before 08:00 in Istanbul. A people change reschedules from then.
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true, now: new Date('2026-10-09T04:59:59.500Z') })
+  try {
+    publishChange(host.db, { kind: 'people' })
+    await until(() => listInvocations(host, { project: 'filament', kind: 'cron', limit: 1 }).some((i) => i.status === 'ok'))
+  } finally {
+    vi.useRealTimers()
+  }
+  const [run] = listInvocations(host, { project: 'filament', kind: 'cron', limit: 1 })
+  expect(run).toMatchObject({ name: 'morning', manual: false })
+  expect(queryLogs(host, { project: 'filament', invocationId: run!.id, limit: 10 }).map((l) => l.message)).toEqual(['morning Kaan'])
 })
 
 test('webhooks need their current token', async () => {

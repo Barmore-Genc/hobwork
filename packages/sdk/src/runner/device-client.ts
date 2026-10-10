@@ -1,4 +1,5 @@
 import type { Device, DeviceInfo } from '../devices.ts'
+import type { Person, PersonDevices } from '../people.ts'
 import { internalPost } from './internal-fetch.ts'
 import type { DeviceRequest, DeviceResponse } from './protocol.ts'
 
@@ -7,7 +8,7 @@ import type { DeviceRequest, DeviceResponse } from './protocol.ts'
 const BRAND = Symbol.for('hobwork.DeviceError')
 
 export class DeviceError extends Error {
-  // "unknown_device", "unsupported" (the app cannot do this), "unreachable"
+  // "unknown_device", "unknown_person", "unsupported" (the app cannot do this), "unreachable"
   // (not connected and no push), "timeout" (a command may still run until it
   // expires), "push_failed", "too_large", "read_only" (workspaces and branch
   // previews), "bad_request", or the app's own code, such as "not_authorized".
@@ -29,7 +30,14 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 export type DeviceSend = (request: DistributiveOmit<DeviceRequest, 'invocation'>) => Promise<DeviceResponse>
 
-export function createDeviceClient(send: DeviceSend): { device(name: string): Device; devices(): Promise<DeviceInfo[]> } {
+export type DeviceClient = {
+  device(name: string): Device
+  devices(): Promise<DeviceInfo[]>
+  people(): Promise<Person[]>
+  person(id: number): PersonDevices
+}
+
+export function createDeviceClient(send: DeviceSend): DeviceClient {
   async function call<T>(request: DistributiveOmit<DeviceRequest, 'invocation'>): Promise<T> {
     const response = await send(request)
     if (!response.ok) throw new DeviceError(response.error.code, response.error.message)
@@ -60,9 +68,19 @@ export function createDeviceClient(send: DeviceSend): { device(name: string): De
     }
   }
 
+  function person(id: number): PersonDevices {
+    const devices = () => call<DeviceInfo[]>({ action: 'list', person: id })
+    return {
+      devices,
+      lastActiveDevice: async () => (await devices())[0],
+    }
+  }
+
   return {
     device,
     devices: () => call<DeviceInfo[]>({ action: 'list' }),
+    people: () => call<Person[]>({ action: 'people' }),
+    person,
   }
 }
 

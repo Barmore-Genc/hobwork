@@ -14,6 +14,10 @@ export type Session = {
 
 export type ProjectStatus = 'ready' | 'running' | 'updating'
 
+// timeZone is null until a browser or app reports one, and hobs use host's
+// until then. manual: chosen in Settings, so reports leave it alone.
+export type TimeZoneSetting = { timeZone: string | null; manual: boolean; host: string }
+
 export type Version = {
   number: number
   summary: string
@@ -55,7 +59,8 @@ export type LastRun = { id: number; status: InvocationStatus; startedAt: string 
 
 export type EntryPoints = {
   routes: { key: string; lastRun: LastRun }[]
-  crons: { name: string; schedule: string; nextRun: string | null; lastRun: LastRun }[]
+  // timeZone: an IANA zone, "person" for one run per person in their zone, or null for the host's.
+  crons: { name: string; schedule: string; timeZone: string | null; nextRun: string | null; lastRun: LastRun }[]
   webhooks: { name: string; tokenCreatedAt: string | null; lastRun: LastRun }[]
   triggers: {
     name: string
@@ -452,6 +457,10 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 
 export const api = {
   session: () => request<Session>('GET', '/api/session'),
+  timeZone: () => request<TimeZoneSetting>('GET', '/api/me/time-zone'),
+  // null follows the zone your browser and apps report.
+  setTimeZone: (timeZone: string | null) => request<TimeZoneSetting>('PUT', '/api/me/time-zone', { timeZone }),
+  reportTimeZone: (timeZone: string) => request<TimeZoneSetting>('POST', '/api/me/time-zone/report', { timeZone }),
   signOut: () => request<void>('POST', '/auth/logout'),
   projects: (q = '') => request<ProjectSummary[]>('GET', `/api/projects${query({ q: q.trim() || undefined })}`),
   starProject: (project: string, starred: boolean) =>

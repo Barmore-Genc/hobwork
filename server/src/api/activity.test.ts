@@ -191,6 +191,7 @@ test('the project page shows entry points, reachable hosts, the DB and the app',
       {
         name: 'weigh',
         schedule: '30 7 * * *',
+        timeZone: null,
         nextRun: expect.any(String),
         lastRun: { id: failed, status: 'error', startedAt: expect.any(String) },
       },

@@ -8,7 +8,8 @@ import type { Allowlist } from '../config.ts'
 import { refuseUpgrade } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_PROTOCOL_ERROR, CLOSE_REVOKED, CLOSE_TIMEOUT, type DeviceConnection, type HostMessage } from './registry.ts'
-import { getDevice, recordHello, touchDevice, verifyDeviceToken, type Device, type Push } from './store.ts'
+import { reportTimeZone } from '../people.ts'
+import { getDevice, isUserEvent, markDeviceActive, recordHello, touchDevice, verifyDeviceToken, type Device, type Push } from './store.ts'
 
 export const DEVICE_SOCKET_PATH = '/api/devices/ws'
 export const PING_INTERVAL_MS = 30_000
@@ -134,6 +135,10 @@ export function createDeviceSockets(options: {
         },
         lastTouch,
       )
+      // The app says hello when it connects and again when it comes to the
+      // foreground on an open connection.
+      markDeviceActive(db, deviceId, lastTouch)
+      reportTimeZone(db, device.userId, message.timeZone)
       clearTimeout(helloTimer)
       if (!helloed) devices.registry.attach(connection)
       helloed = true
@@ -156,6 +161,7 @@ export function createDeviceSockets(options: {
           if (devices.registry.result(connection, message as { id: unknown; ok: unknown })) return
           return void devices.handleResult(deviceId, message)
         case 'event':
+          if (isUserEvent(message.capability, message.name)) markDeviceActive(db, deviceId, now())
           return void devices
             .handleEvent(deviceId, { capability: message.capability, name: message.name, data: message.data })
             .catch((err: unknown) => console.error(`Handling an event from device ${deviceId} failed`, err))

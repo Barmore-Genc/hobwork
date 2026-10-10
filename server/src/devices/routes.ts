@@ -19,6 +19,8 @@ import {
   exchangePairingCode,
   freeDeviceName,
   isPlatform,
+  isUserEvent,
+  markDeviceActive,
   PAIRED_PATH,
   PAIRING_REDIRECT_URI,
   pairedUniversalLink,
@@ -239,7 +241,8 @@ export function createDeviceRoutes(options: {
     const device = requireDevice(req)
     const body = await readJson(req, MAX_DEVICE_BODY_BYTES)
     if (!isObject(body)) throw new HttpError(400, 'Send { capability, name, data }')
-    touchDevice(db, device.id)
+    if (isUserEvent(body.capability, body.name)) markDeviceActive(db, device.id)
+    else touchDevice(db, device.id)
     await devices.handleEvent(device.id, { capability: body.capability, name: body.name, data: body.data })
     res.writeHead(204).end()
   }

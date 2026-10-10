@@ -33,6 +33,11 @@
         "required": ["schedule", "handler"],
         "properties": {
           "schedule": { "type": "string", "pattern": "^\\S+( \\S+){4}$" },
+          "timeZone": {
+            "description": "Where the schedule's times are: an IANA time zone such as \"Europe/Istanbul\", or \"person\" to run once for each person at that time in their own time zone (ctx.payload is a PersonCronPayload). Default: the host's time zone.",
+            "type": "string",
+            "pattern": "^(person|[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*)$"
+          },
           "handler": { "$ref": "#/definitions/handlerPath" }
         }
       }

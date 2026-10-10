@@ -54,3 +54,28 @@ test('leap days and impossible dates', () => {
   expect(next('0 0 29 2 *', at(2026, 3, 1))).toEqual(at(2028, 2, 29))
   expect(next('0 0 31 2 *', at(2026, 3, 1))).toBeUndefined()
 })
+
+test('runs in a given time zone, whatever the host zone', () => {
+  const cron = parseCron('0 8 * * mon-fri')
+  // Friday 2026-10-09 06:00 UTC is 09:00 in Istanbul, so the next run is Monday.
+  expect(nextRun(cron, new Date('2026-10-09T06:00:00Z'), 'Europe/Istanbul')?.toISOString()).toBe('2026-10-12T05:00:00.000Z')
+  expect(nextRun(cron, new Date('2026-10-09T06:00:00Z'), 'America/New_York')?.toISOString()).toBe('2026-10-09T12:00:00.000Z')
+  expect(nextRun(parseCron('30 23 31 12 *'), new Date('2026-12-31T22:00:00Z'), 'Pacific/Auckland')?.toISOString()).toBe(
+    '2027-12-31T10:30:00.000Z',
+  )
+  expect(nextRun(parseCron('0 0 31 2 *'), new Date('2026-03-01T00:00:00Z'), 'UTC')).toBeUndefined()
+})
+
+test('a zone skips times DST skips and runs repeated times once', () => {
+  const cron = parseCron('30 2 * * *')
+  // Clocks go forward in Berlin at 02:00 on 2026-03-29.
+  expect(nextRun(cron, new Date('2026-03-28T12:00:00Z'), 'Europe/Berlin')?.toISOString()).toBe('2026-03-30T00:30:00.000Z')
+  // They go back at 03:00 on 2026-10-25, so 02:30 happens twice.
+  const first = nextRun(cron, new Date('2026-10-24T12:00:00Z'), 'Europe/Berlin')!
+  expect(first.toISOString()).toBe('2026-10-25T00:30:00.000Z')
+  expect(nextRun(cron, first, 'Europe/Berlin')?.toISOString()).toBe('2026-10-26T01:30:00.000Z')
+  // During the second 02:00-03:00, the next minute is 03:00.
+  expect(nextRun(parseCron('* * * * *'), new Date('2026-10-25T01:30:00Z'), 'Europe/Berlin')?.toISOString()).toBe(
+    '2026-10-25T02:00:00.000Z',
+  )
+})

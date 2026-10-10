@@ -219,7 +219,9 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
                 <EntryRow key={cron.name} aside={<LastRunLink project={project.name} run={cron.lastRun} />}>
                   <p className="font-semibold break-words">{cron.name}</p>
                   <p className="text-sm text-muted">
-                    {cron.nextRun ? (
+                    {cron.timeZone === 'person' ? (
+                      "Runs for each person in their own time zone"
+                    ) : cron.nextRun ? (
                       <>
                         Next run <span title={exactTime(cron.nextRun)}>{dayTime(cron.nextRun)}</span>,{' '}
                         {timeAgo(cron.nextRun)}
@@ -228,6 +230,7 @@ function EntryPointsSection({ project, reload }: { project: ProjectDetail; reloa
                       'Never runs'
                     )}
                     <span className="ml-2 font-mono text-[0.8rem]">{cron.schedule}</span>
+                    {cron.timeZone && cron.timeZone !== 'person' && <span className="ml-2 text-[0.8rem]">{cron.timeZone}</span>}
                   </p>
                 </EntryRow>
               ))}

@@ -16,6 +16,14 @@ test('validates the parsed value against the schema', () => {
   ])
 })
 
+test('checks that cron time zones exist', () => {
+  expect(validateHobworkJson('{ "crons": { "a": { "schedule": "0 8 * * *", "timeZone": "Europe/Istanbul", "handler": "src/a.ts" } } }')).toEqual([])
+  expect(validateHobworkJson('{ "crons": { "a": { "schedule": "0 8 * * *", "timeZone": "person", "handler": "src/a.ts" } } }')).toEqual([])
+  expect(validateHobworkJson('{ "crons": { "a": { "schedule": "0 8 * * *", "timeZone": "Mars/Olympus", "handler": "src/a.ts" } } }')).toEqual([
+    '/crons/a/timeZone: "Mars/Olympus" is not a known time zone, such as "Europe/Istanbul"',
+  ])
+})
+
 test('validates resources', () => {
   expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 256, "cpus": 1 }, "workspace": {} } }')).toEqual([])
   expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 12 } } }')).toEqual([

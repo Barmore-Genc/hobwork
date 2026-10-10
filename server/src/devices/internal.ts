@@ -17,6 +17,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   bad_request: 400,
   read_only: 403,
   unknown_device: 404,
+  unknown_person: 404,
   unsupported: 422,
   unreachable: 503,
   not_connected: 503,
@@ -54,7 +55,13 @@ export async function devicesResponse(
   const invocation = typeof request.invocation === 'number' ? request.invocation : undefined
   const { devices } = options
   if (!devices) return failure('unreachable', 'This Hobwork host has no devices')
-  if (request.action === 'list') return answer({ ok: true, result: devices.info() })
+  if (request.action === 'people') return answer({ ok: true, result: devices.people() })
+  if (request.action === 'list') {
+    if (request.person === undefined) return answer({ ok: true, result: devices.info() })
+    const owned = Number.isSafeInteger(request.person) ? devices.personDevices(request.person) : undefined
+    if (!owned) return failure('unknown_person', `No person with ID ${JSON.stringify(request.person)}. ctx.people() lists them`)
+    return answer({ ok: true, result: owned })
+  }
   if (request.action !== 'call') return failure('bad_request', `Unknown action ${JSON.stringify((request as { action?: unknown }).action)}`)
 
   const what = `${request.capability}.${request.method} on ${JSON.stringify(request.device)}`

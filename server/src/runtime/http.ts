@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Caller } from '../../../packages/sdk/src/people.ts'
 import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
 import { getProjectOrRenamed, ProjectError } from '../projects.ts'
@@ -100,9 +101,18 @@ export async function serveRoute(
   req: IncomingMessage,
   res: ServerResponse,
   runtime: Runtime,
-  options: { project: string; branch?: string; path: string; url: string; headers?: Record<string, string>; sandboxed?: boolean },
+  options: {
+    project: string
+    branch?: string
+    path: string
+    url: string
+    headers?: Record<string, string>
+    sandboxed?: boolean
+    // Who is signed in to the app, handed to the handler as ctx.caller.
+    caller?: Caller
+  },
 ): Promise<void> {
-  const { project, branch, path, url, headers, sandboxed } = options
+  const { project, branch, path, url, headers, sandboxed, caller } = options
   const { routes } = await runtime.route(project, branch)
   const match = matchRoute(routes, req.method ?? 'GET', path)
   if (!match) return sendJson(res, 404, { error: `No route for ${req.method} ${path}` }, headers)
@@ -114,7 +124,7 @@ export async function serveRoute(
     res,
     runtime,
     project,
-    { kind: 'route', name: match.route.key, manual: false, branch, request, params: match.params },
+    { kind: 'route', name: match.route.key, manual: false, branch, request, params: match.params, ...(caller ? { caller } : {}) },
     headers,
     sandboxed,
   )

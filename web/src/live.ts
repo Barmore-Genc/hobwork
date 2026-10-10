@@ -11,6 +11,7 @@ export type Change =
   | { kind: 'secrets' }
   | { kind: 'agents' }
   | { kind: 'devices' }
+  | { kind: 'people' }
   | { kind: 'trash' }
   | { kind: 'backups' }
 

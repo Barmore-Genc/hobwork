@@ -74,8 +74,9 @@ test('invocations and log lines name their project', () => {
 })
 
 test('branches change when they are created, deleted or allowed to use Home Assistant', async () => {
-  await createBranch(host, 'filament', 'add-spools')
   const { user } = signedIn(host)
+  published()
+  await createBranch(host, 'filament', 'add-spools')
   grantBranchHa(host, 'filament', 'add-spools', { userId: user.id })
   revokeBranchHa(host, 'filament', 'add-spools')
   revokeBranchHa(host, 'filament', 'add-spools')
@@ -107,6 +108,7 @@ test('agent keys, SSH keys and devices change their lists', () => {
   expect(published()).toEqual(Array(4).fill({ kind: 'agents' }))
 
   const { user } = signedIn(host)
+  expect(published()).toEqual([{ kind: 'people' }])
   const { verifier, challenge } = pkce()
   const code = createPairingCode(host.db, { userId: user.id, name: 'kaans-iphone', platform: 'ios', codeChallenge: challenge })
   const { device } = exchangePairingCode(host.db, code, verifier)

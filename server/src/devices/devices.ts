@@ -16,6 +16,8 @@ import type { Host } from '../host.ts'
 import { getPerson, listPeople } from '../people.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
+import { createHobSurfaces, WIDGETS_CAPABILITY, type Declarations, type RouteAnswer } from './hob-surfaces.ts'
+import { createLiveActivities, type Scope } from './live-activities.ts'
 import { createNotifications, nextDelivery } from './notifications.ts'
 import { MAX_PAYLOAD_BYTES, PayloadTooLarge, pushSize, type PushInfo, type PushMessage, type PushSender } from './push/relay.ts'
 import { commandSpec, fallbackBody, HEALTH_TYPES, knownMethods, promptAlert } from './commands.ts'
@@ -241,6 +243,10 @@ export function createDevices(options: {
   // Runs a route of the deployed version for a notification action. Resolves
   // with the status the handler answered.
   invokeRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<number>
+  // Runs a route of the deployed version for a widget or an intent, with its answer.
+  callRoute?: (project: string, request: { method: string; path: string; body?: unknown }, caller: Caller) => Promise<RouteAnswer>
+  // The widget and intents the deployed version declares in hobwork.json.
+  declarations?: (project: string) => Promise<Declarations>
   // Tests shorten how long calls wait and move the clock.
   waitMs?: { background: number; foreground: number }
   socketFallbackMs?: number
@@ -261,6 +267,7 @@ export function createDevices(options: {
     } catch (err) {
       console.error('Expiring device commands failed', err)
     }
+    liveActivities.tick().catch((err: unknown) => console.error('Checking Live Activities failed', err))
   }, EXPIRY_INTERVAL_MS)
   expiry.unref()
   // Wakes up for the next notification waiting for deliverAt, if any.
@@ -376,6 +383,52 @@ export function createDevices(options: {
     onScheduled: () => scheduleNext(),
   })
   scheduleNext()
+
+  const liveActivities = createLiveActivities({
+    host,
+    registry,
+    ...(relay ? { relay } : {}),
+    now,
+    findReachable,
+    personDevices,
+    reachable,
+    projectLog,
+    ...(options.invokeRoute ? { invokeRoute: options.invokeRoute } : {}),
+  })
+
+  const surfaces = createHobSurfaces({
+    host,
+    registry,
+    ...(relay ? { relay } : {}),
+    now,
+    ...(options.declarations ? { declarations: options.declarations } : {}),
+    ...(options.callRoute ? { callRoute: options.callRoute } : {}),
+    projectLog,
+  })
+
+  function reloadWidgets(target: { device?: string; person?: number }) {
+    if (target.device !== undefined) {
+      const device = findReachable(target.device)
+      if (!device.capabilities.includes(WIDGETS_CAPABILITY)) {
+        throw new DeviceError('unsupported', `${device.name} shows no widgets. Widgets need the Hobwork app on an iPhone or iPad`)
+      }
+      return surfaces.reload([device])
+    }
+    const owned = personDevices(target.person!)
+    if (!owned) throw new DeviceError('unknown_person', `No person with ID ${JSON.stringify(target.person)}. ctx.people() lists them`)
+    if (!owned.some((d) => d.capabilities.includes(WIDGETS_CAPABILITY))) {
+      throw new DeviceError('unreachable', `Person ${target.person} has no device that shows widgets`)
+    }
+    return surfaces.reload(owned)
+  }
+
+  // Which devices ctx.liveActivities, ctx.device(name).liveActivities and
+  // ctx.person(id).liveActivities change.
+  function liveActivityScope(target: { device?: string; person?: number }): Scope {
+    if (target.device !== undefined) return liveActivities.forDevice(target.device)
+    if (target.person !== undefined) return liveActivities.forPerson(target.person)
+    return 'all'
+  }
 
   const CAPABILITY_NAMES: Record<string, string> = {
     alarms: 'alarms',
@@ -656,6 +709,9 @@ export function createDevices(options: {
     const pair = `${String(event.capability)}/${String(event.name)}`
     if (pair === 'notifications/action') return notificationAction(device, data)
     if (pair === 'nfc/scanned') return nfcEvent(device.name, data)
+    if (pair === 'liveActivities/state') return liveActivities.stateEvent(device, data)
+    if (pair === 'liveActivities/startToken') return liveActivities.startTokenEvent(device, data)
+    if (pair === 'liveActivities/action') return liveActivities.actionEvent(device, data)
     if (event.capability === 'alarms' && ALARM_EVENTS.includes(event.name as string)) return alarmEvent(device.name, event.name as string, data)
     if (pair === 'focus/changed') {
       const { label, active } = data
@@ -875,6 +931,10 @@ export function createDevices(options: {
     updateNotification: notifications.update,
     withdrawNotification: notifications.withdraw,
     deliverDue: notifications.deliverDue,
+    liveActivities,
+    liveActivityScope,
+    reloadWidgets,
+    surfaces,
     callCommand,
     handleResult,
     resendPending,

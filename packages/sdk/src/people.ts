@@ -1,4 +1,6 @@
 import type { DeviceInfo, DevicePlatform, PersonNotifications } from './devices.ts'
+import type { PersonLiveActivities } from './live-activities.ts'
+import type { Widgets } from './widgets.ts'
 
 // Someone who can sign in to Hobwork.
 export type Person = {
@@ -36,6 +38,11 @@ export interface PersonDevices {
   // Notifications to their devices, e.g. person.notifications.send({ title,
   // devices: 'lastActive' }).
   notifications: PersonNotifications
+  // Live Activities on their devices, e.g. a dryer countdown on every phone of
+  // the person.
+  liveActivities: PersonLiveActivities
+  // Refreshes the hob's widget on their devices.
+  widgets: Widgets
 }
 
 // ctx.payload of a cron with "timeZone": "person" in hobwork.json: it runs once

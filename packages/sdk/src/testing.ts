@@ -6,6 +6,8 @@ import { createExecutor } from './db/execute.ts'
 import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } from './db/migrations.ts'
 import type { Device, DeviceInfo, NotificationControl, PersonNotifications } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
+import type { LiveActivityControl, PersonLiveActivities } from './live-activities.ts'
+import type { Widgets } from './widgets.ts'
 import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
 import { checkFilePath, FilesError } from './runner/files-client.ts'
@@ -112,6 +114,8 @@ const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
   focus: ['status'],
   nfc: ['write', 'read'],
   health: ['query'],
+  liveActivities: ['start', 'update', 'end'],
+  widgets: ['reload'],
 }
 
 // What a test fake of ctx.device may return: any capabilities and methods.
@@ -143,13 +147,17 @@ function byLastActive(a: DeviceInfo, b: DeviceInfo): number {
   return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? '')
 }
 
-export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device' | 'notifications'> & {
+export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device' | 'notifications' | 'liveActivities'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
   device?: (name: string) => DeviceStub
   notifications?: Partial<NotificationControl>
   // ctx.person(id).notifications.
   personNotifications?: (id: number) => Partial<PersonNotifications>
+  // ctx.person(id).liveActivities and ctx.person(id).widgets.
+  personLiveActivities?: (id: number) => Partial<PersonLiveActivities>
+  personWidgets?: (id: number) => Partial<Widgets>
+  liveActivities?: Partial<LiveActivityControl>
 }
 
 function unstubbed(what: string, hint: string) {
@@ -180,12 +188,27 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
         send: unstubbed(`ctx.person(${id}).notifications.send`, 'personNotifications: (id) => ({ send })'),
         ...overrides.personNotifications?.(id),
       },
+      liveActivities: {
+        start: unstubbed(`ctx.person(${id}).liveActivities.start`, 'personLiveActivities: (id) => ({ start })'),
+        update: unstubbed(`ctx.person(${id}).liveActivities.update`, 'personLiveActivities: (id) => ({ update })'),
+        end: unstubbed(`ctx.person(${id}).liveActivities.end`, 'personLiveActivities: (id) => ({ end })'),
+        ...overrides.personLiveActivities?.(id),
+      },
+      widgets: {
+        reload: unstubbed(`ctx.person(${id}).widgets.reload`, 'personWidgets: (id) => ({ reload })'),
+        ...overrides.personWidgets?.(id),
+      },
     }),
     ...overrides,
     notifications: {
       update: unstubbed('ctx.notifications.update', 'notifications: { update }'),
       withdraw: unstubbed('ctx.notifications.withdraw', 'notifications: { withdraw }'),
       ...overrides.notifications,
+    },
+    liveActivities: {
+      update: unstubbed('ctx.liveActivities.update', 'liveActivities: { update }'),
+      end: unstubbed('ctx.liveActivities.end', 'liveActivities: { end }'),
+      ...overrides.liveActivities,
     },
     devices,
     ha: { ...unstubbedHa(), ...overrides.ha },

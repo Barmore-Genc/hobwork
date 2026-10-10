@@ -32,6 +32,8 @@ export type Device = {
   capabilities: string[]
   appVersion: string | null
   push: Push | null
+  // The relay's ID of the app's push-to-start token for Live Activities.
+  liveActivityStartToken: string | null
   createdAt: string
   lastSeenAt: string | null
   lastActiveAt: string | null
@@ -100,6 +102,7 @@ function toDevice(row: Record<string, unknown>): Device {
     capabilities: JSON.parse(String(row.capabilities)) as string[],
     appVersion: row.app_version === null ? null : String(row.app_version),
     push: row.push_grant === null ? null : { grant: String(row.push_grant), key: String(row.push_key) },
+    liveActivityStartToken: row.live_activity_start_token == null ? null : String(row.live_activity_start_token),
     createdAt: String(row.created_at),
     lastSeenAt: row.last_seen_at === null ? null : String(row.last_seen_at),
     lastActiveAt: row.last_active_at === null ? null : String(row.last_active_at),
@@ -224,7 +227,7 @@ export const ACTIVE_INTERVAL_MS = 10_000
 
 // App events that mean someone has the device in hand. Health samples and
 // Focus changes arrive without that.
-const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned', 'alarms/stopped', 'alarms/repeated'])
+const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned', 'alarms/stopped', 'alarms/repeated', 'liveActivities/action'])
 
 export function isUserEvent(capability: unknown, name: unknown): boolean {
   return USER_EVENTS.has(`${String(capability)}/${String(name)}`)
@@ -241,9 +244,24 @@ export function markDeviceActive(db: DatabaseSync, id: number, now = Date.now())
 // null turns push off for the device, for example when the relay says the
 // grant is gone. A grant belongs to one app install, so a device paired again
 // on the same phone takes it over from the old record.
+// The relay keeps Live Activity tokens per grant, so they go with it.
 export function setPush(db: DatabaseSync, id: number, push: Push | null) {
-  if (push) db.prepare('UPDATE devices SET push_grant = NULL, push_key = NULL WHERE push_grant = ? AND id != ?').run(push.grant, id)
+  if (push) {
+    for (const row of db.prepare('SELECT id FROM devices WHERE push_grant = ? AND id != ?').all(push.grant, id)) clearActivityTokens(db, Number(row.id))
+    db.prepare('UPDATE devices SET push_grant = NULL, push_key = NULL WHERE push_grant = ? AND id != ?').run(push.grant, id)
+  }
+  const current = db.prepare('SELECT push_grant FROM devices WHERE id = ?').get(id)
+  if ((current?.push_grant ?? null) !== (push?.grant ?? null)) clearActivityTokens(db, id)
   db.prepare('UPDATE devices SET push_grant = ?, push_key = ? WHERE id = ?').run(push?.grant ?? null, push?.key ?? null, id)
+}
+
+function clearActivityTokens(db: DatabaseSync, id: number) {
+  db.prepare('UPDATE devices SET live_activity_start_token = NULL WHERE id = ?').run(id)
+  db.prepare('UPDATE live_activity_devices SET token = NULL WHERE device_id = ?').run(id)
+}
+
+export function setLiveActivityStartToken(db: DatabaseSync, id: number, token: string | null) {
+  db.prepare('UPDATE devices SET live_activity_start_token = ? WHERE id = ?').run(token, id)
 }
 
 export function createWebSessionLink(

@@ -1,3 +1,6 @@
+import type { LiveActivities } from './live-activities.ts'
+import type { Widgets } from './widgets.ts'
+
 export type DevicePlatform = 'ios' | 'macos'
 
 export type DeviceInfo = {
@@ -9,8 +12,9 @@ export type DeviceInfo = {
   // ID of that person (Person.id).
   ownerId: number
   // What the app on it can do and the person allowed: "notifications",
-  // "alarms", "screenTime", "focus", "nfc", "health". Calls to others fail
-  // with "unsupported".
+  // "alarms", "screenTime", "focus", "nfc", "health", "liveActivities" (the
+  // person allows Live Activities for Hobwork), "widgets". Calls to others
+  // fail with "unsupported".
   capabilities: string[]
   // Whether the app has a live connection to Hobwork right now. Notifications
   // reach devices that are not connected through push.
@@ -316,6 +320,8 @@ export interface Device {
   focus: Focus
   nfc: Nfc
   health: Health
+  liveActivities: LiveActivities
+  widgets: Widgets
 }
 
 // ctx.payload of a trigger declared with

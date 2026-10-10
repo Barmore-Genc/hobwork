@@ -121,6 +121,11 @@ export type DeviceRequest = (
   | { action: 'notify'; person: number; args?: unknown }
   | { action: 'updateNotification'; id: string; args?: unknown }
   | { action: 'withdrawNotification'; id: string }
+  // Live Activities: start (args is the activity), update (args the changes)
+  // or end (args the options) on one device, a person's devices, or (update
+  // and end without device or person) every device that shows it.
+  | { action: 'liveActivity'; op: 'start' | 'update' | 'end'; device?: string; person?: number; id?: string; args?: unknown }
+  | { action: 'reloadWidgets'; device?: string; person?: number }
 ) & {
   // Set by the runner inside an invocation, so the call is logged with it.
   invocation?: number

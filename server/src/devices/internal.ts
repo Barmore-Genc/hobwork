@@ -1,4 +1,5 @@
 import type { DeviceDelivery } from '../../../packages/sdk/src/devices.ts'
+import type { LiveActivityDelivery } from '../../../packages/sdk/src/live-activities.ts'
 import type { DeviceRequest, DeviceResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Devices } from './devices.ts'
 import { DeviceError } from './registry.ts'
@@ -19,6 +20,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   read_only: 403,
   unknown_device: 404,
   unknown_person: 404,
+  dismissed: 409,
   unsupported: 422,
   unreachable: 503,
   not_connected: 503,
@@ -65,7 +67,7 @@ export async function devicesResponse(
     if (!owned) return failure('unknown_person', `No person with ID ${JSON.stringify(request.person)}. ctx.people() lists them`)
     return answer({ ok: true, result: owned })
   }
-  if (!['call', 'notify', 'updateNotification', 'withdrawNotification'].includes(request.action)) {
+  if (!['call', 'notify', 'updateNotification', 'withdrawNotification', 'liveActivity', 'reloadWidgets'].includes(request.action)) {
     return failure('bad_request', `Unknown action ${JSON.stringify((request as { action?: unknown }).action)}`)
   }
   if (options.access === 'read') {
@@ -74,6 +76,8 @@ export async function devicesResponse(
       'Workspaces and branch previews cannot use devices. Deployed handlers can; in tests, fake ctx.device with createTestContext',
     )
   }
+  if (request.action === 'liveActivity') return liveActivityResponse(request, devices, options.project, invocation, options.log)
+  if (request.action === 'reloadWidgets') return reloadResponse(request, devices, invocation, options.log)
   if (request.action !== 'call') return notificationResponse(request, devices, options.project, invocation, options.log)
 
   const what = `${request.capability}.${request.method} on ${JSON.stringify(request.device)}`
@@ -96,6 +100,80 @@ export async function devicesResponse(
     const message = err instanceof Error ? err.message : String(err)
     if (!(err instanceof DeviceError)) console.error(`Device call ${what} failed`, err)
     options.log?.({ invocation, level: 'warn', message: `Device: ${what} failed: ${message}` })
+    return failure(code, message)
+  }
+}
+
+type LiveActivityRequest = Extract<DeviceRequest, { action: 'liveActivity' }>
+
+function targetOf(request: { device?: unknown; person?: unknown }): string {
+  if (typeof request.device === 'string') return `on ${request.device}`
+  if (request.person !== undefined) return `for person ${JSON.stringify(request.person)}`
+  return 'everywhere'
+}
+
+function liveDeliveries(results: LiveActivityDelivery[]): string {
+  return results.map((r) => ('error' in r ? `${r.device}: ${r.error.code}` : `${r.device} (${r.delivery})`)).join(', ')
+}
+
+function checkTarget(request: { device?: unknown; person?: unknown }) {
+  if (request.device !== undefined && typeof request.device !== 'string') throw new DeviceError('bad_request', 'device must be a device name')
+  if (request.person !== undefined && !Number.isSafeInteger(request.person)) {
+    throw new DeviceError('unknown_person', `No person with ID ${JSON.stringify(request.person)}. ctx.people() lists them`)
+  }
+}
+
+async function liveActivityResponse(
+  request: LiveActivityRequest,
+  devices: Devices,
+  project: string,
+  invocation: number | undefined,
+  log?: (entry: DeviceCallLog) => void,
+): Promise<Response> {
+  const key = request.op === 'start' ? (request.args as { id?: unknown } | undefined)?.id : request.id
+  const what = `${request.op === 'start' ? 'Starting' : request.op === 'update' ? 'Updating' : 'Ending'} Live Activity ${JSON.stringify(key)} ${targetOf(request)}`
+  try {
+    checkTarget(request)
+    const la = devices.liveActivities
+    let result: { devices: LiveActivityDelivery[] } & Record<string, unknown>
+    if (request.op === 'start') {
+      if (request.device !== undefined) result = await la.startOnDevice(project, request.device, request.args)
+      else if (request.person !== undefined) result = await la.startForPerson(project, request.person, request.args)
+      else throw new DeviceError('bad_request', 'Start a Live Activity with ctx.device(name) or ctx.person(id)')
+    } else {
+      const scope = devices.liveActivityScope(request)
+      result = request.op === 'update' ? await la.update(project, request.id, request.args, scope) : await la.end(project, request.id, request.args, scope)
+    }
+    const failed = result.devices.some((d) => 'error' in d)
+    log?.({ invocation, level: failed ? 'warn' : 'info', message: `${what}: ${result.devices.length ? liveDeliveries(result.devices) : 'no device shows it'}` })
+    return answer({ ok: true, result })
+  } catch (err) {
+    const code = err instanceof DeviceError ? err.code : 'unknown_error'
+    const message = err instanceof Error ? err.message : String(err)
+    if (!(err instanceof DeviceError)) console.error(`${what} failed`, err)
+    log?.({ invocation, level: 'warn', message: `${what} failed: ${message}` })
+    return failure(code, message)
+  }
+}
+
+async function reloadResponse(
+  request: Extract<DeviceRequest, { action: 'reloadWidgets' }>,
+  devices: Devices,
+  invocation: number | undefined,
+  log?: (entry: DeviceCallLog) => void,
+): Promise<Response> {
+  const what = `Reloading widgets ${targetOf(request)}`
+  try {
+    checkTarget(request)
+    if (request.device === undefined && request.person === undefined) throw new DeviceError('bad_request', 'Reload widgets with ctx.device(name) or ctx.person(id)')
+    const result = await devices.reloadWidgets(request)
+    log?.({ invocation, level: result.devices.some((d) => 'error' in d) ? 'warn' : 'info', message: `${what}: ${deliveries(result.devices)}` })
+    return answer({ ok: true, result })
+  } catch (err) {
+    const code = err instanceof DeviceError ? err.code : 'unknown_error'
+    const message = err instanceof Error ? err.message : String(err)
+    if (!(err instanceof DeviceError)) console.error(`${what} failed`, err)
+    log?.({ invocation, level: 'warn', message: `${what} failed: ${message}` })
     return failure(code, message)
   }
 }

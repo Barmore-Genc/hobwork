@@ -150,3 +150,37 @@ test('createTestContext rejects notification calls a test did not stub and takes
   await expect(ctx.notifications.update('n', {})).rejects.toThrow('ctx.notifications.update is not stubbed')
   await expect(createTestContext().person(1).notifications.send({ title: 'Hi' })).rejects.toThrow('ctx.person(1).notifications.send is not stubbed')
 })
+
+test('Live Activities and widget reloads go through the host for a device, a person or everywhere', async () => {
+  const requests: unknown[] = []
+  const client = createDeviceClient(async (request) => {
+    requests.push(request)
+    return { ok: true, result: {} }
+  })
+  const activity = { id: 'dryer', title: 'Dryer', endsAt: '2026-10-09T14:00:00Z' }
+  await client.person(1).liveActivities.start({ ...activity, devices: 'lastActive' })
+  await client.device('kaan-iphone').liveActivities.update('dryer', { progress: 0.5 })
+  await client.person(1).liveActivities.end('dryer', { dismissAt: 'now' })
+  await client.liveActivities.end('dryer')
+  await client.person(1).widgets.reload()
+  await client.device('kaan-iphone').widgets.reload()
+  expect(requests).toEqual([
+    { action: 'liveActivity', op: 'start', person: 1, args: { ...activity, devices: 'lastActive' } },
+    { action: 'liveActivity', op: 'update', device: 'kaan-iphone', id: 'dryer', args: { progress: 0.5 } },
+    { action: 'liveActivity', op: 'end', person: 1, id: 'dryer', args: { dismissAt: 'now' } },
+    { action: 'liveActivity', op: 'end', id: 'dryer', args: {} },
+    { action: 'reloadWidgets', person: 1 },
+    { action: 'reloadWidgets', device: 'kaan-iphone' },
+  ])
+})
+
+test('createTestContext rejects Live Activity and widget calls a test did not stub and takes fakes', async () => {
+  const start = vi.fn(async () => ({ id: 'dryer', devices: [] }))
+  const end = vi.fn(async () => ({ ended: true, devices: [] }))
+  const ctx = createTestContext({ personLiveActivities: () => ({ start }), liveActivities: { end } })
+  expect(await ctx.person(1).liveActivities.start({ id: 'dryer', title: 'Dryer' })).toEqual({ id: 'dryer', devices: [] })
+  expect(await ctx.liveActivities.end('dryer')).toEqual({ ended: true, devices: [] })
+  await expect(ctx.liveActivities.update('dryer', {})).rejects.toThrow('ctx.liveActivities.update is not stubbed')
+  await expect(ctx.person(1).widgets.reload()).rejects.toThrow('ctx.person(1).widgets.reload is not stubbed')
+  await expect(ctx.device('kaan-iphone').liveActivities.start({ id: 'a', title: 'A' })).rejects.toThrow('is not stubbed')
+})

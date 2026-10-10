@@ -94,6 +94,23 @@ test.each([
   ['static dir outside the files', { static: { '/photos': { dir: '../photos' } } }],
   ['static dir with a dot segment', { static: { '/photos': { dir: 'a/./b' } } }],
   ['static public not a boolean', { static: { '/photos': { dir: 'photos', public: 'yes' } } }],
+  ['widget without route', { widget: {} }],
+  ['widget route that is not a path', { widget: { route: 'widget' } }],
+  ['intent without route or open', { intents: [{ id: 'a', title: 'A' }] }],
+  ['intent with a bad id', { intents: [{ id: 'a b', title: 'A', open: '/' }] }],
+  ['intent parameter of an unknown type', { intents: [{ id: 'a', title: 'A', open: '/', parameters: [{ id: 'p', title: 'P', type: 'date' }] }] }],
 ])('rejects %s', (_, config) => {
   expect(validate(config)).toBe(false)
+})
+
+test('accepts a widget and intents', () => {
+  const config = {
+    widget: { route: '/widget' },
+    intents: [
+      { id: 'where-is', title: 'Where is a spool', route: '/intents/where', parameters: [{ id: 'spool', title: 'Spool', type: 'number' }] },
+      { id: 'scan', title: 'Open Scan', open: '/scan' },
+      { id: 'start-dryer', title: 'Start the dryer timer', route: '/dryer/start', method: 'POST', opensApp: true, open: '/dry' },
+    ],
+  }
+  expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
 })

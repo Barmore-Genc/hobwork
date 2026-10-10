@@ -28,8 +28,31 @@ export type PushMessage = {
 
 export type PushResult =
   | { ok: true }
-  // gone: the grant no longer works and should be forgotten.
-  | { ok: false; status: number; reason: string; gone: boolean }
+  // gone: the grant no longer works and should be forgotten. activityGone: the
+  // Live Activity token no longer works; the grant still does.
+  | { ok: false; status: number; reason: string; gone: boolean; activityGone?: boolean }
+
+export type LiveActivityEvent = 'start' | 'update' | 'end'
+
+// A Live Activity push. ActivityKit hands its content-state and attributes to
+// the app's own decoder, which opens the sealed payload, so Apple and the
+// relay see only the times below.
+export type LiveActivityPush = {
+  // The relay's ID of the app's ActivityKit token: the push-to-start token
+  // for start, the activity's token for update and end.
+  activity: string
+  event: LiveActivityEvent
+  // 10 alerts at once and counts against iOS's budget; 5 is delivered when
+  // convenient and is not budgeted.
+  priority: 5 | 10
+  // Unix seconds. All of them.
+  timestamp: number
+  staleDate?: number
+  dismissalDate?: number
+  relevanceScore?: number
+  expiresAt: number
+  payload: { hob: string; id: string; state: unknown }
+}
 
 // Thrown before anything is sent, so it is not the relay refusing the push.
 export class PayloadTooLarge extends Error {
@@ -45,7 +68,12 @@ export type PushInfo = { relay: string } & PushPublicKeys
 export type PushSender = {
   info: PushInfo
   send(target: PushTarget, message: PushMessage): Promise<PushResult>
+  sendLiveActivity(target: PushTarget, push: LiveActivityPush): Promise<PushResult>
 }
+
+// The attributes type the relay names in start pushes, HobworkActivityAttributes in the app.
+export const ACTIVITY_ATTRIBUTES_TYPE = 'HobworkActivityAttributes'
+const LIVE_ACTIVITY_ALERT = { title: 'Hobwork', body: 'A hob started a Live Activity.' }
 
 // The relay's text for each kind, from relay/src/payload.rs. Only its length matters here.
 const FALLBACK_BODY: Record<Exclude<PushKind, 'background'>, string> = {
@@ -68,6 +96,33 @@ export function envelopeSize(kind: PushKind, grant: string, keyId: string, ciphe
 
 function plaintext(message: PushMessage, now: number) {
   return { v: 1, sentAt: Math.floor(now / 1000), expiresAt: message.expiresAt, ...message.payload }
+}
+
+// Never expires: ActivityKit decodes the same content again for hours.
+function liveActivityPlaintext(push: LiveActivityPush, now: number) {
+  return { v: 1, sentAt: Math.floor(now / 1000), expiresAt: 0, aps: {}, hobwork: { liveActivity: push.payload } }
+}
+
+// What the relay builds from a Live Activity push: the envelope goes into the
+// content-state, and for start also into the attributes.
+export function liveActivityEnvelopeSize(push: LiveActivityPush, grant: string, keyId: string, ciphertextBytes: number): number {
+  const ciphertext = 'A'.repeat(Math.ceil(ciphertextBytes / 3) * 4)
+  const envelope = { hobwork: { v: 1, grant, keyId, ciphertext } }
+  const aps: Record<string, unknown> = { timestamp: push.timestamp, event: push.event, 'content-state': envelope }
+  if (push.staleDate !== undefined) aps['stale-date'] = push.staleDate
+  if (push.dismissalDate !== undefined) aps['dismissal-date'] = push.dismissalDate
+  if (push.relevanceScore !== undefined) aps['relevance-score'] = push.relevanceScore
+  if (push.event === 'start') {
+    aps['attributes-type'] = ACTIVITY_ATTRIBUTES_TYPE
+    aps.attributes = envelope
+    aps.alert = LIVE_ACTIVITY_ALERT
+    aps['input-push-token'] = 1
+  }
+  return Buffer.byteLength(JSON.stringify({ aps }))
+}
+
+export function liveActivitySize(push: LiveActivityPush, now = Date.now(), grant = 'A'.repeat(GRANT_ID_LENGTH), keyId = 'A'.repeat(KEY_ID_LENGTH)): number {
+  return liveActivityEnvelopeSize(push, grant, keyId, sealedLength(liveActivityPlaintext(push, now)))
 }
 
 // Size of the APNs payload the relay will build. It needs no keys, so a host
@@ -100,26 +155,17 @@ export function createRelayPush(options: {
   const doFetch = options.fetch ?? fetch
   const now = options.now ?? Date.now
 
-  async function send(target: PushTarget, message: PushMessage): Promise<PushResult> {
+  async function post(target: PushTarget, size: number, plaintext: unknown, fields: Record<string, unknown>, sentAt: number): Promise<PushResult> {
     const appKey = Buffer.from(target.key, 'base64')
-    if (appKey.length !== KEY_BYTES) return { ok: false, status: 0, reason: 'the app sent no usable key', gone: true }
-    const sentAt = now()
-    const size = pushSize(message, sentAt, target.grant, keys.public.keyId)
     if (size > MAX_PAYLOAD_BYTES) throw new PayloadTooLarge(size)
     const ciphertext = seal({
-      plaintext: plaintext(message, sentAt),
+      plaintext,
       hostKey: keys.encryption,
       hostPublic: keys.encryptionPublic,
       appKey,
       grant: target.grant,
     })
-    const body = JSON.stringify({
-      kind: message.kind,
-      expiration: message.expiresAt,
-      collapseId: message.id,
-      keyId: keys.public.keyId,
-      ciphertext,
-    })
+    const body = JSON.stringify({ ...fields, keyId: keys.public.keyId, ciphertext })
     const endpoint = new URL(`/v1/grants/${encodeURIComponent(target.grant)}/push`, url)
     const timestamp = String(Math.floor(sentAt / 1000))
     const nonce = randomBytes(18).toString('base64url')
@@ -143,8 +189,41 @@ export function createRelayPush(options: {
     if (error === 'too_large') throw new PayloadTooLarge(size)
     // An unknown or expired grant is as dead as a gone token: the app makes a new one.
     const gone = error === 'gone' || error === 'expired' || error === 'unknown_grant'
-    return { ok: false, status: res.status, reason: `${error}: ${text}`, gone }
+    const activityGone = error === 'activity_gone' || error === 'unknown_activity'
+    return { ok: false, status: res.status, reason: `${error}: ${text}`, gone, ...(activityGone ? { activityGone } : {}) }
   }
 
-  return { info: { relay: url, ...keys.public }, send }
+  function usable(target: PushTarget): PushResult | undefined {
+    if (Buffer.from(target.key, 'base64').length !== KEY_BYTES) return { ok: false, status: 0, reason: 'the app sent no usable key', gone: true }
+    return undefined
+  }
+
+  async function send(target: PushTarget, message: PushMessage): Promise<PushResult> {
+    const refused = usable(target)
+    if (refused) return refused
+    const sentAt = now()
+    const size = pushSize(message, sentAt, target.grant, keys.public.keyId)
+    return post(target, size, plaintext(message, sentAt), { kind: message.kind, expiration: message.expiresAt, collapseId: message.id }, sentAt)
+  }
+
+  async function sendLiveActivity(target: PushTarget, push: LiveActivityPush): Promise<PushResult> {
+    const refused = usable(target)
+    if (refused) return refused
+    const sentAt = now()
+    const size = liveActivitySize(push, sentAt, target.grant, keys.public.keyId)
+    const fields = {
+      kind: 'liveactivity',
+      priority: push.priority,
+      expiration: push.expiresAt,
+      activity: push.activity,
+      event: push.event,
+      timestamp: push.timestamp,
+      ...(push.staleDate !== undefined ? { staleDate: push.staleDate } : {}),
+      ...(push.dismissalDate !== undefined ? { dismissalDate: push.dismissalDate } : {}),
+      ...(push.relevanceScore !== undefined ? { relevanceScore: push.relevanceScore } : {}),
+    }
+    return post(target, size, liveActivityPlaintext(push, sentAt), fields, sentAt)
+  }
+
+  return { info: { relay: url, ...keys.public }, send, sendLiveActivity }
 }

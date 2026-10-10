@@ -181,6 +181,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         people: devices.people,
         person: devices.person,
         notifications: devices.notifications,
+        liveActivities: devices.liveActivities,
         secrets,
       }
       const value = await current.run(invocation, () => handler(ctx))

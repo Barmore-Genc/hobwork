@@ -55,3 +55,33 @@ test('names the event a device trigger capability takes', () => {
   const config = { triggers: { t: { device: { capability: 'focus', event: 'action' }, handler: 'src/t.ts' } } }
   expect(validateHobworkJson(JSON.stringify(config))).toEqual(['/triggers/t/device/event: must be equal to constant ("changed")'])
 })
+
+test('the widget and intents must name routes hobwork.json declares', () => {
+  const routes = { 'GET /widget': { handler: 'src/w.ts' }, 'POST /dryer/:id/start': { handler: 'src/d.ts' } }
+  const ok = {
+    routes,
+    widget: { route: '/widget' },
+    intents: [
+      { id: 'start-dryer', title: 'Start the dryer timer', route: '/dryer/1/start', parameters: [{ id: 'hours', title: 'Hours', type: 'number' }] },
+      { id: 'scan', title: 'Open Scan', open: '/scan' },
+    ],
+  }
+  expect(validateHobworkJson(JSON.stringify(ok))).toEqual([])
+  const bad = {
+    routes,
+    widget: { route: '/now' },
+    intents: [
+      { id: 'a', title: 'A', route: '/dryer/1/start', method: 'GET' },
+      { id: 'a', title: 'B', open: '/b' },
+    ],
+  }
+  expect(validateHobworkJson(JSON.stringify(bad))).toEqual([
+    '/widget/route: no "GET" route in routes matches /now',
+    '/intents/0/route: no "GET" route in routes matches /dryer/1/start',
+    '/intents/1/id: "a" is used twice',
+  ])
+})
+
+test('an intent needs a route or open', () => {
+  expect(validateHobworkJson(JSON.stringify({ intents: [{ id: 'a', title: 'A' }] }))).not.toEqual([])
+})

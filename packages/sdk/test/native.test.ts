@@ -309,3 +309,22 @@ test('camera photos and their errors', async () => {
   expect(native.has('camera', 'startScan')).toBe(false)
   expect((await rejection(native.camera.scan())).code).toBe('unavailable')
 })
+
+test('Live Activities start on this device and update and end through the app', async () => {
+  bridge = createFakeBridge({
+    'liveActivities.status': () => ({ enabled: true, frequentPushes: false }),
+    'liveActivities.start': () => ({ id: 'hand' }),
+    'liveActivities.update': () => ({ updated: true, devices: [] }),
+    'liveActivities.end': () => ({ ended: true, devices: [] }),
+  })
+  expect(await native.liveActivities.status()).toEqual({ enabled: true, frequentPushes: false })
+  const hand = { id: 'hand', title: '3 spools from the dryer', subtitle: 'Bin 5 twice and Bin 7', button: { title: 'Put all away', route: '/hand/put-away' } }
+  expect(await native.liveActivities.start(hand)).toEqual({ id: 'hand' })
+  await native.liveActivities.update('hand', { subtitle: null })
+  await native.liveActivities.end('hand', { dismissAt: 'now' })
+  expect(bridge.calls.slice(1)).toEqual([
+    { capability: 'liveActivities', method: 'start', args: hand },
+    { capability: 'liveActivities', method: 'update', args: { id: 'hand', changes: { subtitle: null } } },
+    { capability: 'liveActivities', method: 'end', args: { id: 'hand', dismissAt: 'now' } },
+  ])
+})

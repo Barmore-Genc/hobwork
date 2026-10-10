@@ -1,4 +1,5 @@
 import type { Device, DeviceInfo, NotificationControl } from '../devices.ts'
+import type { LiveActivityControl } from '../live-activities.ts'
 import type { Person, PersonDevices } from '../people.ts'
 import { internalPost } from './internal-fetch.ts'
 import type { DeviceRequest, DeviceResponse } from './protocol.ts'
@@ -36,13 +37,28 @@ export type DeviceClient = {
   people(): Promise<Person[]>
   person(id: number): PersonDevices
   notifications: NotificationControl
+  liveActivities: LiveActivityControl
 }
+
+type Target = { device: string } | { person: number } | Record<string, never>
 
 export function createDeviceClient(send: DeviceSend): DeviceClient {
   async function call<T>(request: DistributiveOmit<DeviceRequest, 'invocation'>): Promise<T> {
     const response = await send(request)
     if (!response.ok) throw new DeviceError(response.error.code, response.error.message)
     return response.result as T
+  }
+
+  function liveActivities(target: Target) {
+    return {
+      start: (args: { id?: unknown }) => call<never>({ action: 'liveActivity', op: 'start', ...target, args }),
+      update: (id: string, args: unknown) => call<never>({ action: 'liveActivity', op: 'update', ...target, id, args }),
+      end: (id: string, args?: unknown) => call<never>({ action: 'liveActivity', op: 'end', ...target, id, args: args ?? {} }),
+    }
+  }
+
+  function widgets(target: Target) {
+    return { reload: () => call<never>({ action: 'reloadWidgets', ...target }) }
   }
 
   function device(deviceName: string): Device {
@@ -72,6 +88,8 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
       focus: { status: method('focus', 'status') },
       nfc: { write: method('nfc', 'write'), read: method('nfc', 'read') },
       health: { query: method('health', 'query') },
+      liveActivities: liveActivities({ device: deviceName }),
+      widgets: widgets({ device: deviceName }),
     }
   }
 
@@ -81,6 +99,8 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
       devices,
       lastActiveDevice: async () => (await devices())[0],
       notifications: { send: (args) => call({ action: 'notify', person: id, args }) },
+      liveActivities: liveActivities({ person: id }),
+      widgets: widgets({ person: id }),
     }
   }
 
@@ -93,6 +113,7 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
       update: (id, args) => call({ action: 'updateNotification', id, args }),
       withdraw: (id) => call({ action: 'withdrawNotification', id }),
     },
+    liveActivities: liveActivities({}),
   }
 }
 

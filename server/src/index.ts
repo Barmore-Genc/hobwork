@@ -25,7 +25,7 @@ import { startHousekeeping } from './housekeeping.ts'
 import { failInterruptedRuns } from './pipeline/runner.ts'
 import { installHooks, listProjects } from './projects.ts'
 import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/homeassistant.ts'
-import { callRoute } from './runtime/http.ts'
+import { callRoute, jsonBody } from './runtime/http.ts'
 import { createRuntime } from './runtime/runtime.ts'
 import { budgetedSandboxFactory } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
@@ -62,6 +62,16 @@ const devices = createDevices({
     const outcome = await callRoute(runtime, project, { ...request, url: `${origin}/api${request.path}`, caller })
     if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
     return outcome.response.status
+  },
+  callRoute: async (project, request, caller) => {
+    const origin = appOrigins.origin({ project }) ?? config.publicUrl
+    const outcome = await callRoute(runtime, project, { ...request, url: `${origin}/api${request.path}`, caller })
+    if (!outcome.ok) throw new Error(`${outcome.error.name}: ${outcome.error.message} (invocation ${outcome.invocationId})`)
+    return { status: outcome.response.status, body: jsonBody(outcome.response) }
+  },
+  declarations: async (project) => {
+    const { config: hob } = await runtime.config(project)
+    return { ...(hob.widget !== undefined ? { widget: hob.widget } : {}), intents: hob.intents }
   },
 })
 const appOrigins = createAppOrigins(config.appsUrl)

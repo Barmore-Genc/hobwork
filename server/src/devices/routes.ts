@@ -8,6 +8,7 @@ import { DEFAULT_APPLE_APP_ID, type Allowlist } from '../config.ts'
 import { HttpError, json, readJson, redirect } from '../http.ts'
 import type { Devices } from './devices.ts'
 import { createNfcPage, NFC_PATH, page } from './nfc-page.ts'
+import { SurfaceError } from './hob-surfaces.ts'
 import { DeviceError } from './registry.ts'
 import { deviceFromRequest, parsePush } from './socket.ts'
 import {
@@ -50,6 +51,10 @@ const MAX_DEVICE_BODY_BYTES = 1024 * 1024
 const SELF_PATH = '/api/devices/self'
 const HANDOFF_PATH = '/api/devices/handoff'
 const NFC_LOOKUP_PATH = '/api/devices/nfc/lookup'
+const LIVE_ACTIVITIES_PATH = '/api/devices/live-activities'
+const HOBS_PATH = '/api/devices/hobs'
+const INTENTS_PATH = '/api/devices/intents'
+const WIDGET_PATH = /^\/api\/devices\/widgets\/([a-z0-9][a-z0-9-]*)$/
 const MAX_DISPLAY_NAME = 100
 const MAX_STATE = 512
 const MAX_RETURN_TO = 2048
@@ -302,6 +307,58 @@ export function createDeviceRoutes(options: {
     json(res, 200, found)
   }
 
+  // The web bridge's native.liveActivities from a hob page in the app. A start
+  // is for this device, which starts the activity itself from the answer;
+  // update and end reach every device that shows it.
+  async function liveActivity(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body) || typeof body.hob !== 'string' || !['start', 'update', 'end'].includes(body.op as string)) {
+      throw new HttpError(400, 'Send { hob, op: "start" | "update" | "end", id?, args }')
+    }
+    markDeviceActive(db, device.id)
+    const la = devices.liveActivities
+    try {
+      if (body.op === 'start') json(res, 200, la.startHere(body.hob, device, body.args))
+      else if (body.op === 'update') json(res, 200, await la.update(body.hob, body.id, body.args, 'all'))
+      else json(res, 200, await la.end(body.hob, body.id, body.args, 'all'))
+    } catch (err) {
+      if (!(err instanceof DeviceError)) throw err
+      json(res, err.code === 'unsupported' ? 403 : 400, { error: err.message, code: err.code })
+    }
+  }
+
+  // Hobs with a widget or intents, for the widget's and Shortcuts' pickers.
+  async function hobs(req: IncomingMessage, res: ServerResponse) {
+    requireDevice(req)
+    json(res, 200, { hobs: await devices.surfaces.hobs() })
+  }
+
+  async function widget(req: IncomingMessage, res: ServerResponse, hob: string) {
+    const device = requireDevice(req)
+    touchDevice(db, device.id)
+    try {
+      json(res, 200, await devices.surfaces.widget(device, hob))
+    } catch (err) {
+      if (err instanceof SurfaceError) json(res, err.status, { error: err.message, code: err.code })
+      else throw err
+    }
+  }
+
+  // Answers 200 either way, so Shortcuts can say what went wrong.
+  async function intent(req: IncomingMessage, res: ServerResponse) {
+    const device = requireDevice(req)
+    const body = await readJson(req)
+    if (!isObject(body)) throw new HttpError(400, 'Send { hob, intent, parameters? }')
+    markDeviceActive(db, device.id)
+    try {
+      json(res, 200, { ok: true, ...(await devices.surfaces.runIntent(device, { hob: body.hob, intent: body.intent, parameters: body.parameters })) })
+    } catch (err) {
+      if (!(err instanceof SurfaceError)) throw err
+      json(res, 200, { ok: false, error: { code: err.code, message: err.message } })
+    }
+  }
+
   type Handle = (req: IncomingMessage, res: ServerResponse) => Promise<void>
   const endpoints: Record<string, Record<string, Handle>> = {
     [TOKEN_PATH]: { POST: token },
@@ -312,6 +369,9 @@ export function createDeviceRoutes(options: {
     [SELF_PATH]: { GET: describeSelf, DELETE: removeSelf },
     [HANDOFF_PATH]: { POST: handoff },
     [NFC_LOOKUP_PATH]: { POST: nfcLookup },
+    [LIVE_ACTIVITIES_PATH]: { POST: liveActivity },
+    [HOBS_PATH]: { GET: hobs },
+    [INTENTS_PATH]: { POST: intent },
   }
 
   return async (req: IncomingMessage, res: ServerResponse, pathname: string, search: URLSearchParams): Promise<boolean> => {
@@ -358,6 +418,16 @@ export function createDeviceRoutes(options: {
       }
       auth.signIn(res, used.user, { deviceId: used.deviceId })
       redirect(res, used.returnTo)
+      return true
+    }
+    const widgetMatch = WIDGET_PATH.exec(pathname)
+    if (widgetMatch && req.method === 'GET') {
+      try {
+        await widget(req, res, widgetMatch[1]!)
+      } catch (err) {
+        if (err instanceof HttpError) json(res, err.status, { error: err.message })
+        else throw err
+      }
       return true
     }
     const endpoint = endpoints[pathname]

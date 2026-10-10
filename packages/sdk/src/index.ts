@@ -1,11 +1,14 @@
 import type { Device, DeviceInfo, NotificationControl } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
+import type { LiveActivityControl } from './live-activities.ts'
 import type { Caller, Person, PersonDevices } from './people.ts'
 import type { FileInfo } from './runner/protocol.ts'
 
 export type * from './devices.ts'
 export type * from './homeassistant.ts'
 export type * from './people.ts'
+export type * from './live-activities.ts'
+export type * from './widgets.ts'
 export * from './time.ts'
 export { DeviceError } from './runner/device-client.ts'
 export { FilesError } from './runner/files-client.ts'
@@ -64,6 +67,9 @@ export type Context = {
   person(id: number): PersonDevices
   // Update or withdraw a notification sent with ctx.device or ctx.person, by its ID.
   notifications: NotificationControl
+  // Update or end a Live Activity started with ctx.device or ctx.person, by its
+  // ID, on every device that shows it.
+  liveActivities: LiveActivityControl
   // Secret name -> placeholder. Send the placeholder over https in the
   // Authorization header (or a header the secret lists) to a host the secret is
   // bound to, and Hobwork replaces it with the real value on the way out. It is

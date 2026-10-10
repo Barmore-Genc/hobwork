@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Caller } from '../../../packages/sdk/src/people.ts'
-import type { SerializedRequest } from '../../../packages/sdk/src/runner/protocol.ts'
+import type { SerializedRequest, SerializedResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Host } from '../host.ts'
 import { getProjectOrRenamed, ProjectError } from '../projects.ts'
 import { matchRoute } from './routes.ts'
@@ -156,6 +156,15 @@ export async function callRoute(
     params: match.params,
     ...(options.caller ? { caller: options.caller } : {}),
   })
+}
+
+// A route's answer as JSON, or undefined when it is not JSON.
+export function jsonBody(response: SerializedResponse): unknown {
+  try {
+    return JSON.parse(Buffer.from(response.body, 'base64').toString('utf8'))
+  } catch {
+    return undefined
+  }
 }
 
 // Calls a webhook whose token the caller has already checked. The response is

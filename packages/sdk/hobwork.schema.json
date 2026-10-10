@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "definitions": {
     "handlerPath": { "type": "string", "minLength": 1 },
+    "routePath": { "type": "string", "pattern": "^/[^\\s#]{0,511}$" },
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "vmResources": {
       "type": "object",
@@ -223,6 +224,50 @@
         { "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$))[^\\\\]+\\.(svg|png|jpe?g|webp)$" },
         { "pattern": "^[^./\\\\\\s]{1,16}$" }
       ]
+    },
+    "widget": {
+      "description": "A Home Screen and Lock Screen widget for the hob in the Hobwork app. Hobwork calls the GET route at this path with ctx.caller set to the person whose device shows it, and the route returns WidgetContent from @hobwork/sdk (title, lines, swatches, open). ctx.person(id).widgets.reload() refreshes it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route"],
+      "properties": {
+        "route": { "$ref": "#/definitions/routePath" }
+      }
+    },
+    "intents": {
+      "description": "Actions of the hob in Shortcuts, Siri, the Action Button and Control Center (\"Run Hob Action\" in the Hobwork app). An intent with a route runs it (default POST, body IntentRequest from @hobwork/sdk, ctx.caller set to the person and device) and the route may return IntentResult: say is what Siri says. An intent with open and no route opens the app at that path of the hob's UI.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "anyOf": [{ "required": ["route"] }, { "required": ["open"] }],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "route": { "$ref": "#/definitions/routePath" },
+          "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+          "parameters": {
+            "description": "What Shortcuts and Siri ask for before running the route, handed over in IntentRequest.parameters by id.",
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "title"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+                "title": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "type": { "enum": ["text", "number", "boolean"], "default": "text" },
+                "optional": { "type": "boolean" }
+              }
+            }
+          },
+          "opensApp": { "description": "Opens the app after the route ran: at the path the route returns as open, else at open, else at the hob's home.", "type": "boolean" },
+          "open": { "description": "A path of the hob's UI, e.g. \"/scan\".", "$ref": "#/definitions/routePath" }
+        }
+      }
     }
   }
 }

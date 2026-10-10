@@ -16,6 +16,19 @@ export type Entry = { handler: string }
 // An `uploads` entry: files go under `prefix` (ending in "/").
 export type UploadEntry = { prefix: string; maxBytes: number; types: string[] }
 
+export type IntentParameter = { id: string; title: string; type: 'text' | 'number' | 'boolean'; optional: boolean }
+
+// An entry of `intents`: runs route, or only opens the app at open.
+export type IntentEntry = {
+  id: string
+  title: string
+  route?: string
+  method: string
+  parameters: IntentParameter[]
+  opensApp: boolean
+  open?: string
+}
+
 export type ProjectConfig = {
   routes: Record<string, Entry>
   crons: Record<string, Entry & CronEntry>
@@ -29,6 +42,9 @@ export type ProjectConfig = {
   uploads: Record<string, UploadEntry>
   idleTimeoutMs: number
   resources: ResourceRequest
+  // The GET route of the hob's widget.
+  widget?: string
+  intents: IntentEntry[]
 }
 
 export const DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000
@@ -71,10 +87,30 @@ function uploadEntries(entries: Record<string, { prefix?: unknown; maxBytes?: un
   return out
 }
 
+function intentEntries(entries: unknown): IntentEntry[] {
+  if (!Array.isArray(entries)) return []
+  return entries.map((raw: Record<string, unknown>) => ({
+    id: String(raw.id),
+    title: String(raw.title),
+    ...(typeof raw.route === 'string' ? { route: raw.route } : {}),
+    method: typeof raw.method === 'string' ? raw.method : 'POST',
+    parameters: (Array.isArray(raw.parameters) ? raw.parameters : []).map((p: Record<string, unknown>) => ({
+      id: String(p.id),
+      title: String(p.title),
+      type: p.type === 'number' || p.type === 'boolean' ? p.type : 'text',
+      optional: p.optional === true,
+    })),
+    opensApp: raw.opensApp === true,
+    ...(typeof raw.open === 'string' ? { open: raw.open } : {}),
+  }))
+}
+
 // The pipeline validated hobwork.json against the schema before it reached main.
 export function parseProjectConfig(raw: string): ProjectConfig {
-  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static' | 'uploads'>> & {
+  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static' | 'uploads' | 'widget' | 'intents'>> & {
     idleTimeout?: string
+    widget?: { route?: unknown }
+    intents?: unknown
     static?: Record<string, { dir?: unknown; public?: unknown }>
     uploads?: Record<string, { prefix?: unknown; maxBytes?: unknown; types?: unknown }>
   }
@@ -90,6 +126,8 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     static: staticMounts(json.static),
     uploads: uploadEntries(json.uploads),
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
+    ...(typeof json.widget?.route === 'string' ? { widget: json.widget.route } : {}),
+    intents: intentEntries(json.intents),
   }
 }
 

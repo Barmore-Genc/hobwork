@@ -73,3 +73,44 @@ test('createTestContext takes partial device fakes and rejects the rest', async 
   )
   await expect(ctx.device('kaan-iphone').alarms.list()).rejects.toThrow('Pass device: (name) => ({ alarms: { list } })')
 })
+
+const device = (name: string, ownerId: number, lastActiveAt: string | null, lastSeenAt: string | null = lastActiveAt) => ({
+  name,
+  platform: 'ios' as const,
+  owner: `person ${ownerId}`,
+  ownerId,
+  capabilities: [],
+  connected: false,
+  lastSeenAt,
+  lastActiveAt,
+})
+
+test('people and a person’s devices go through the host; the last active device is the first one', async () => {
+  const requests: unknown[] = []
+  const client = createDeviceClient(async (request) => {
+    requests.push(request)
+    if (request.action === 'people') return { ok: true, result: [{ id: 1, name: 'Kaan', email: null, timeZone: 'UTC' }] }
+    return { ok: true, result: [device('kaan-mac', 1, '2026-10-09T10:00:00.000Z'), device('kaan-iphone', 1, null)] }
+  })
+  expect(await client.people()).toEqual([{ id: 1, name: 'Kaan', email: null, timeZone: 'UTC' }])
+  expect((await client.person(1).lastActiveDevice())?.name).toBe('kaan-mac')
+  expect(requests).toEqual([{ action: 'people' }, { action: 'list', person: 1 }])
+
+  const nobody = createDeviceClient(async () => ({ ok: true, result: [] }))
+  expect(await nobody.person(2).lastActiveDevice()).toBeUndefined()
+})
+
+test('createTestContext answers ctx.person from the stubbed devices, most recently used first', async () => {
+  const ctx = createTestContext({
+    devices: async () => [
+      device('kaan-iphone', 1, '2026-10-09T08:00:00.000Z'),
+      device('kaan-mac', 1, '2026-10-09T09:00:00.000Z'),
+      device('ece-iphone', 2, '2026-10-09T10:00:00.000Z'),
+      device('kaan-ipad', 1, null, '2026-10-09T11:00:00.000Z'),
+    ],
+  })
+  expect(ctx.caller).toBeNull()
+  expect((await ctx.person(1).devices()).map((d) => d.name)).toEqual(['kaan-mac', 'kaan-iphone', 'kaan-ipad'])
+  expect((await ctx.person(1).lastActiveDevice())?.name).toBe('kaan-mac')
+  await expect(ctx.people()).rejects.toThrow('ctx.people is not stubbed')
+})

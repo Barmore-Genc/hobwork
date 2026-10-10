@@ -18,6 +18,7 @@ import { getProject, getProjectOrRenamed, ProjectError, renamedProject, type Pro
 import type { ProjectData } from '../data/project-data.ts'
 import { readProjectConfig, type ProjectConfig } from '../runtime/config.ts'
 import { nextRun, parseCron } from '../runtime/cron.ts'
+import { PERSON_TIME_ZONE } from '../runtime/scheduler.ts'
 import {
   branchFilter,
   getInvocation,
@@ -140,9 +141,11 @@ export function invocationView(invocation: InvocationRecord, full: boolean) {
   return { ...rest, error: error && error.length > LIST_ERROR_CHARS ? `${error.slice(0, LIST_ERROR_CHARS)}…` : error }
 }
 
-function nextCronRun(schedule: string): string | null {
+// A per-person cron has no single next run.
+function nextCronRun(schedule: string, timeZone: string | undefined): string | null {
+  if (timeZone === PERSON_TIME_ZONE) return null
   try {
-    return nextRun(parseCron(schedule), new Date())?.toISOString() ?? null
+    return nextRun(parseCron(schedule), new Date(), timeZone)?.toISOString() ?? null
   } catch {
     return null
   }
@@ -201,10 +204,11 @@ export function createApiRoutes(options: {
     }
     const entryPoints = config && {
       routes: Object.keys(config.routes).map((key) => ({ key, lastRun: lastRun('route', key) })),
-      crons: Object.entries(config.crons).map(([name, { schedule }]) => ({
+      crons: Object.entries(config.crons).map(([name, { schedule, timeZone }]) => ({
         name,
         schedule,
-        nextRun: nextCronRun(schedule),
+        timeZone: timeZone ?? null,
+        nextRun: nextCronRun(schedule, timeZone),
         lastRun: lastRun('cron', name),
       })),
       webhooks: Object.keys(config.webhooks).map((name) => ({

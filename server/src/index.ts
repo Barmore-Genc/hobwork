@@ -14,6 +14,7 @@ import { branchFileReader } from './files.ts'
 import { createDevices } from './devices/devices.ts'
 import { loadPushKeys } from './devices/push/keys.ts'
 import { createRelayPush } from './devices/push/relay.ts'
+import { listPeople } from './people.ts'
 import { pipelineVmBackend, workspaceVmBackend, type GuestVmOptions } from './guest-vm.ts'
 import { createHomeAssistant } from './homeassistant/client.ts'
 import { backfillHaEvents, backfillHaServices } from './homeassistant/services.ts'
@@ -110,6 +111,7 @@ const runtime = createRuntime(host, {
   triggers,
   homeAssistant,
   devices,
+  people: () => listPeople(host.db, config.allowlist),
   data,
   secrets,
   ai,

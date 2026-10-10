@@ -57,3 +57,34 @@ test('waits through delays longer than one timer allows', async () => {
   await vi.advanceTimersByTimeAsync(300 * 24 * 60 * 60_000)
   expect(fired).toEqual(['filament/yearly'])
 })
+
+test('runs a cron in its time zone, and once per person in theirs', async () => {
+  vi.setSystemTime(new Date('2026-10-09T04:58:00Z'))
+  const runs: string[] = []
+  let people = [
+    { id: 1, timeZone: 'Europe/Istanbul' },
+    { id: 2, timeZone: 'Europe/London' },
+  ]
+  const zoned = createScheduler((project, cron, person) => runs.push(`${project}/${cron}/${person ?? '-'}`), { people: () => people })
+  expect(
+    zoned.set('filament', {
+      istanbul: { schedule: '0 8 * * *', timeZone: 'Europe/Istanbul' },
+      each: { schedule: '0 8 * * *', timeZone: 'person' },
+      bad: { schedule: '0 8 * * *', timeZone: 'Mars/Olympus' },
+    }),
+  ).toEqual(['cron "bad": "Mars/Olympus" is not a known time zone'])
+  expect(zoned.list('filament')).toEqual([
+    { name: 'istanbul', schedule: '0 8 * * *', timeZone: 'Europe/Istanbul', next: new Date('2026-10-09T05:00:00Z') },
+    { name: 'each', schedule: '0 8 * * *', timeZone: 'person', next: new Date('2026-10-09T05:00:00Z') },
+  ])
+  await vi.advanceTimersByTimeAsync(2 * 60_000)
+  expect(runs.sort()).toEqual(['filament/each/1', 'filament/istanbul/-'])
+  // 08:00 in London is 07:00 UTC.
+  await vi.advanceTimersByTimeAsync(2 * 60 * 60_000)
+  expect(runs).toContain('filament/each/2')
+
+  people = [{ id: 1, timeZone: 'Asia/Tokyo' }]
+  zoned.refreshPeople()
+  expect(zoned.list('filament').find((c) => c.name === 'each')?.next).toEqual(new Date('2026-10-09T23:00:00Z'))
+  zoned.stop()
+})

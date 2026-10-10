@@ -31,6 +31,13 @@ import Testing
         return (connection, factory.last!)
     }
 
+    @Test func saysHelloAgainOnAnOpenConnection() async throws {
+        let (connection, socket) = try await connected()
+        connection.sayHello()
+        try await eventually("hello sent again") { socket.sent == [.hello(hello), .hello(hello)] }
+        connection.stop()
+    }
+
     @Test func sendsHelloWithTheDeviceToken() async throws {
         let (connection, socket) = try await connected()
         #expect(socket.sent == [.hello(hello)])

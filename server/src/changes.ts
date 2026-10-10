@@ -16,6 +16,8 @@ export type Change =
   // Agents, their keys, OAuth connections and SSH keys.
   | { kind: 'agents' }
   | { kind: 'devices' }
+  // People who may sign in and their time zones.
+  | { kind: 'people' }
   | { kind: 'trash' }
   | { kind: 'backups' }
 

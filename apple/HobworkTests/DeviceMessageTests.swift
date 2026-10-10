@@ -29,6 +29,12 @@ struct DeviceMessageTests {
         #expect(try DeviceMessage.decode(#"{"type":"push","relay":null}"#) == .push(nil))
     }
 
+    @Test func encodesTheTimeZone() throws {
+        let hello = Hello(appVersion: "1", platform: "ios", capabilities: [], push: nil, timeZone: "Europe/Istanbul")
+        #expect(try json(.hello(hello))["timeZone"] == .string("Europe/Istanbul"))
+        #expect(try json(.hello(Hello(appVersion: "1", platform: "ios", capabilities: [])))["timeZone"] == nil)
+    }
+
     @Test func leavesOutPushWithoutAGrant() throws {
         let hello = Hello(appVersion: "1", platform: "ios", capabilities: [], push: nil)
         #expect(try json(.hello(hello))["push"] == nil)

@@ -53,6 +53,9 @@ export function redeemAppCode(
   return { token, expiresAt: String(session.expires_at) }
 }
 
+// `deviceId` is set when the Hobwork session is a paired app's web view.
+export type AppSession = { user: User; deviceId: number | null }
+
 // The user of an app session, only for the scope it was made for and only
 // while its Hobwork session lasts and the user is still allowed.
 export function findAppSession(
@@ -61,13 +64,14 @@ export function findAppSession(
   token: string,
   scope: AppScope,
   now = Date.now(),
-): User | undefined {
+): AppSession | undefined {
   const row = db
     .prepare(
-      `SELECT s.user_id FROM app_sessions a JOIN sessions s ON s.id = a.session_id
+      `SELECT s.user_id, s.device_id FROM app_sessions a JOIN sessions s ON s.id = a.session_id
        WHERE a.token_hash = ? AND a.project_id = ? AND a.branch IS ? AND s.expires_at > ?`,
     )
     .get(hash(token), scope.projectId, scope.branch, new Date(now).toISOString())
   const user = row && getUser(db, Number(row.user_id))
-  return user && isAllowed(db, allowlist, user) ? user : undefined
+  if (!user || !isAllowed(db, allowlist, user)) return undefined
+  return { user, deviceId: row.device_id === null ? null : Number(row.device_id) }
 }

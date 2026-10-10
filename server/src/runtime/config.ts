@@ -6,6 +6,7 @@ import type { TriggerEntry } from '../homeassistant/triggers.ts'
 import { ProjectError } from '../projects.ts'
 import type { ResourceRequest } from '../sandbox/budget.ts'
 import type { CspSources } from './csp.ts'
+import type { CronEntry } from './scheduler.ts'
 import type { StaticMount } from './files.ts'
 import type { InvocationKind } from './logs.ts'
 
@@ -13,7 +14,7 @@ export type Entry = { handler: string }
 
 export type ProjectConfig = {
   routes: Record<string, Entry>
-  crons: Record<string, Entry & { schedule: string }>
+  crons: Record<string, Entry & CronEntry>
   webhooks: Record<string, Entry>
   triggers: Record<string, Entry & TriggerEntry>
   egress: string[]

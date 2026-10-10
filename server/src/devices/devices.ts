@@ -9,9 +9,11 @@ import type {
   NotificationActionEvent,
   SentNotification,
 } from '../../../packages/sdk/src/devices.ts'
+import type { Person } from '../../../packages/sdk/src/people.ts'
 import { isAllowed } from '../auth/users.ts'
 import type { Allowlist } from '../config.ts'
 import type { Host } from '../host.ts'
+import { getPerson, listPeople } from '../people.ts'
 import { getProject, listProjects } from '../projects.ts'
 import { appendLog } from '../runtime/logs.ts'
 import { MAX_PAYLOAD_BYTES, PayloadTooLarge, pushSize, type PushInfo, type PushMessage, type PushSender } from './push/relay.ts'
@@ -274,6 +276,8 @@ function short(value: unknown): string {
   return text.length > MAX_LOGGED_RESULT ? `${text.slice(0, MAX_LOGGED_RESULT)}...` : text
 }
 
+const EVERYONE: Allowlist = { emails: [], subjects: [], everyone: true }
+
 export type Devices = ReturnType<typeof createDevices>
 
 export function createDevices(options: {
@@ -328,14 +332,25 @@ export function createDevices(options: {
       name: device.name,
       platform: device.platform,
       owner: device.owner,
+      ownerId: device.userId,
       capabilities: device.capabilities,
       connected: registry.connected(device.id),
       lastSeenAt: device.lastSeenAt,
+      lastActiveAt: device.lastActiveAt,
       appVersion: device.appVersion,
       push: Boolean(relay) && device.push !== null,
       createdAt: device.createdAt,
       ownerAllowed: ownerAllowed(device),
     }
+  }
+
+  function info(): DeviceInfo[] {
+    return listDevices(host.db)
+      .filter(reachable)
+      .map((d) => {
+        const { name, platform, owner, ownerId, capabilities, connected, lastSeenAt, lastActiveAt } = summary(d)
+        return { name, platform, owner, ownerId, capabilities, connected, lastSeenAt, lastActiveAt }
+      })
   }
 
   function projectLog(project: string, level: 'info' | 'warn', message: string) {
@@ -824,13 +839,15 @@ export function createDevices(options: {
     pushMessage: (): HostMessage => (relay ? { type: 'push', ...relay.info } : { type: 'push', relay: null }),
     ownerAllowed,
     list: (): DeviceSummary[] => listDevices(host.db).map(summary),
-    info: (): DeviceInfo[] =>
-      listDevices(host.db)
-        .filter(reachable)
-        .map((d) => {
-          const { name, platform, owner, capabilities, connected, lastSeenAt } = summary(d)
-          return { name, platform, owner, capabilities, connected, lastSeenAt }
-        }),
+    info,
+    people: (): Person[] => listPeople(host.db, options.allowlist ?? EVERYONE),
+    // Most recently used first. Undefined when there is no such person.
+    personDevices(id: number): DeviceInfo[] | undefined {
+      if (!getPerson(host.db, options.allowlist ?? EVERYONE, id)) return undefined
+      return info()
+        .filter((d) => d.ownerId === id)
+        .sort((a, b) => (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? ''))
+    },
     sendNotification,
     callCommand,
     handleResult,

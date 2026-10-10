@@ -15,6 +15,8 @@ struct Hello: Codable, Equatable, Sendable {
     var capabilities: [String]
     /// Left out while there is no grant.
     var push: HostPushGrant?
+    /// IANA identifier. Hobs use it for the owner's local time unless they chose one on the host.
+    var timeZone: String?
 }
 
 struct DeviceCall: Codable, Equatable, Sendable {

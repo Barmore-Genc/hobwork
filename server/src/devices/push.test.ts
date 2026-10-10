@@ -181,7 +181,18 @@ test('the internal endpoint sends for deployed handlers and refuses workspaces a
   const list = await call('read', { action: 'list' })
   expect(await list.json()).toEqual({
     ok: true,
-    result: [{ name: 'kaan-iphone', platform: 'ios', owner: 'Kaan', capabilities: ['notifications'], connected: false, lastSeenAt: expect.any(String) }],
+    result: [
+      {
+        name: 'kaan-iphone',
+        platform: 'ios',
+        owner: 'Kaan',
+        ownerId: expect.any(Number),
+        capabilities: ['notifications'],
+        connected: false,
+        lastSeenAt: expect.any(String),
+        lastActiveAt: null,
+      },
+    ],
   })
 
   const send = { action: 'call', device: 'kaan-iphone', capability: 'notifications', method: 'send', args: { title: 'Hi' }, invocation: 7 }

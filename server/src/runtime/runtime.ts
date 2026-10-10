@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import type { Caller, Person, PersonCronPayload } from '../../../packages/sdk/src/people.ts'
 import type {
   InvokeRequest,
   InvokeResult,
@@ -16,7 +17,7 @@ import {
   RUNNER_TOKEN_FILE,
 } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
-import { publishChange } from '../changes.ts'
+import { onChange, publishChange } from '../changes.ts'
 import { dbResponse } from '../data/internal.ts'
 import { readMigrationsFromGit } from '../data/migrations.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -100,6 +101,8 @@ export type RuntimeOptions = {
   homeAssistant?: HomeAssistant
   // Answers ctx.device and ctx.devices calls from handlers.
   devices?: Devices
+  // People for crons that run in each person's time zone.
+  people?: () => Person[]
   // Project DBs for handlers (ctx.db) and migrations on deploy.
   data?: ProjectData
   // Secrets handed to runtime VMs as placeholders. Their hosts join the egress allowlist.
@@ -125,6 +128,7 @@ export type InvokeInput = {
   request?: SerializedRequest
   params?: Record<string, string>
   payload?: unknown
+  caller?: Caller
 }
 
 export type InvokeOutcome = {
@@ -199,10 +203,21 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
   const projects = new Map<string, ProjectState>()
   // Projects being deleted. Nothing may start for them.
   const removing = new Set<string>()
-  const scheduler = createScheduler((project, name) => {
-    void invoke(project, { kind: 'cron', name, manual: false }).catch((err: unknown) =>
-      event(project, 'error', 'crash', `Cron "${name}" could not run: ${errorMessage(err)}`),
-    )
+  const people = options.people ?? (() => [])
+  const scheduler = createScheduler(
+    (project, name, personId) => {
+      const person = personId === undefined ? undefined : people().find((p) => p.id === personId)
+      // Taken off the allowlist since the cron was scheduled.
+      if (personId !== undefined && !person) return
+      const payload: PersonCronPayload | undefined = person && { person }
+      void invoke(project, { kind: 'cron', name, manual: false, ...(payload ? { payload } : {}) }).catch((err: unknown) =>
+        event(project, 'error', 'crash', `Cron "${name}" could not run: ${errorMessage(err)}`),
+      )
+    },
+    { people },
+  )
+  const stopPeopleUpdates = onChange(host.db, (change) => {
+    if (change.kind === 'people') scheduler.refreshPeople()
   })
   let pruneTimer: NodeJS.Timeout | undefined
 
@@ -742,6 +757,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         request: input.request,
         params: input.params,
         payload: input.payload,
+        caller: input.caller,
       })
       timedOut = !result.ok && result.error.name === 'TimeoutError'
     } catch (err) {
@@ -986,6 +1002,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
       clearInterval(pruneTimer)
       for (const timer of pendingTriggerTimers) clearTimeout(timer)
       pendingTriggerTimers.clear()
+      stopPeopleUpdates()
       scheduler.stop()
       await Promise.all(
         [...projects.values()].flatMap((s) => (s.instance ? [retire(s.project, s.instance, 'host shutting down')] : [])),

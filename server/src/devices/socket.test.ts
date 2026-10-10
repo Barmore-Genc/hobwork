@@ -10,6 +10,7 @@ import { signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 import { createDevices, type Devices } from './devices.ts'
 import { CLOSE_OWNER_NOT_ALLOWED, CLOSE_PROTOCOL_ERROR, CLOSE_REVOKED, CLOSE_TIMEOUT, createDeviceRegistry } from './registry.ts'
 import { createDeviceSockets, type DeviceSockets } from './socket.ts'
+import { setTimeZone, timeZoneSetting } from '../people.ts'
 import { getDevice } from './store.ts'
 import { pairDevice } from './test-devices.ts'
 
@@ -153,6 +154,35 @@ test('hello registers capabilities, push grant and connection, and the host answ
 
   client.ws.close()
   await until(() => !devices.list()[0]!.connected)
+})
+
+test('hello reports the time zone and counts as use; background events do not', async () => {
+  const device = await pairDevice(app.base, cookie)
+  const userId = getDevice(host.db, device.deviceId)!.userId
+  const client = await connect(device.token)
+  await client.hello({ timeZone: 'Europe/Istanbul' })
+  expect(timeZoneSetting(host.db, userId)).toEqual({ timeZone: 'Europe/Istanbul', manual: false })
+  const active = getDevice(host.db, device.deviceId)!.lastActiveAt
+  expect(active).toEqual(expect.any(String))
+
+  // Health samples arrive in the background, a tag scan needs the person.
+  host.db.prepare('UPDATE devices SET last_active_at = NULL WHERE id = ?').run(device.deviceId)
+  client.send({ type: 'event', capability: 'health', name: 'samples', data: { type: 'steps', samples: [] } })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(getDevice(host.db, device.deviceId)!.lastActiveAt).toBeNull()
+  client.send({ type: 'event', capability: 'nfc', name: 'scanned', data: { url: 'https://example.com' } })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(getDevice(host.db, device.deviceId)!.lastActiveAt).toEqual(expect.any(String))
+
+  // A zone the person chose stays, and unknown zones are ignored.
+  setTimeZone(host.db, userId, 'Asia/Tokyo')
+  client.send({ type: 'hello', appVersion: '1.0 (1)', platform: 'ios', capabilities: [], timeZone: 'Europe/Berlin' })
+  client.send({ type: 'hello', appVersion: '1.0 (1)', platform: 'ios', capabilities: [], timeZone: 'Mars/Olympus' })
+  client.send({ type: 'ping' })
+  await client.next((m) => m.type === 'pong')
+  expect(timeZoneSetting(host.db, userId)).toEqual({ timeZone: 'Asia/Tokyo', manual: true })
 })
 
 test('notifications go over the socket when the app is connected', async () => {

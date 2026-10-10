@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
+import { isTimeZone } from '../../../packages/sdk/src/time.ts'
 
 const schemaPath = resolve(import.meta.dirname, '../../../packages/sdk/hobwork.schema.json')
 
@@ -33,9 +34,17 @@ export function validateHobworkJson(raw: string | undefined): string[] {
     return [`hobwork.json cannot be parsed: ${(err as Error).message}`]
   }
   const validate = validator()
-  if (validate(config)) return []
+  if (validate(config)) return timeZoneProblems(config)
   // An "if" error only repeats the error inside its "then".
   return (validate.errors ?? []).filter((e) => e.keyword !== 'if').map(describe)
+}
+
+// The schema only checks the shape of a zone name; this host's Intl knows which exist.
+function timeZoneProblems(config: unknown): string[] {
+  const crons = (config as { crons?: Record<string, { timeZone?: string }> }).crons ?? {}
+  return Object.entries(crons)
+    .filter(([, cron]) => cron.timeZone !== undefined && cron.timeZone !== 'person' && !isTimeZone(cron.timeZone))
+    .map(([name, cron]) => `/crons/${name}/timeZone: "${cron.timeZone}" is not a known time zone, such as "Europe/Istanbul"`)
 }
 
 export const VITE_CONFIG = `import { hobworkViteConfig } from '@hobwork/sdk/vite'

@@ -6,6 +6,8 @@ export type DeviceInfo = {
   platform: DevicePlatform
   // Name of the person who paired it.
   owner: string
+  // ID of that person (Person.id).
+  ownerId: number
   // What the app on it can do and the person allowed: "notifications",
   // "alarms", "screenTime", "focus", "nfc", "health". Calls to others fail
   // with "unsupported".
@@ -13,7 +15,11 @@ export type DeviceInfo = {
   // Whether the app has a live connection to Hobwork right now. Notifications
   // reach devices that are not connected through push.
   connected: boolean
+  // Last sign of the app, including pings of a connection open in the background.
   lastSeenAt: string | null
+  // When the person last used it: the app came to the foreground, sent an
+  // event (a notification action, a tag scan), or its web view called a hob.
+  lastActiveAt: string | null
 }
 
 export type NotificationAction = {

@@ -28,6 +28,15 @@ test('accepts static mounts', () => {
   expect(validate(config), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts cron time zones', () => {
+  const crons = {
+    istanbul: { schedule: '0 8 * * *', timeZone: 'Europe/Istanbul', handler: 'src/a.ts' },
+    each: { schedule: '0 8 * * *', timeZone: 'person', handler: 'src/a.ts' },
+    utc: { schedule: '0 8 * * *', timeZone: 'UTC', handler: 'src/a.ts' },
+  }
+  expect(validate({ crons }), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -36,6 +45,7 @@ test.each([
   ['unknown top-level key', { ...example, cron: {} }],
   ['cron without schedule', { crons: { a: { handler: 'src/a.ts' } } }],
   ['malformed cron schedule', { crons: { a: { schedule: 'daily', handler: 'src/a.ts' } } }],
+  ['cron time zone with spaces', { crons: { a: { schedule: '0 8 * * *', timeZone: 'Europe/New York', handler: 'src/a.ts' } } }],
   ['webhook without handler', { webhooks: { a: {} } }],
   ['route key without method', { routes: { '/spools': { handler: 'src/a.ts' } } }],
   ['trigger without homeassistant or device', { triggers: { a: { handler: 'src/a.ts' } } }],

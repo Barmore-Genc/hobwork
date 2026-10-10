@@ -106,7 +106,7 @@ final class AppModel {
                 Task { await scanTag() }
             }
         #endif
-        if connection?.state != .connected { connection?.reconnect() }
+        if connection?.state == .connected { connection?.sayHello() } else { connection?.reconnect() }
         push.refresh()
         web.checkSession()
         Task { await refreshCapabilities() }
@@ -263,7 +263,8 @@ final class AppModel {
             appVersion: Self.appVersion,
             platform: Hello.platform,
             capabilities: capabilities.reported,
-            push: pairing.flatMap { push.hostGrant(for: $0.host) }
+            push: pairing.flatMap { push.hostGrant(for: $0.host) },
+            timeZone: TimeZone.current.identifier
         )
     }
 

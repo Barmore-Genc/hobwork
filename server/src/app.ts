@@ -7,6 +7,7 @@ import { haServicesRoutes } from './api/ha-services.ts'
 import { allActivityRoutes } from './api/all-activity.ts'
 import { homeAssistantSettingsRoutes } from './api/homeassistant-settings.ts'
 import { projectDeletionRoutes } from './api/project-deletion.ts'
+import { peopleRoutes } from './api/people.ts'
 import { projectLifecycleRoutes } from './api/project-lifecycle.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
@@ -154,6 +155,7 @@ export function createApp(
     ...aiSettingsRoutes({ host, ai: options.ai, secrets: options.secrets }),
     ...haServicesRoutes({ host }),
     ...deviceUserRoutes({ db: host.db, devices, publicUrl: web.publicUrl }),
+    ...peopleRoutes({ db: host.db }),
     ...projectDeletionRoutes({
       host,
       workspaces,

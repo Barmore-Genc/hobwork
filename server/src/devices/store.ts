@@ -35,6 +35,7 @@ export type Device = {
   push: Push | null
   createdAt: string
   lastSeenAt: string | null
+  lastActiveAt: string | null
 }
 
 // Names scripts use: ctx.device("kaan-iphone").
@@ -102,6 +103,7 @@ function toDevice(row: Record<string, unknown>): Device {
     push: row.push_grant === null ? null : { grant: String(row.push_grant), key: String(row.push_key) },
     createdAt: String(row.created_at),
     lastSeenAt: row.last_seen_at === null ? null : String(row.last_seen_at),
+    lastActiveAt: row.last_active_at === null ? null : String(row.last_active_at),
   }
 }
 
@@ -215,6 +217,26 @@ export function recordHello(
 
 export function touchDevice(db: DatabaseSync, id: number, now = Date.now()) {
   db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(iso(now), id)
+}
+
+// last_active_at is written at most this often, since every hob API request
+// from the app's web view counts.
+export const ACTIVE_INTERVAL_MS = 10_000
+
+// App events that mean someone has the device in hand. Health samples and
+// Focus changes arrive without that.
+const USER_EVENTS = new Set(['notifications/action', 'nfc/scanned'])
+
+export function isUserEvent(capability: unknown, name: unknown): boolean {
+  return USER_EVENTS.has(`${String(capability)}/${String(name)}`)
+}
+
+// The person used the device. Counts as seen too.
+export function markDeviceActive(db: DatabaseSync, id: number, now = Date.now()) {
+  db.prepare(
+    `UPDATE devices SET last_active_at = ?1, last_seen_at = ?1
+     WHERE id = ?2 AND revoked_at IS NULL AND (last_active_at IS NULL OR last_active_at <= ?3)`,
+  ).run(iso(now), id, iso(now - ACTIVE_INTERVAL_MS))
 }
 
 // null turns push off for the device, for example when the relay says the

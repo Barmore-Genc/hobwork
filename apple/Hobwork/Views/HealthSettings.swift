@@ -4,6 +4,8 @@ import SwiftUI
 struct HealthSection: View {
     let model: AppModel
 
+    @Environment(\.openURL) private var openURL
+
     @State private var connected = false
     @State private var needsRequest = false
     @State private var error: String?
@@ -18,6 +20,9 @@ struct HealthSection: View {
                     Button("Connect Health") { Task { await connect() } }
                 }
                 if connected {
+                    Button("Change Access") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
                     Button("Disconnect", role: .destructive) { Task { await disconnect() } }
                 }
                 if let error {
@@ -29,7 +34,7 @@ struct HealthSection: View {
         } header: {
             Text("Health")
         } footer: {
-            Text("Hobs can read the Health data you allow and get new samples as they arrive. To change what Hobwork may read, open the Health app, tap your picture, then Apps, then Hobwork. Health data can't be read while this \(DeviceModel.name) is locked.")
+            Text("Hobs can read the Health data you allow and get new samples as they arrive. Health data can't be read while this \(DeviceModel.name) is locked.")
         }
         .task { await refresh() }
     }

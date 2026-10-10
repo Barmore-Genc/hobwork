@@ -13,6 +13,7 @@ export type { FileInfo, FilesErrorCode } from './runner/protocol.ts'
 export { HomeAssistantError } from './runner/ha-client.ts'
 export * from './openrouter.ts'
 export { vector } from './vector.ts'
+export type { UploadEvent, UploadedFile } from './uploads.ts'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 

@@ -279,7 +279,7 @@ test('workspace VMs get secrets, their hosts, the branch DB and blocked egress l
 
     options.onEgressBlocked?.({ hostname: 'tracker.example', ip: '', port: 443 })
     const blocked = queryLogs(host, { project: 'filament', limit: 10 }).find((line) => line.event === 'egress-blocked')
-    expect(blocked).toMatchObject({ event: 'egress-blocked', message: expect.stringContaining('Workspace spools: blocked') })
+    expect(blocked).toMatchObject({ event: 'egress-blocked', message: expect.stringContaining('Workspace spools: Blocked outgoing request to tracker.example:443') })
 
     expect(await vm.isStale?.()).toBe(false)
     secrets.create({ name: 'Other', value: 'o', hosts: ['o.example'], assign: { project: 'filament', envName: 'OTHER' } }, { kind: 'host' })

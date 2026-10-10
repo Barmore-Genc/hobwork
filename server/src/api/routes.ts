@@ -32,6 +32,7 @@ import {
   type LogFilter,
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
+import { rotateUploadToken, uploadFilesUrl, uploadTokenCreatedAt } from '../runtime/uploads.ts'
 import { rotateWebhookToken, webhookTokenCreatedAt, webhookUrl } from '../runtime/webhooks.ts'
 import { describeEgress, type PrivateEgressRule } from '../sandbox/egress.ts'
 import { fileStats, sendFile } from '../static.ts'
@@ -222,7 +223,13 @@ export function createApiRoutes(options: {
         name,
         homeassistant: entry.homeassistant ?? null,
         device: entry.device ?? null,
+        upload: entry.upload ?? null,
         lastRun: lastRun('trigger', name),
+      })),
+      uploads: Object.entries(config.uploads).map(([name, entry]) => ({
+        name,
+        ...entry,
+        tokenCreatedAt: uploadTokenCreatedAt(host, project.name, name) ?? null,
       })),
     }
     const secretHosts = options.secrets?.hosts(project.name) ?? []
@@ -481,6 +488,21 @@ export function createApiRoutes(options: {
         if (!origin) throw new HttpError(409, `${project.name} has no app address, so it has no webhook URL`)
         const token = rotateWebhookToken(host, project.name, name)
         json(res, 200, { url: webhookUrl(origin, name, token) })
+      },
+    },
+    {
+      method: 'POST',
+      pattern: /^\/api\/projects\/([^/]+)\/uploads\/([^/]+)\/token$/,
+      handle: async ({ res, params }) => {
+        const project = requireProjectByName(host, params[0]!)
+        const name = params[1]!
+        const config = await deployedConfig(project.name)
+        const entry = config?.uploads[name]
+        if (!entry) throw new HttpError(404, `${project.name} has no upload called "${name}"`)
+        const origin = options.appOrigin?.({ project: project.name })
+        if (!origin) throw new HttpError(409, `${project.name} has no app address, so it takes no uploads`)
+        const token = rotateUploadToken(host, project.name, name)
+        json(res, 200, { token, url: uploadFilesUrl(origin, entry.prefix) })
       },
     },
     {

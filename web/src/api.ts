@@ -66,8 +66,12 @@ export type EntryPoints = {
     name: string
     homeassistant: Record<string, unknown> | null
     device: { capability: string; event: string; device?: string; url?: string } | null
+    // The upload whose files run the trigger.
+    upload: string | null
     lastRun: LastRun
   }[]
+  // Folders of the hob's files that the app and scripts with a token can upload to.
+  uploads: { name: string; prefix: string; maxBytes: number; types: string[]; tokenCreatedAt: string | null }[]
 }
 
 export type DbStatus = {
@@ -530,6 +534,11 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/logs${query(options)}`,
       undefined,
       signal,
+    ),
+  rotateUploadToken: (project: string, name: string) =>
+    request<{ token: string; url: string }>(
+      'POST',
+      `/api/projects/${encodeURIComponent(project)}/uploads/${encodeURIComponent(name)}/token`,
     ),
   rotateWebhook: (project: string, name: string) =>
     request<{ url: string }>(

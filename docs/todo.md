@@ -73,6 +73,7 @@ A custom HA integration (installed through HACS) that exposes Hobwork handlers a
 
 - Streaming responses from the OpenRouter helper. Gondolin now streams answers from its `onRequest` hook (patched), but the AI gateway reads the whole answer before returning it, to count usage. It has to pass the stream on through a transform that watches for the last server-sent event with `usage`, and record the cost when the stream ends (or is canceled, with the estimate from what was seen).
 - A spend limit across all hobs, next to the per-hob ones.
+- Check the vision model default (`google/gemini-3.1-flash-lite`) with an image request against OpenRouter. Only the gateway's model choice is tested.
 - Decisions on a chat model (decision models off) answer `noul` as 0 or 1 without probabilities. Token log probabilities from providers that return them would give real ones.
 - Check `reasoning: { enabled: false }` against OpenRouter with DeepSeek V4.1 Flash, which reasons by default, for decisions on a chat model.
 - Spend limits can be passed by one request, since cost is known only afterwards. Estimating a request's cost from `max_tokens` and the model's prices before sending it would close that gap.
@@ -148,6 +149,17 @@ Left from `ctx.caller`, `ctx.people()` and per-person time zones (People and tim
 - Requests of the app's web view to the Hobwork origin (the web UI, not a hob) do not count as device activity; only hob app origins, `hello` and user events do.
 - The Devices section in Settings shows when a device was last seen, not when it was last used.
 - The project page shows no next run for a per-person cron.
+
+## Uploads
+
+- `files.upload` resumes within one call. Resuming after a page reload (keeping the upload ID with the file's name, size and modification time in the web view's storage) is not built.
+- Progress is reported per 8 MB part. Finer progress needs `XMLHttpRequest`, since `fetch` has no upload progress.
+- Upload tokens work for the deployed version only. Branch previews take uploads from the app only.
+- A token upload has no person. Tokens could carry one, so triggers know who dropped the file.
+
+## Egress
+
+- `get_hob` lists `egress` as written. It does not say which private targets the host allows, which the web UI shows; agents learn it from the `egress-blocked` log line.
 
 ## Share links
 

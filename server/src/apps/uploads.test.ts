@@ -12,7 +12,7 @@ import { fakeRuntimeSandboxes } from '../runtime/test-sandbox.ts'
 import { rotateUploadToken, UPLOAD_EXPIRY_MS } from '../runtime/uploads.ts'
 import { createTestHost } from '../test-host.ts'
 import { fakePackageJson, seedMain } from '../test-project.ts'
-import { appSessionCookie, sendTo, signedIn, startTestApp } from '../test-web.ts'
+import { appSessionCookie, sendTo, signedIn, startTestApp, writeHeaders } from '../test-web.ts'
 import { recordVersion } from '../versions.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -167,4 +167,21 @@ test('another person cannot continue an upload, and housekeeping drops unfinishe
   const cancelled = JSON.parse((await send(`${FILAMENT}/_hobwork/uploads`, { method: 'POST', headers: json, body: JSON.stringify({ path: 'inbox/b.3mf', size: 10 }) })).body)
   expect((await send(`${FILAMENT}/_hobwork/uploads/${cancelled.id}`, { method: 'DELETE', headers })).status).toBe(204)
   expect(readdirSync(join(temp, 'files.tmp'))).toEqual([])
+})
+
+test('people create upload tokens on the hob page, and see when', async () => {
+  const { cookie } = signedIn(host)
+  const created = await fetch(`${app.base}/api/projects/filament/uploads/inbox/token`, { method: 'POST', headers: writeHeaders(cookie) })
+  expect(created.status).toBe(200)
+  const { token, url } = (await created.json()) as { token: string; url: string }
+  expect(url).toBe(`${FILAMENT}/_hobwork/files/inbox/`)
+  const put = await send(`${url}from-mac.3mf`, { method: 'PUT', headers: { authorization: `Bearer ${token}` }, body: 'model' })
+  expect(put.status, put.body).toBe(201)
+  const project = (await (await fetch(`${app.base}/api/projects/filament`, { headers: { cookie } })).json()) as { entryPoints: { uploads: unknown[] } }
+  expect(project.entryPoints.uploads).toEqual([
+    { name: 'inbox', prefix: 'inbox/', maxBytes: 64 * 1024 * 1024, types: ['.3mf', 'image/*'], tokenCreatedAt: expect.any(String) },
+    { name: 'small', prefix: 'inbox/small/', maxBytes: 10, types: [], tokenCreatedAt: null },
+  ])
+  const missing = await fetch(`${app.base}/api/projects/filament/uploads/nope/token`, { method: 'POST', headers: writeHeaders(cookie) })
+  expect(missing.status).toBe(404)
 })

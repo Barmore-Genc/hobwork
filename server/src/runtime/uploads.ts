@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import { filePathProblem } from '../../../packages/sdk/src/runner/protocol.ts'
 import {
   UPLOAD_CHUNK_BYTES,
+  UPLOAD_FILES_PATH,
   UPLOAD_TOKEN_PREFIX,
   uploadTypeAllowed,
   type UploadedFile,
@@ -52,6 +53,11 @@ export function rotateUploadToken(host: Host, project: string, name: string): st
 export function uploadOfToken(host: Host, projectId: number, token: string): string | undefined {
   const row = host.db.prepare('SELECT name FROM upload_tokens WHERE project_id = ? AND token_hash = ?').get(projectId, hashToken(token))
   return row ? String(row.name) : undefined
+}
+
+// Where a script PUTs files of an upload: this followed by the rest of the path.
+export function uploadFilesUrl(appOrigin: string, prefix: string): string {
+  return `${appOrigin}${UPLOAD_FILES_PATH}/${prefix}`
 }
 
 export function uploadTokenCreatedAt(host: Host, project: string, name: string): string | undefined {

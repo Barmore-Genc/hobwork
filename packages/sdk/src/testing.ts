@@ -110,7 +110,6 @@ function unstubbedHa(): HomeAssistant {
 const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
   notifications: ['send'],
   alarms: ['set', 'timer', 'reschedule', 'cancel', 'list'],
-  screenTime: ['sets', 'block', 'unblock', 'schedule', 'removeSchedule', 'limit', 'removeLimit', 'status'],
   focus: ['status'],
   nfc: ['write', 'read'],
   health: ['query'],

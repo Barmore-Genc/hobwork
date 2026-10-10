@@ -7,9 +7,6 @@ enum BackgroundCapabilities {
     #if os(iOS)
         static func register(on runner: CommandRunner, alarms: AlarmKitScheduler = AlarmKitScheduler(), health: HealthKitReader = HealthKitReader()) {
             runner.register(AlarmsCapability(scheduler: alarms), for: AlarmsCapability.capability)
-            if AppGroup.hasFamilyControls {
-                runner.register(ScreenTimeCapability(), for: ScreenTimeCapability.capability)
-            }
             runner.register(FocusCapability(), for: FocusCapability.capability)
             runner.register(HealthCapability(reader: health), for: HealthCapability.capability)
         }

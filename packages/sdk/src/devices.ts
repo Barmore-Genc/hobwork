@@ -12,9 +12,9 @@ export type DeviceInfo = {
   // ID of that person (Person.id).
   ownerId: number
   // What the app on it can do and the person allowed: "notifications",
-  // "alarms", "screenTime", "focus", "nfc", "health", "liveActivities" (the
-  // person allows Live Activities for Hobwork), "widgets". Calls to others
-  // fail with "unsupported".
+  // "alarms", "focus", "nfc", "health", "liveActivities" (the person allows
+  // Live Activities for Hobwork), "widgets". Calls to others fail with
+  // "unsupported".
   capabilities: string[]
   // Whether the app has a live connection to Hobwork right now. Notifications
   // reach devices that are not connected through push.
@@ -213,37 +213,6 @@ export interface Alarms {
   list(): Promise<Alarm[]>
 }
 
-// A named group of apps, categories and websites the person picked in the
-// app's settings. Handlers only see counts.
-export type AppSet = { name: string; apps: number; categories: number; sites: number }
-
-export type ScreenTimeSchedule = { name: string; set: string; start: string; end: string; days?: Weekday[] }
-export type ScreenTimeLimit = { name: string; set: string; minutes: number; days?: Weekday[] }
-
-export type ScreenTimeStatus = {
-  blocked: { set: string; until?: string }[]
-  schedules: ScreenTimeSchedule[]
-  limits: (ScreenTimeLimit & { reached: boolean })[]
-}
-
-// Screen Time shields for app sets, by the set's name (e.g. "social").
-// Schedules, limits and timed blocks run on the device without the app.
-// App error codes: "unknown_set", "interval_too_short".
-export interface ScreenTime {
-  sets(): Promise<AppSet[]>
-  // Blocks the set now, until the ISO date-time until, or until unblock.
-  block(block: { set: string; until?: string }): Promise<Record<string, never>>
-  unblock(block: { set: string }): Promise<Record<string, never>>
-  // Blocks the set from start to end ("HH:MM", local time) on days, or every
-  // day. The same name replaces a schedule.
-  schedule(schedule: ScreenTimeSchedule): Promise<Record<string, never>>
-  removeSchedule(schedule: { name: string }): Promise<Record<string, never>>
-  // Blocks the set until midnight once it was used for minutes that day.
-  limit(limit: ScreenTimeLimit): Promise<Record<string, never>>
-  removeLimit(limit: { name: string }): Promise<Record<string, never>>
-  status(): Promise<ScreenTimeStatus>
-}
-
 // Focus modes the person gave a Hobwork Focus filter with a label (e.g.
 // "work") in iOS Settings. Hobwork cannot turn a Focus on or off; changes
 // arrive as FocusChangedEvent.
@@ -316,7 +285,6 @@ export interface Health {
 export interface Device {
   notifications: Notifications
   alarms: Alarms
-  screenTime: ScreenTime
   focus: Focus
   nfc: Nfc
   health: Health

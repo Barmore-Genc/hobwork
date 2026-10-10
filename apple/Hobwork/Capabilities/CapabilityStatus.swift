@@ -2,7 +2,6 @@
     import ActivityKit
     import AlarmKit
     import CoreNFC
-    import FamilyControls
     import HealthKit
 #endif
 import UserNotifications
@@ -13,7 +12,6 @@ struct CapabilityStatus: Equatable, Sendable {
     var notifications = false
     #if os(iOS)
         var alarms = false
-        var screenTime = false
     #endif
     var focus = false
     #if os(iOS)
@@ -29,7 +27,6 @@ struct CapabilityStatus: Equatable, Sendable {
             [
                 (notifications, Notifier.capability),
                 (alarms, AlarmsCapability.capability),
-                (screenTime, ScreenTimeCapability.capability),
                 (focus, FocusCapability.capability),
                 (nfc, NFCCapability.capability),
                 (health, HealthCapability.capability),
@@ -51,7 +48,6 @@ struct CapabilityStatus: Equatable, Sendable {
             return CapabilityStatus(
                 notifications: notifications,
                 alarms: AlarmManager.shared.authorizationState == .authorized,
-                screenTime: ScreenTimeAuthorization.isApproved,
                 focus: FocusLabels.file.read().setUp,
                 nfc: NFCNDEFReaderSession.readingAvailable,
                 health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty,

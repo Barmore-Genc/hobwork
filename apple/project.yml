@@ -17,10 +17,6 @@ settings:
     SWIFT_EMIT_LOC_STRINGS: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
-    # NO signs without Family Controls, which TestFlight and the App Store only
-    # accept once Apple approves the distribution entitlement. The app then does
-    # not offer Screen Time.
-    HOBWORK_FAMILY_CONTROLS: YES
     # A host name such as hobwork.example.com adds it to Associated Domains, so
     # NFC tag links to https://<host>/nfc/<tag> open the app, and pairing with this
     # host finishes on a link only the app can claim.
@@ -29,10 +25,7 @@ settings:
     # open the app too. Set it when the apps host is not apps.<HOBWORK_APPLINKS_HOST>,
     # such as apps.example.com next to hobwork.example.com.
     HOBWORK_APPS_HOST: apps.$(HOBWORK_APPLINKS_HOST)
-    # Entitlements files are picked by name from the two settings above.
-    HOBWORK_FAMILY_CONTROLS_SUFFIX_YES: ""
-    HOBWORK_FAMILY_CONTROLS_SUFFIX_NO: -NoFamilyControls
-    HOBWORK_FAMILY_CONTROLS_SUFFIX: $(HOBWORK_FAMILY_CONTROLS_SUFFIX_$(HOBWORK_FAMILY_CONTROLS))
+    # The app's entitlements file is picked by name from HOBWORK_APPLINKS_HOST.
     HOBWORK_APPLINKS_FOR_: NO
     HOBWORK_APPLINKS: $(HOBWORK_APPLINKS_FOR_$(HOBWORK_APPLINKS_HOST:identifier):default=YES)
     HOBWORK_APPLINKS_SUFFIX_YES: -AppLinks
@@ -43,14 +36,12 @@ targets:
   Hobwork:
     type: application
     supportedDestinations: [iOS, macOS]
-    # AlarmKit, Core NFC and ManagedSettings do not exist on macOS, and Macs have
-    # no Health data.
+    # AlarmKit and Core NFC do not exist on macOS, and Macs have no Health data.
     sources:
       - path: Hobwork
         excludes:
           - Alarms
           - Shared/Alarms
-          - Shared/ScreenTime
           - Shared/Health
           - Shared/LiveActivities
           - Shared/Hobs
@@ -58,13 +49,10 @@ targets:
           - Capabilities/NFC
           - Capabilities/Health
           - Capabilities/LiveActivities
-          - Views/ScreenTimeSettings.swift
           - Views/HealthSettings.swift
       - path: Hobwork/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/Alarms
-        destinationFilters: [iOS]
-      - path: Hobwork/Shared/ScreenTime
         destinationFilters: [iOS]
       - path: Hobwork/Shared/Health
         destinationFilters: [iOS]
@@ -80,8 +68,6 @@ targets:
         destinationFilters: [iOS]
       - path: Hobwork/Capabilities/LiveActivities
         destinationFilters: [iOS]
-      - path: Hobwork/Views/ScreenTimeSettings.swift
-        destinationFilters: [iOS]
       - path: Hobwork/Views/HealthSettings.swift
         destinationFilters: [iOS]
     info:
@@ -91,7 +77,6 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
         HobworkAppLinksHost: $(HOBWORK_APPLINKS_HOST)
-        HobworkFamilyControls: $(HOBWORK_FAMILY_CONTROLS)
         # Hosts on the home network are often plain http on a local name or IP.
         # `.localhost` names are what the host's development setup uses; local
         # networking alone does not cover them.
@@ -119,8 +104,6 @@ targets:
         NSHealthUpdateUsageDescription: Hobwork only reads the Health data you choose to share and does not save data to Health.
     dependencies:
       - target: HobworkNotificationService
-      - target: HobworkDeviceActivityMonitor
-        destinationFilters: [iOS]
       - target: HobworkWidgets
         destinationFilters: [iOS]
       - target: HobworkShare
@@ -131,7 +114,7 @@ targets:
         PRODUCT_NAME: Hobwork
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
-        CODE_SIGN_ENTITLEMENTS: Hobwork/Hobwork$(HOBWORK_FAMILY_CONTROLS_SUFFIX)$(HOBWORK_APPLINKS_SUFFIX).entitlements
+        CODE_SIGN_ENTITLEMENTS: Hobwork/Hobwork$(HOBWORK_APPLINKS_SUFFIX).entitlements
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Hobwork/Hobwork-macOS.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
@@ -173,14 +156,11 @@ targets:
       - path: Hobwork/Shared
         excludes:
           - Alarms
-          - ScreenTime
           - Health
           - LiveActivities
           - Hobs
           - Share
       - path: Hobwork/Shared/Alarms
-        destinationFilters: [iOS]
-      - path: Hobwork/Shared/ScreenTime
         destinationFilters: [iOS]
       - path: Hobwork/Shared/Health
         destinationFilters: [iOS]
@@ -189,7 +169,6 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        HobworkFamilyControls: $(HOBWORK_FAMILY_CONTROLS)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
@@ -198,37 +177,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.NotificationService
         PRODUCT_NAME: HobworkNotificationService
         INFOPLIST_KEY_CFBundleDisplayName: Hobwork
-        CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService$(HOBWORK_FAMILY_CONTROLS_SUFFIX).entitlements
+        CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService.entitlements
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": NotificationService/NotificationService-macOS.entitlements
         ENABLE_HARDENED_RUNTIME: YES
-        GENERATE_INFOPLIST_FILE: YES
-        SKIP_INSTALL: YES
-
-  HobworkDeviceActivityMonitor:
-    type: app-extension
-    supportedDestinations: [iOS]
-    sources:
-      - path: DeviceActivityMonitor
-      - path: Hobwork/Shared/AppGroup.swift
-      - path: Hobwork/Shared/SharedFile.swift
-      - path: Hobwork/Shared/Time.swift
-      - path: Hobwork/Shared/ScreenTime/ScreenTimeState.swift
-      - path: Hobwork/Shared/ScreenTime/ScreenTimePlan.swift
-      - path: Hobwork/Shared/ScreenTime/ScreenTimeSystem.swift
-    info:
-      path: DeviceActivityMonitor/Info.plist
-      properties:
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).HobworkMonitor
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.DeviceActivityMonitor
-        PRODUCT_NAME: HobworkDeviceActivityMonitor
-        INFOPLIST_KEY_CFBundleDisplayName: Hobwork
-        CODE_SIGN_ENTITLEMENTS: DeviceActivityMonitor/DeviceActivityMonitor$(HOBWORK_FAMILY_CONTROLS_SUFFIX).entitlements
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 

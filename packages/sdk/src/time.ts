@@ -12,7 +12,7 @@ export type LocalTime = {
   minute: number
   second: number
   weekday: Weekday
-  // "2026-10-09", "08:30": the formats alarms and screen time take.
+  // "2026-10-09", "08:30": the formats alarms take.
   date: string
   time: string
   // Minutes ahead of UTC, e.g. 180 for Europe/Istanbul.

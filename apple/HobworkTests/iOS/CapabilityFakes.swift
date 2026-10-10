@@ -27,39 +27,6 @@ final class FakeAlarmScheduler: AlarmScheduling {
     }
 }
 
-final class FakeShields: ShieldControlling {
-    var shielded: [String: Data] = [:]
-    var log: [String] = []
-
-    func shield(store: String, selection: Data) {
-        shielded[store] = selection
-        log.append("shield \(store)")
-    }
-
-    func clear(store: String) {
-        shielded[store] = nil
-        log.append("clear \(store)")
-    }
-}
-
-final class FakeActivityMonitoring: ActivityMonitoring {
-    var started: [String: PlannedActivity] = [:]
-    var selections: [String: Data] = [:]
-    var failure: ActivityMonitoringError?
-
-    var activities: [String] { started.keys.sorted() }
-
-    func start(_ activity: PlannedActivity, selection: Data?) throws(ActivityMonitoringError) {
-        if let failure { throw failure }
-        started[activity.name.rawValue] = activity
-        selections[activity.name.rawValue] = selection
-    }
-
-    func stop(_ names: [String]) {
-        for name in names { started[name] = nil }
-    }
-}
-
 @MainActor
 final class FakeHealthReader: HealthReading {
     var samples: [HealthSample] = []

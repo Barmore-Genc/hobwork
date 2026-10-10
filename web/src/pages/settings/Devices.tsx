@@ -8,7 +8,6 @@ import { kindChanged } from '../../live.ts'
 const CAPABILITY_NAMES: Record<string, string> = {
   notifications: 'Notifications',
   alarms: 'Alarms',
-  screenTime: 'Screen Time',
   focus: 'Focus',
   nfc: 'NFC',
   health: 'Health',

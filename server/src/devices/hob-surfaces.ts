@@ -377,7 +377,7 @@ export function createHobSurfaces(deps: HobSurfacesDeps) {
 
   // { hob, target, url?, text?, files? }. Files were uploaded first, and each
   // must be a file in the target's upload folder.
-  async function runShare(device: Device, body: Record<string, unknown>): Promise<{ say?: string; open?: string }> {
+  async function runShare(device: Device, body: Record<string, unknown>): Promise<{ say?: string }> {
     const { hob, target } = await shareTarget(body.hob, body.target)
     const request: ShareRequest = { target: target.id, files: [] }
     if (body.url !== undefined && body.url !== null) {
@@ -415,8 +415,7 @@ export function createHobSurfaces(deps: HobSurfacesDeps) {
     const answer = await route(hob, device, { method: 'POST', path: target.route, body: request }, `share "${target.id}"`)
     const result = isObject(answer) ? answer : {}
     const say = text(result.say, MAX_SAY)
-    const open = openPath(result.open)
-    return { ...(say ? { say } : {}), ...(open ? { open } : {}) }
+    return say ? { say } : {}
   }
 
   return { hobs, widget, runIntent, reload, startUpload, uploadStatus, uploadChunk, cancelUpload, runShare }

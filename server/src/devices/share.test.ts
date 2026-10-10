@@ -133,7 +133,7 @@ test('a shared 3MF is uploaded in parts into the target folder, then the route r
       files: [{ path: 'inbox/Headphone-stand-v2.3mf', name: 'Headphone stand (v2).3MF', size: 1, contentType: 'model/3mf' }],
     },
   })
-  expect(await res.json()).toEqual({ ok: true, say: 'Added it to the queue.', open: '/queue/1' })
+  expect(await res.json()).toEqual({ ok: true, say: 'Added it to the queue.' })
   expect(routed).toMatchObject([
     {
       project: 'filament',
@@ -168,7 +168,7 @@ test('uploads are refused for targets without files, other types, sizes over the
   expect(await share({})).toMatchObject({ ok: false, error: { message: 'Share a link, text or files' } })
   expect(routed).toEqual([])
 
-  expect(await share({ target: 'note', text: 'Buy PETG' })).toEqual({ ok: true, say: 'Added it to the queue.', open: '/queue/1' })
+  expect(await share({ target: 'note', text: 'Buy PETG' })).toEqual({ ok: true, say: 'Added it to the queue.' })
   expect(routed[0]!.request).toEqual({ method: 'POST', path: '/notes', body: { target: 'note', text: 'Buy PETG', files: [] } })
   answers = () => ({ status: 500, body: {} })
   expect(await share({ url: 'https://example.com/' })).toMatchObject({ ok: false, error: { code: 'route_failed' } })

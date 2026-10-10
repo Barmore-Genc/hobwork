@@ -23,9 +23,7 @@ export type SharedFile = {
 }
 
 // What a share target's route may return. say is shown in the share sheet
-// ("Added Headphone stand to the queue"); open is a path of the hob's UI that
-// the share sheet offers to open in the app.
+// ("Added Headphone stand to the queue").
 export type ShareResult = {
   say?: string
-  open?: string
 }

@@ -86,6 +86,9 @@ final class AppModel {
             LiveActivityEvents.send = { [weak self] event in await self?.send(event) }
             liveActivitySystem.watch(liveActivityTokens)
         #endif
+        #if HOBWORK_DRIVER
+            DriverHook.start(web: web)
+        #endif
     }
 
     var api: HostAPI? {

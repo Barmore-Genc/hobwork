@@ -130,6 +130,29 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # The device driver (`scripts/drive`) and plain http to development hosts on
+        # sslip.io exist in Debug builds only.
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HOBWORK_DRIVER
+          HOBWORK_INSECURE_HTTP_DOMAINS: sslip.io
+          # The script below edits the processed Info.plist, which another build step produces.
+          ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Allow plain http to development hosts
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          [ -n "${HOBWORK_INSECURE_HTTP_DOMAINS:-}" ] || exit 0
+          plist="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          for domain in $HOBWORK_INSECURE_HTTP_DOMAINS; do
+            key=":NSAppTransportSecurity:NSExceptionDomains:$domain"
+            /usr/libexec/PlistBuddy -c "Delete $key" "$plist" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add $key dict" \
+              -c "Add $key:NSIncludesSubdomains bool true" \
+              -c "Add $key:NSExceptionAllowsInsecureHTTPLoads bool true" "$plist"
+          done
 
   HobworkNotificationService:
     type: app-extension
@@ -257,12 +280,16 @@ targets:
     supportedDestinations: [iOS]
     sources:
       - path: HobworkUITests
+      - path: Hobwork/Driver/DriverServer.swift
     dependencies:
       - target: Hobwork
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bgenc.hobwork.uitests
         GENERATE_INFOPLIST_FILE: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) HOBWORK_DRIVER
 
 schemes:
   Hobwork:

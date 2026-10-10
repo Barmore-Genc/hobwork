@@ -34,6 +34,7 @@ import { asAgent, prepareGuest } from '../guest-vm.ts'
 import type { StartPipelineVm } from '../pipeline/runner.ts'
 import { DEFAULT_BRANCH, getProject, listProjects, ProjectError } from '../projects.ts'
 import { branchHead } from '../repo.ts'
+import { blockedEgressMessage } from '../sandbox/egress.ts'
 import { GUEST_GID, GUEST_UID, type Sandbox, type SandboxFactory } from '../sandbox/sandbox.ts'
 import type { SecretStore } from '../secrets.ts'
 import type { AiGateway } from '../ai/gateway.ts'
@@ -530,14 +531,7 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         project,
         deployed.branch === undefined ? { source: 'runtime' } : { source: 'preview', branch: deployed.branch },
       ),
-      onEgressBlocked: ({ hostname, ip, port }) =>
-        event(
-          project,
-          'warn',
-          'egress-blocked',
-          `Blocked outgoing request to ${hostname || ip}:${port}. Add the host to "egress" in hobwork.json to allow it, or assign a secret that may be sent to it`,
-          deployed.branch,
-        ),
+      onEgressBlocked: (blocked) => event(project, 'warn', 'egress-blocked', blockedEgressMessage(blocked), deployed.branch),
       onSecretRefused: ({ hostname, message }) =>
         event(project, 'warn', 'secret', `Refused an outgoing request to ${hostname}: ${message}`, deployed.branch),
       label,

@@ -33,6 +33,7 @@ import {
 } from '../runtime/logs.ts'
 import type { Runtime } from '../runtime/runtime.ts'
 import { rotateWebhookToken, webhookTokenCreatedAt, webhookUrl } from '../runtime/webhooks.ts'
+import { describeEgress, type PrivateEgressRule } from '../sandbox/egress.ts'
 import { fileStats, sendFile } from '../static.ts'
 import {
   SecretConflictError,
@@ -171,6 +172,7 @@ export function createApiRoutes(options: {
   data?: ProjectData
   secrets?: SecretStore
   storage?: StorageUsage
+  privateEgress?: PrivateEgressRule[]
 }) {
   const { host, auth, delivery, runtime } = options
 
@@ -227,7 +229,7 @@ export function createApiRoutes(options: {
     return {
       entryPoints: entryPoints ?? null,
       ...(configError ? { configError } : {}),
-      egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort(),
+      egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort().map((entry) => describeEgress(entry, options.privateEgress ?? [])),
       database: options.data?.status(project.name) ?? null,
       ...(options.storage ? { storage: options.storage.get(project) } : {}),
       app: config ? await hasApp(project.name) : false,

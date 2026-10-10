@@ -108,8 +108,13 @@
       }
     },
     "egress": {
+      "description": "Hosts handlers may reach over HTTP and HTTPS. \"api.example.com\" or \"*.example.com\" on any port, \"host:port\" (\"[IPv6]:port\") on that port only. Private, LAN and tailnet addresses (like \"100.66.127.125:7912\") work only when the Hobwork host lists them too, in HOBWORK_PRIVATE_EGRESS. Secrets are only sent over https.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^((\\[[0-9A-Fa-f:.]+\\]|[^\\s:\\[\\]/]+)(:\\d{1,5})?|[0-9A-Fa-f]*:[0-9A-Fa-f:.]+)$"
+      },
       "uniqueItems": true
     },
     "csp": {

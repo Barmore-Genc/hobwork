@@ -139,3 +139,9 @@ test('AI models have defaults, and the environment picks others or turns decisio
   expect(loadConfig({ HOBWORK_AI_DECISION_MODEL: 'off' }).aiModels.decisionModel).toBeNull()
   expect(() => loadConfig({ HOBWORK_AI_MODEL: 'two words' })).toThrow('"two words" is not a model ID')
 })
+
+test('private egress targets come from HOBWORK_PRIVATE_EGRESS', () => {
+  expect(loadConfig({}).privateEgress).toEqual([])
+  expect(loadConfig({ HOBWORK_PRIVATE_EGRESS: '100.66.127.125:7912' }).privateEgress).toEqual([{ host: '100.66.127.125', port: 7912 }])
+  expect(() => loadConfig({ HOBWORK_PRIVATE_EGRESS: '100.66.127.125' })).toThrow('HOBWORK_PRIVATE_EGRESS: "100.66.127.125" needs a host or network and a port')
+})

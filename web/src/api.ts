@@ -87,7 +87,7 @@ export type ProjectDetail = {
   iconUrl: string
   entryPoints: EntryPoints | null
   configError?: string
-  egress: string[]
+  egress: EgressTarget[]
   database: DbStatus | null
   storage?: StorageUse | null
   // The running version has a page to open.
@@ -359,6 +359,10 @@ export type AiUsageTotals = {
 }
 
 // The models hobs get. decisionModel null: none, so the model answers decisions too.
+// A host (or host:port) the hob may reach. Private ones are on the home
+// network or tailnet, which the server has to allow as well.
+export type EgressTarget = { target: string; private: boolean; allowed: boolean }
+
 export type AiModels = { model: string; decisionModel: string | null; embeddingModel: string; visionModel: string }
 
 // null: the level above picks. decisionModel false: no decision model.

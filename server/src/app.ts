@@ -37,6 +37,7 @@ import type { FetchedDocument } from './oauth/metadata-fetch.ts'
 import { createOAuthServer } from './oauth/routes.ts'
 import { createRuntimeHttp } from './runtime/http.ts'
 import type { Runtime } from './runtime/runtime.ts'
+import type { PrivateEgressRule } from './sandbox/egress.ts'
 import type { SecretStore } from './secrets.ts'
 import type { StorageUsage } from './storage.ts'
 import { createStaticRoutes } from './static.ts'
@@ -59,6 +60,8 @@ export type WebOptions = {
   // Tests replace how client ID metadata documents are fetched and the clock.
   fetchClientMetadata?: (url: URL) => Promise<FetchedDocument>
   now?: () => number
+  // HOBWORK_PRIVATE_EGRESS, to show which of a hob's private targets it reaches.
+  privateEgress?: PrivateEgressRule[]
 }
 
 export function createApp(
@@ -138,6 +141,7 @@ export function createApp(
     data: options.data,
     secrets: options.secrets,
     storage: options.storage,
+    privateEgress: web.privateEgress ?? [],
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
   const handleDevices = createDeviceRoutes({

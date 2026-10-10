@@ -1,4 +1,4 @@
-import { hostMatches } from './egress.ts'
+import { egressAllows, hostMatches, type EgressRule } from './egress.ts'
 import { INTERNAL_HOST, type InternalHandler, type Interceptor, type Upstream } from './sandbox.ts'
 
 // Connection-level headers that fetch sets itself.
@@ -33,15 +33,16 @@ export function upstreamFetch(
 export function requestHook(options: {
   internal?: InternalHandler
   intercept?: Interceptor
-  egress: string[]
+  egress: EgressRule[]
   upstream: Upstream
 }): ((request: Request) => Promise<Response | undefined>) | undefined {
   const { internal, intercept, egress, upstream } = options
   if (!internal && !intercept) return undefined
   return async (request) => {
-    const { hostname } = new URL(request.url)
+    const { hostname, port, protocol } = new URL(request.url)
     if (hostname === INTERNAL_HOST) return internal ? internal(request) : undefined
-    if (intercept && hostMatches(hostname, intercept.hosts) && hostMatches(hostname, egress)) {
+    const target = Number(port) || (protocol === 'https:' ? 443 : 80)
+    if (intercept && hostMatches(hostname, intercept.hosts) && egressAllows(egress, hostname, target)) {
       return intercept.handle(request, upstream)
     }
     return undefined

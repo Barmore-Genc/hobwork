@@ -4,6 +4,7 @@ import { loadBackupConfig, type BackupConfig } from './backup/config.ts'
 import { parseTrustedProxies, type TrustedProxies } from './client-address.ts'
 import { DEFAULT_RELAY_URL } from './devices/push/relay.ts'
 import { loadVmBudget, type VmBudget } from './sandbox/budget.ts'
+import { parsePrivateEgress, PrivateEgressError, type PrivateEgressRule } from './sandbox/egress.ts'
 
 export type HomeAssistantConnection = {
   url: string
@@ -55,6 +56,8 @@ export type Config = {
   aiModels: AiModels
   // Undefined when push is off.
   push?: PushConfig
+  // Private, LAN and tailnet targets hobs may reach when their egress lists them too.
+  privateEgress: PrivateEgressRule[]
 }
 
 export type PushConfig = { relayUrl: string; keyDir: string }
@@ -179,6 +182,15 @@ function loadAiModels(env: NodeJS.ProcessEnv): AiModels {
   }
 }
 
+function loadPrivateEgress(env: NodeJS.ProcessEnv): PrivateEgressRule[] {
+  try {
+    return parsePrivateEgress(env.HOBWORK_PRIVATE_EGRESS)
+  } catch (err) {
+    if (err instanceof PrivateEgressError) throw new Error(`HOBWORK_PRIVATE_EGRESS: ${err.message}`)
+    throw err
+  }
+}
+
 function loadAllowlist(env: NodeJS.ProcessEnv): Allowlist {
   const entries = (env.HOBWORK_ALLOWED_USERS ?? '')
     .split(',')
@@ -240,5 +252,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustedProxies: parseTrustedProxies(env.HOBWORK_TRUSTED_PROXIES),
     aiModels: loadAiModels(env),
     push: loadPush(env, dataDir),
+    privateEgress: loadPrivateEgress(env),
   }
 }

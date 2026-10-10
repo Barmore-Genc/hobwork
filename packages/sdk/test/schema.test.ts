@@ -37,6 +37,11 @@ test('accepts cron time zones', () => {
   expect(validate({ crons }), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts egress hosts with and without ports', () => {
+  const egress = ['api.example.com', '*.example.com', 'api.example.com:8443', '100.66.127.125:7912', '[fd00::5]:80', 'fd00::5']
+  expect(validate({ egress }), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts an empty config', () => {
   expect(validate({})).toBe(true)
 })
@@ -55,6 +60,8 @@ test.each([
   ],
   ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
+  ['egress with a URL', { egress: ['https://api.example.com'] }],
+  ['egress with a named port', { egress: ['api.example.com:https'] }],
   ['crossAppRequests with a URL', { crossAppRequests: ['https://filament.apps.example.com'] }],
   ['crossAppRequests with a wildcard', { crossAppRequests: ['*'] }],
   ['crossAppRequests not an array', { crossAppRequests: 'filament' }],

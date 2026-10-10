@@ -341,13 +341,25 @@ function HealthSection({ project }: { project: ProjectDetail }) {
         <dt className="font-semibold">Can reach</dt>
         <dd className="min-w-0">
           {project.egress.length ? (
-            <ul className="flex flex-wrap gap-2">
-              {project.egress.map((host) => (
-                <li key={host} className="rounded-sm border border-border bg-surface px-2 py-0.5 font-mono text-sm break-all">
-                  {host}
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="flex flex-wrap gap-2">
+                {project.egress.map(({ target, private: home, allowed }) => (
+                  <li
+                    key={target}
+                    title={home ? (allowed ? 'On your home network' : 'On your home network, and this server does not allow it') : undefined}
+                    className={`rounded-sm border px-2 py-0.5 text-sm break-all ${allowed ? 'border-border' : 'border-danger/40 text-muted'} bg-surface`}
+                  >
+                    <span className={`font-mono ${allowed ? '' : 'line-through'}`}>{target}</span>
+                    {home && <span className="ml-1.5 text-xs text-muted">{allowed ? 'home network' : 'blocked'}</span>}
+                  </li>
+                ))}
+              </ul>
+              {project.egress.some((entry) => !entry.allowed) && (
+                <p className="mt-2 text-sm text-muted">
+                  Crossed-out addresses are on your home network, and this server does not let hobs reach them. Whoever runs Hobwork can allow them.
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-muted">No sites on the internet</p>
           )}

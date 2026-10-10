@@ -80,7 +80,7 @@ const vmScheduler = createVmScheduler({
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? {
       image,
-      createSandbox: budgetedSandboxFactory(createGondolinSandbox, vmScheduler),
+      createSandbox: budgetedSandboxFactory((options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }), vmScheduler),
       log: (message) => console.warn(message),
       readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
@@ -177,6 +177,7 @@ const server = createApp(host, {
     webDist: config.webDist,
     appleAppId: config.appleAppId,
     trustedProxies: config.trustedProxies,
+    privateEgress: config.privateEgress,
   },
 })
 

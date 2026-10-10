@@ -945,6 +945,11 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async staticMounts(project: string, branch?: string): Promise<StaticMount[]> {
       return (await deployedFor(project, branch)).config.static
     },
+    // The uploads the deployed version (or the branch) declares, and the triggers that run for each.
+    async uploads(project: string, branch?: string): Promise<{ uploads: ProjectConfig['uploads']; triggers: ProjectConfig['triggers'] }> {
+      const { config } = await deployedFor(project, branch)
+      return { uploads: config.uploads, triggers: config.triggers }
+    },
     // The hobs whose apps may send requests to this one, as its deployed version (or the branch) declares.
     async crossAppRequests(project: string, branch?: string): Promise<string[]> {
       return (await deployedFor(project, branch)).config.crossAppRequests

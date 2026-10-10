@@ -18,6 +18,10 @@ import type { Caller } from '../../../packages/sdk/src/people.ts'
 import { getDevice, markDeviceActive } from '../devices/store.ts'
 import { personOf } from '../people.ts'
 import { findShareLink, isShareToken } from './share-links.ts'
+import { HttpError, readJson } from '../http.ts'
+import { createUploads, isUploadToken, uploadOfToken, type Completed, type UploadTarget } from '../runtime/uploads.ts'
+import { UPLOAD_FILES_PATH, UPLOADS_PATH, type UploadEvent } from '../../../packages/sdk/src/uploads.ts'
+import { decodeFilePath } from '../runtime/files.ts'
 
 // On the Hobwork origin: turns the Hobwork session into a code for one app origin.
 export const APP_AUTH_PATH = '/auth/app'
@@ -86,6 +90,7 @@ export function createAppHttp(options: {
   // cannot know. Its cookie is partitioned by top-level site, so a page that
   // frames the app elsewhere gets no session from it.
   const sharedFrameHeaders = uiHeaders('*')
+  const uploads = createUploads(host)
 
   async function resolve(target: AppTarget): Promise<Resolved | undefined> {
     const project = getProject(host, target.project)
@@ -311,6 +316,84 @@ export function createAppHttp(options: {
     await serveWebhook(req, res, runtime, { project, branch, name, url })
   }
 
+  // Runs the triggers of the upload a file arrived through. The upload has
+  // already succeeded, so a failing trigger only shows in the hob's log.
+  async function uploadTriggers(app: Resolved, done: Completed, caller: Caller | undefined) {
+    if (!runtime) return
+    const { triggers } = await runtime.uploads(app.target.project, app.target.branch)
+    const payload: UploadEvent = { upload: done.name, ...done.file, contentType: done.contentType }
+    for (const [name, entry] of Object.entries(triggers)) {
+      if (entry.upload !== done.name) continue
+      runtime
+        .invoke(app.target.project, { kind: 'trigger', name, manual: false, branch: app.target.branch, payload, ...(caller && { caller }) })
+        .catch((err: unknown) => console.error(`The upload trigger ${name} of ${app.target.project} failed to start`, err))
+    }
+  }
+
+  // Uploads into the hob's files: <app origin>/_hobwork/uploads[/<id>] in
+  // chunks from the app, and <app origin>/_hobwork/files/<path> in one
+  // request, from the app or from a script with an upload token.
+  async function upload(req: IncomingMessage, res: ServerResponse, app: Resolved, url: URL) {
+    const { pathname } = url
+    if (!runtime) return sendJson(res, 503, { error: 'This Hobwork host does not run hob apps' }, frameHeaders)
+    const header = req.headers.authorization
+    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined
+    let target: Omit<UploadTarget, 'uploads'>
+    let caller: Caller | undefined
+    if (bearer !== undefined && isUploadToken(bearer)) {
+      // A bearer token is never sent by the browser on its own, so it needs no CSRF check.
+      const name = app.target.branch === undefined ? uploadOfToken(host, app.project.id, bearer) : undefined
+      if (!name) return sendJson(res, 401, { error: 'This upload token is not valid. Ask for a new one on the hob\'s page in Hobwork' }, frameHeaders)
+      target = { project: app.target.project, projectId: app.project.id, uploader: { token: name } }
+    } else {
+      const cross = await crossApp(req, app, pathname)
+      if (cross.error) return sendJson(res, 403, { error: cross.error }, frameHeaders)
+      const session = appUser(req, app)
+      if (!session) return sendJson(res, 401, { error: 'Sign in to continue' }, frameHeaders)
+      const error = csrfError(req, app, cross.listed)
+      if (error) return sendJson(res, 403, { error }, frameHeaders)
+      if (session.deviceId !== null) markDeviceActive(host.db, session.deviceId)
+      caller = callerOf(session)
+      target = { project: app.target.project, projectId: app.project.id, branch: app.target.branch, uploader: { userId: session.user.id } }
+    }
+    try {
+      const full: UploadTarget = { ...target, uploads: (await runtime.uploads(app.target.project, app.target.branch)).uploads }
+      const finish = async (done: Completed) => {
+        await uploadTriggers(app, done, caller)
+        sendJson(res, 201, { done: true, file: done.file }, frameHeaders)
+      }
+      if (pathname.startsWith(`${UPLOAD_FILES_PATH}/`)) {
+        if (req.method !== 'PUT') throw new HttpError(405, 'Send the file with PUT')
+        const path = decodeFilePath(pathname.slice(UPLOAD_FILES_PATH.length + 1))
+        if (path === undefined) throw new HttpError(400, 'This is not a valid file path')
+        return await finish(await uploads.single(full, path, req))
+      }
+      const id = pathname.slice(UPLOADS_PATH.length + 1)
+      if (!id) {
+        if (req.method !== 'POST') throw new HttpError(405, 'Start an upload with POST')
+        return sendJson(res, 201, await uploads.start(full, await readJson(req)), frameHeaders)
+      }
+      if (id.includes('/')) throw new HttpError(404, 'Not found')
+      if (req.method === 'GET') return sendJson(res, 200, uploads.status(full, id), frameHeaders)
+      if (req.method === 'DELETE') {
+        await uploads.cancel(full, id)
+        res.writeHead(204, frameHeaders)
+        return res.end()
+      }
+      if (req.method !== 'PUT') throw new HttpError(405, 'Send parts of an upload with PUT')
+      const offset = Number(url.searchParams.get('offset'))
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, 'offset must say where this part starts')
+      const result = await uploads.chunk(full, id, offset, req)
+      if ('file' in result) return await finish(result)
+      return sendJson(res, 200, result, frameHeaders)
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err
+      // An answer before the body was read: the client may still be sending it.
+      if (!req.complete) res.setHeader('connection', 'close')
+      return sendJson(res, err.status, { error: err.message }, frameHeaders)
+    }
+  }
+
   // Webhook URLs live in other systems, so the old name of a renamed hob still works.
   function renamedApp(hostHeader: string | undefined) {
     const label = origins.labelOf(hostHeader)
@@ -339,6 +422,9 @@ export function createAppHttp(options: {
     if (pathname === CALLBACK_PATH) return callback(req, res, app, url.searchParams)
     if (pathname === SHARE_PATH) return share(req, res, app, url.searchParams)
     if (pathname.startsWith(HOOKS_PREFIX)) return webhook(req, res, app, pathname, search)
+    if (pathname === UPLOADS_PATH || pathname.startsWith(`${UPLOADS_PATH}/`) || pathname.startsWith(`${UPLOAD_FILES_PATH}/`)) {
+      return upload(req, res, app, url)
+    }
     if (pathname.startsWith(THEME_PREFIX) && options.serveTheme(req, res, pathname)) return
     if (pathname === MANIFEST_PATH || pathname.startsWith(ICONS_PREFIX)) return serveIcons(req, res, app, pathname)
     const mount = pathname.startsWith(API_PREFIX) || pathname.startsWith(RESERVED_PREFIX) ? undefined : await staticMountOf(app, pathname)

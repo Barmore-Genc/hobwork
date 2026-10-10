@@ -41,7 +41,7 @@ export function streamsFileBody(request: Request): boolean {
   return request.method === 'PUT' && new URL(request.url).pathname.startsWith(`${FILES_PATH}/`)
 }
 
-class FilesFailure extends Error {
+export class FilesFailure extends Error {
   status: number
   code: FilesErrorCode
 
@@ -115,7 +115,7 @@ async function put(files: string, path: string, request: Request, max: number): 
   return Response.json({ ok: true, result: infoOf(path, stats) })
 }
 
-async function place(files: string, temp: string, path: string): Promise<void> {
+export async function place(files: string, temp: string, path: string): Promise<void> {
   const target = locate(files, path)
   for (let attempt = 0; ; attempt++) {
     try {

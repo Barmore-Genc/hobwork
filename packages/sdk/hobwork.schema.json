@@ -73,7 +73,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["handler"],
-        "oneOf": [{ "required": ["homeassistant"] }, { "required": ["device"] }],
+        "oneOf": [{ "required": ["homeassistant"] }, { "required": ["device"] }, { "required": ["upload"] }],
         "properties": {
           "homeassistant": { "type": "object" },
           "device": {
@@ -103,7 +103,41 @@
               { "if": { "properties": { "capability": { "const": "health" } } }, "then": { "properties": { "event": { "const": "samples" } } } }
             ]
           },
+          "upload": {
+            "description": "Runs the handler when a file arrives through the upload with this name in \"uploads\". ctx.payload is an UploadEvent from @hobwork/sdk (upload, path, size, modified, contentType), and ctx.caller the person who uploaded it from the app, or null for an upload token.",
+            "$ref": "#/definitions/name"
+          },
           "handler": { "$ref": "#/definitions/handlerPath" }
+        }
+      }
+    },
+    "uploads": {
+      "description": "Where the hob's app (files.upload from @hobwork/sdk/browser) and scripts with an upload token may store files in the hob's files (ctx.files) directly, without a handler and past the 10 MB limit of route bodies. The key names the upload, for triggers and upload tokens. Signed-in people can upload from the app; scripts need the upload's token, which people create on the hob's page and agents with rotate_upload_token.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/definitions/name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prefix"],
+        "properties": {
+          "prefix": {
+            "description": "Directory of the hob's files that uploads go to, ending in \"/\", like \"inbox/\" or \"photos/raw/\". Uploaded paths must start with it.",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*/$",
+            "maxLength": 256
+          },
+          "maxBytes": {
+            "description": "Largest file, in bytes. Default 104857600 (100 MB), at most 1073741824 (1 GB).",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824
+          },
+          "types": {
+            "description": "Files to accept, by MIME type (\"image/*\", \"application/pdf\") or extension (\".3mf\"). A file passes when its Content-Type or its name matches one. Default: any file.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^(\\.[A-Za-z0-9]+|[a-z]+/([a-z0-9.+-]+|\\*))$" }
+          }
         }
       }
     },

@@ -1,5 +1,6 @@
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
-import { filePathProblem } from '../../../packages/sdk/src/runner/protocol.ts'
+import { filePathProblem, MAX_FILE_BYTES } from '../../../packages/sdk/src/runner/protocol.ts'
+import { DEFAULT_UPLOAD_BYTES } from '../../../packages/sdk/src/uploads.ts'
 import { git, GitError } from '../git.ts'
 import { repoPath, type Host } from '../host.ts'
 import type { TriggerEntry } from '../homeassistant/triggers.ts'
@@ -12,6 +13,9 @@ import type { InvocationKind } from './logs.ts'
 
 export type Entry = { handler: string }
 
+// An `uploads` entry: files go under `prefix` (ending in "/").
+export type UploadEntry = { prefix: string; maxBytes: number; types: string[] }
+
 export type ProjectConfig = {
   routes: Record<string, Entry>
   crons: Record<string, Entry & CronEntry>
@@ -22,6 +26,7 @@ export type ProjectConfig = {
   crossAppRequests: string[]
   // Longest prefix first.
   static: StaticMount[]
+  uploads: Record<string, UploadEntry>
   idleTimeoutMs: number
   resources: ResourceRequest
 }
@@ -53,11 +58,25 @@ function staticMounts(entries: Record<string, { dir?: unknown; public?: unknown 
     .sort((a, b) => b.prefix.length - a.prefix.length)
 }
 
+// Like static mounts, an entry that would write anywhere else is dropped.
+function uploadEntries(entries: Record<string, { prefix?: unknown; maxBytes?: unknown; types?: unknown }> | undefined): Record<string, UploadEntry> {
+  const out: Record<string, UploadEntry> = {}
+  for (const [name, entry] of Object.entries(entries ?? {})) {
+    const prefix = entry.prefix
+    if (typeof prefix !== 'string' || !prefix.endsWith('/') || filePathProblem(prefix.slice(0, -1))) continue
+    const max = typeof entry.maxBytes === 'number' && Number.isInteger(entry.maxBytes) && entry.maxBytes > 0 ? entry.maxBytes : DEFAULT_UPLOAD_BYTES
+    const types = Array.isArray(entry.types) ? entry.types.filter((t): t is string => typeof t === 'string') : []
+    out[name] = { prefix, maxBytes: Math.min(max, MAX_FILE_BYTES), types }
+  }
+  return out
+}
+
 // The pipeline validated hobwork.json against the schema before it reached main.
 export function parseProjectConfig(raw: string): ProjectConfig {
-  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static'>> & {
+  const json = parseHobworkJson(raw) as Partial<Omit<ProjectConfig, 'idleTimeoutMs' | 'static' | 'uploads'>> & {
     idleTimeout?: string
     static?: Record<string, { dir?: unknown; public?: unknown }>
+    uploads?: Record<string, { prefix?: unknown; maxBytes?: unknown; types?: unknown }>
   }
   return {
     routes: json.routes ?? {},
@@ -69,6 +88,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     resources: json.resources ?? {},
     crossAppRequests: json.crossAppRequests ?? [],
     static: staticMounts(json.static),
+    uploads: uploadEntries(json.uploads),
     idleTimeoutMs: json.idleTimeout ? Math.min(parseDuration(json.idleTimeout), MAX_IDLE_TIMEOUT_MS) : DEFAULT_IDLE_TIMEOUT_MS,
   }
 }

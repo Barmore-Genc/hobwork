@@ -47,6 +47,7 @@ export type TrashInfo = {
     assignedAt: string
   }[]
   webhookTokens?: { name: string; tokenHash: string; createdAt: string }[]
+  uploadTokens?: { name: string; tokenHash: string; createdAt: string }[]
   nfcTags?: { id: string; createdAt: string }[]
   // Agent tokens and OAuth connections limited to a list of projects that included this one.
   access?: { tokens: number[]; grants: number[] }
@@ -166,7 +167,7 @@ async function deleteNow(
 function restorableRows(
   host: Host,
   projectId: number,
-): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'nfcTags' | 'access' | 'ai' | 'starred' | 'tags'> {
+): Pick<TrashInfo, 'versions' | 'secrets' | 'webhookTokens' | 'uploadTokens' | 'nfcTags' | 'access' | 'ai' | 'starred' | 'tags'> {
   const all = (sql: string) => host.db.prepare(sql).all(projectId)
   const nullable = (value: unknown) => (value === null ? null : Number(value))
   return {
@@ -195,6 +196,9 @@ function restorableRows(
       assignedAt: String(row.assigned_at),
     })),
     webhookTokens: all('SELECT name, token_hash, created_at FROM webhook_tokens WHERE project_id = ? ORDER BY name').map(
+      (row) => ({ name: String(row.name), tokenHash: String(row.token_hash), createdAt: String(row.created_at) }),
+    ),
+    uploadTokens: all('SELECT name, token_hash, created_at FROM upload_tokens WHERE project_id = ? ORDER BY name').map(
       (row) => ({ name: String(row.name), tokenHash: String(row.token_hash), createdAt: String(row.created_at) }),
     ),
     nfcTags: all('SELECT id, created_at FROM nfc_tags WHERE project_id = ? ORDER BY id').map((row) => ({
@@ -400,6 +404,8 @@ function insertRestored(host: Host, name: string, info: TrashInfo): Project {
     }
     const token = db.prepare('INSERT OR IGNORE INTO webhook_tokens (project_id, name, token_hash, created_at) VALUES (?, ?, ?, ?)')
     for (const t of info.webhookTokens ?? []) token.run(projectId, t.name, t.tokenHash, t.createdAt)
+    const uploadToken = db.prepare('INSERT OR IGNORE INTO upload_tokens (project_id, name, token_hash, created_at) VALUES (?, ?, ?, ?)')
+    for (const t of info.uploadTokens ?? []) uploadToken.run(projectId, t.name, t.tokenHash, t.createdAt)
     const tag = db.prepare('INSERT OR IGNORE INTO nfc_tags (id, project_id, created_at) VALUES (?, ?, ?)')
     for (const t of info.nfcTags ?? []) tag.run(t.id, projectId, t.createdAt)
     const hobTag = db.prepare('INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES (?, ?)')

@@ -959,8 +959,17 @@ async fn send_push(
         .send(&ApnsRequest {
             environment,
             token,
-            push_type: PushType::Alert,
-            priority: request.priority,
+            // APNs refuses background pushes at a priority other than 5.
+            push_type: if request.kind == Kind::Background {
+                PushType::Background
+            } else {
+                PushType::Alert
+            },
+            priority: if request.kind == Kind::Background {
+                5
+            } else {
+                request.priority
+            },
             expiration,
             collapse_id: request.collapse_id,
             payload: payload.into_bytes(),

@@ -12,18 +12,25 @@ pub enum Kind {
     Alert,
     Command,
     Prompt,
+    /// Wakes the app without showing anything, for example to withdraw a
+    /// notification. APNs throttles these and drops them after a force quit.
+    Background,
 }
 
 /// Shown only when the notification service extension cannot open the push.
 fn fallback_body(kind: Kind) -> &'static str {
     match kind {
-        Kind::Alert => "You have a new notification.",
+        Kind::Alert | Kind::Background => "You have a new notification.",
         Kind::Command => "A hob sent a request to this device. Open Hobwork if it did not apply.",
         Kind::Prompt => "A hob is waiting. Tap to continue.",
     }
 }
 
 pub fn push(kind: Kind, grant_id: &str, key_id: &str, ciphertext: &str) -> Value {
+    let envelope = json!({ "v": 1, "grant": grant_id, "keyId": key_id, "ciphertext": ciphertext });
+    if kind == Kind::Background {
+        return json!({ "aps": { "content-available": 1 }, "hobwork": envelope });
+    }
     let mut aps = json!({
         "alert": { "title": TITLE, "body": fallback_body(kind) },
         "mutable-content": 1,
@@ -31,11 +38,9 @@ pub fn push(kind: Kind, grant_id: &str, key_id: &str, ciphertext: &str) -> Value
     match kind {
         Kind::Command => aps["interruption-level"] = json!("passive"),
         Kind::Alert | Kind::Prompt => aps["sound"] = json!("default"),
+        Kind::Background => unreachable!(),
     }
-    json!({
-        "aps": aps,
-        "hobwork": { "v": 1, "grant": grant_id, "keyId": key_id, "ciphertext": ciphertext },
-    })
+    json!({ "aps": aps, "hobwork": envelope })
 }
 
 /// The extension cannot hide it, so people see the text once when they set up

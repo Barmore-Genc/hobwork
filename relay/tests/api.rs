@@ -501,6 +501,25 @@ async fn signed_pushes_reach_apns_with_generic_text() {
 }
 
 #[tokio::test]
+async fn background_pushes_show_nothing() {
+    let h = Harness::new();
+    let reg = h.register(TOKEN).await;
+    let key = sidecar_key();
+    let grant = h.grant(&reg, "pairing-1", &key).await;
+
+    let background = json!({ "kind": "background", "keyId": "k1", "ciphertext": "AAAA", "collapseId": "c2" });
+    let (status, body) = h.push(&grant, &key, &background).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let sent = h.apns.last();
+    assert_eq!(sent.push_type, PushType::Background);
+    assert_eq!(sent.priority, 5);
+    let payload = h.apns.last_payload();
+    assert_eq!(payload["aps"], json!({ "content-available": 1 }));
+    assert_eq!(payload["hobwork"]["grant"], grant.as_str());
+    assert_eq!(payload["hobwork"]["ciphertext"], "AAAA");
+}
+
+#[tokio::test]
 async fn pushes_need_a_fresh_signature_from_the_grant_key() {
     let h = Harness::new();
     let reg = h.register(TOKEN).await;

@@ -50,8 +50,9 @@ final class BridgeRouter {
     }
 
     /// Capability name to method names, which the page script lists for `native.has`.
+    /// Capabilities this device has no method of are left out.
     var manifest: [String: [String]] {
-        capabilities.mapValues { $0.methods.sorted() }
+        capabilities.mapValues { $0.methods.sorted() }.filter { !$0.value.isEmpty }
     }
 
     var permissions: any BridgePermissionStore {

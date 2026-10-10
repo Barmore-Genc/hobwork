@@ -109,6 +109,8 @@ A command arrives over the socket, by a command push the notification service ex
 
 Hob pages reach NFC and alarms through the web bridge (`Web/Bridge/Capabilities/NFCBridge.swift`, `AlarmsBridge.swift`). NFC uses a tag reader session (`Capabilities/NFC/CoreNFCTagSession.swift`) for the tags' hardware IDs, the read-back check after writes and sessions that read tag after tag. Timers can have a repeat button next to Stop (AlarmKit's post-alert countdown); `AlarmEventReporter` tells hobs when their alarms ring, stop or repeat, from AlarmKit's updates and from the alarms' stop and repeat intents. Settings lists, under Alarms and NFC, the hobs that asked to set alarms or write tags, each with a switch.
 
+The camera bridge (`Web/Bridge/Capabilities/CameraBridge.swift`) presents VisionKit's data scanner full screen over the page (`VisionKitCamera.swift`) with close, torch, the page's status text and buttons and a shutter, and takes single photos with the system camera. It is iOS only and needs `NSCameraUsageDescription`.
+
 Unit tests cover argument checks, command dedup and expiry, result, event and sample encoding, Screen Time intervals and the monitor's actions, alarm schedules, the alarms screen's rows and what follows a tapped alarms command, NFC links and records, and the notification summaries. What only a device can show:
 
 - Screen Time: the Family Controls prompt, the app picker, shields from ManagedSettings, and that DeviceActivity calls the monitor extension at interval start, end and threshold (limits, schedules, the end of timed blocks).

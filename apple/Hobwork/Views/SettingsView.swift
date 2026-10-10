@@ -238,7 +238,7 @@ private struct HobPermissionsSection: View {
         } header: {
             Text("Hob Permissions")
         } footer: {
-            Text("Hobs ask before they read your clipboard, write NFC tags or set alarms and timers.")
+            Text("Hobs ask before they use the camera, read your clipboard, write NFC tags or set alarms and timers.")
         }
         .task { answers = router.permissions.all }
     }

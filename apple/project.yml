@@ -93,6 +93,7 @@ targets:
         UIBackgroundModes: [remote-notification]
         NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this device.
         NFCReaderUsageDescription: Hobwork reads and writes NFC tags that run your hobs.
+        NSCameraUsageDescription: Hobs you open in Hobwork can scan barcodes and take photos when you ask them to.
         # Tag reader sessions that poll ISO 14443 need this list. The NFC Forum
         # NDEF application lets Type 4 tags show up too.
         com.apple.developer.nfc.readersession.iso7816.select-identifiers: [D2760000850101]

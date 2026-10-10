@@ -353,6 +353,7 @@ final class AppModel {
         let host: () -> URL? = { [weak self] in self?.pairing?.host }
         #if os(iOS)
             router.register(HapticsBridge())
+            router.register(CameraBridge(device: VisionKitCamera()))
             router.register(NFCBridge(session: nfc, host: host, handoff: handoff))
             router.register(AlarmsBridge(capability: AlarmsCapability(scheduler: alarms)) { [weak self] in
                 await self?.authorizeAlarms() ?? false

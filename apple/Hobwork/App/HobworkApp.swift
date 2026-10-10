@@ -50,7 +50,7 @@ import SwiftUI
             model.didRegisterForPush(token: deviceToken)
         }
 
-        /// Renewal pushes, which the relay sends as background pushes.
+        /// Background pushes: relay renewals, and notifications a hob withdrew.
         func application(
             _ application: UIApplication,
             didReceiveRemoteNotification userInfo: [AnyHashable: Any]

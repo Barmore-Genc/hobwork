@@ -41,7 +41,13 @@ struct OpenedPush: Equatable, Sendable {
         if let command = hobwork["command"], let id = command["id"] {
             return DeviceCommand(id: id, capability: "", method: "").key
         }
-        return hobwork["id"]?.stringValue
+        guard let id = hobwork["id"]?.stringValue else { return nil }
+        return NotificationPayload.handledKey(id: id, revision: hobwork["revision"]?.numberValue.map { Int($0) })
+    }
+
+    /// Notification IDs a hob withdrew, from a background push.
+    var withdrawn: [String]? {
+        hobwork["withdraw"]?.arrayValue?.compactMap(\.stringValue)
     }
 
     var isCommand: Bool { hobwork["command"] != nil }

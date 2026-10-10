@@ -122,6 +122,27 @@ struct PushOpenerTests {
         #expect(CommandPush(userInfo: content.userInfo) == nil)
     }
 
+    @Test func laterRevisionsOfANotificationAreNotRepeats() throws {
+        let first = notification(id: "n7")
+        let second = first.replacingOccurrences(of: #""id":"n7","#, with: #""id":"n7","revision":2,"update":true,"#)
+        let opened = try opener().open(grant: "grant-1", keyId: pairing.keys.keyId, ciphertext: seal(first), now: now)
+        #expect(opened.handledId == "n7")
+        let updated = try opener().open(grant: "grant-1", keyId: pairing.keys.keyId, ciphertext: seal(second), now: now)
+        #expect(updated.handledId == "n7#2")
+        #expect(throws: PushOpener.Drop.repeated("n7#2")) {
+            try opener().open(grant: "grant-1", keyId: pairing.keys.keyId, ciphertext: seal(second), now: now)
+        }
+    }
+
+    @Test func opensAWithdrawal() throws {
+        let plaintext = """
+        {"v":1,"sentAt":1790841600,"expiresAt":1790928000,"aps":{"content-available":1},"hobwork":{"withdraw":["n1","n2"]}}
+        """
+        let opened = try opener().open(grant: "grant-1", keyId: pairing.keys.keyId, ciphertext: seal(plaintext), now: now)
+        #expect(opened.withdrawn == ["n1", "n2"])
+        #expect(opened.handledId == nil)
+    }
+
     @Test func opensACommand() throws {
         let plaintext = """
         {"v":1,"sentAt":1790841600,"expiresAt":1790842200,"aps":{"alert":{"title":"kitchen","body":"Fallback"},"interruption-level":"passive","thread-id":"kitchen"},"hobwork":{"project":"kitchen","command":{"id":"c1","capability":"focus","method":"status","args":{},"expiresAt":"2026-10-01T08:10:00Z","x":null}}}

@@ -129,10 +129,19 @@ final class AppModel {
         push.tokenArrived(token.hex, environment: .current)
     }
 
-    /// A background push from the relay, which only renewal pushes are.
+    /// A background push from the relay: renewals, and hosts withdrawing notifications.
     func didReceiveBackgroundPush(_ userInfo: [AnyHashable: Any]) async {
-        guard case let .renew(grants) = RelayPush(userInfo: userInfo) else { return }
-        await push.renew(grants: grants).value
+        switch RelayPush(userInfo: userInfo) {
+        case let .renew(grants)?:
+            await push.renew(grants: grants).value
+        case let .sealed(grant, keyId, ciphertext)?:
+            guard let opened = try? PushOpener().open(grant: grant, keyId: keyId, ciphertext: ciphertext),
+                  let ids = opened.withdrawn
+            else { return }
+            Notifier.withdraw(ids)
+        default:
+            break
+        }
     }
 
     private func sendGrant(_ grant: HostPushGrant?, to host: URL) async {

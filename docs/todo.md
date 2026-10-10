@@ -173,6 +173,15 @@ See Web bridge in `docs/architecture.md`.
 - Printer and media lists: iOS has no API for them outside the picker and a print. macOS could list `NSPrinter.printerNames` and their papers.
 - Permissions are per hob and shared with its branch previews. A preview with new code reads the clipboard if main was allowed.
 
+## NFC and alarms
+
+- Untested on hardware (unit tests with fake sessions and a fake AlarmKit only): `NFCTagReaderSession` with NTAG21x, ISO 15693 and Type 4 tags (UIDs, read-back after write, `restartPolling` in sessions and how often a tag left on the reader is found again), the 60 second end of a session, the iPad to iPhone hand-off end to end, AlarmKit's repeat button with `.countdown` behavior, whether AlarmKit runs `secondaryIntent` for a `.countdown` button (if not, `repeated` comes only from `alarmUpdates` while the app runs), the stop and repeat intents launching the app in the background, and the Live Activity's subtitle, tint and repeat button.
+- Links to hob origins (`https://<hob>.apps.<host>/spool/78` on a tag) are not universal links, so iOS background tag reading opens them in Safari, and only the Scan NFC Tag action hands them to an open page. Making them universal links needs `applinks:*.apps.<host>` in Associated Domains (wildcards are fetched from the apps host itself, which serves no app) and an `apple-app-site-association` there that leaves out `/_hobwork/*` (the sign-in callback must stay in the browser). Every link to a hob would then open the app.
+- `alarms/fired` is only reported when the app sees the ring or a Stop/repeat; a timer that rings and is never stopped while the app is not running reports nothing until the app runs. AlarmKit gives apps no callback when an alarm fires.
+- The alert's Stop button text ("Took them out") cannot be set on iOS 26.1 and later; the hob can put it in the title or subtitle.
+- Hand-off only covers `nfc.read` and `nfc.write`; alarms ring on the device that set them, as the filament hob wants.
+- `alarm-states.json` keeps one entry per alarm ID that ever rang; hobs that make new IDs for every timer grow it slowly.
+
 ## Share links
 
 See Share links in `docs/architecture.md`.

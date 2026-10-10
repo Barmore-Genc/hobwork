@@ -11,8 +11,10 @@ export const MAX_ROWS = 10_000
 export const MAX_STATEMENTS = 1_000
 
 // Read-only schema introspection. Every other PRAGMA changes connection or
-// database state that belongs to the host.
+// database state that belongs to the host. data_version is read-only too, and
+// FTS5 runs it on every statement that touches an FTS5 table.
 const ALLOWED_PRAGMAS = new Set([
+  'data_version',
   'table_info',
   'table_xinfo',
   'table_list',

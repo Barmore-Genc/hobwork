@@ -10,6 +10,8 @@ mac_local_signing := "CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TE
 # Development profiles for macOS list the Mac, so the first team build registers it.
 mac_team_signing := "-allowProvisioningUpdates -allowProvisioningDeviceRegistration"
 
+alias testflight := upload
+
 _default:
     @just --list
 
@@ -96,10 +98,10 @@ install-device name="": generate
 run-device name="": (install-device name)
     xcrun devicectl device process launch --device "$(just _device '{{name}}')" {{bundle_id}}
 
-# Archive a release build and upload it to App Store Connect for TestFlight. It is signed
-# without Family Controls, which TestFlight only accepts once Apple approved the
-# distribution entitlement, so it does not offer Screen Time.
-testflight: generate
+# Signed without Family Controls, which TestFlight only accepts once Apple approved the
+# distribution entitlement, so this build does not offer Screen Time.
+# Archive a release build and upload it to App Store Connect for TestFlight
+upload: generate
     #!/usr/bin/env bash
     set -euo pipefail
     # Every upload needs a build number higher than the last one.

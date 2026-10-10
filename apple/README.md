@@ -18,7 +18,7 @@ Every `just` recipe regenerates the project first. Targets:
 - `Hobwork`: the app, for iOS and macOS.
 - `HobworkNotificationService`: notification service extension, for iOS and macOS. It opens sealed relay pushes and answers the relay's proof and renewal pushes (see Push). Pushes with actions name a category `hobwork.<id>` that the app has never seen, so the extension registers it from the payload's `hobwork.actions` before the system shows the notification. Command pushes (`hobwork.command` without `foreground`) run through the same command runner as the app, post the result to `POST /api/devices/results` and replace the notification text with a summary. When the extension runs out of time, the system shows the host's text.
 - `HobworkDeviceActivityMonitor` (iOS only): DeviceActivity monitor extension. Applies and lifts Screen Time shields for schedules, daily limits and timed blocks, even when the app is not running.
-- `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers, with Pause, Resume, Cancel and Stop buttons. The buttons run `AlarmControlIntent` (`Hobwork/Alarms/AlarmControlIntent.swift`), a `LiveActivityIntent` that is part of both the app and the extension, as Apple requires; iOS runs it in the app, which AlarmKit authorized.
+- `HobworkWidgets` (iOS only): widget extension with the Live Activity AlarmKit shows for timers, with Pause, Resume, Cancel and Stop buttons. The buttons run `AlarmControlIntent` (`Hobwork/Alarms/AlarmControlIntent.swift`), a `LiveActivityIntent` that is part of both the app and the extension, as Apple requires; iOS runs it in the app, which AlarmKit authorized. It also has hobs' Live Activities, the hob widget and the Hob Action and Hob Page controls (see Live Activities, widgets and intents).
 - `HobworkTests`: unit tests (Swift Testing), for iOS and macOS. Tests of iOS-only capabilities are in `HobworkTests/iOS/`.
 - `HobworkUITests` (iOS only, own scheme): a smoke test against a running host, skipped unless `just smoke` runs it.
 
@@ -111,6 +111,14 @@ Hob pages reach NFC and alarms through the web bridge (`Web/Bridge/Capabilities/
 
 The camera bridge (`Web/Bridge/Capabilities/CameraBridge.swift`) presents VisionKit's data scanner full screen over the page (`VisionKitCamera.swift`) with close, torch, the page's status text and buttons and a shutter, and takes single photos with the system camera. It is iOS only and needs `NSCameraUsageDescription`.
 
+## Live Activities, widgets and intents
+
+Code shared by the app and the widget extension is in `Hobwork/Shared/LiveActivities/` and `Hobwork/Shared/Hobs/` (iOS only, not in the notification service extension). The widget extension also takes the host API, Keychain and push files it needs (see `project.yml`); it reads the device token and pairing keys from the Keychain under the app group's access group.
+
+- **Live Activities**: `HobworkActivityAttributes` (`hob`, `id`, and a `ContentState` of title, subtitle, swatches, icon, tint, `endsAt`, `startedAt`, `progress`, `value`, `valueLabel`, `button`, `open`, `stillRunning`). The relay puts sealed attributes and state under `{ "hobwork": <envelope> }`; decoding opens them with the pairing's keys and falls back to "Open Hobwork to see this." when they do not open. `LiveActivities` (`Capabilities/LiveActivities/`) runs the host's `liveActivities.start`, `update` and `end` calls; a start first ends activities running under the same ID. `LiveActivityTokens` registers the push-to-start token and each activity's token with the relay under the pairing's grant and reports the relay's IDs to the host (`startToken`, `state`); the last start token is kept in the app group so a launch does not report it again. The button runs `LiveActivityButtonIntent`, which sends `liveActivities` / `action` to the host. Hob pages use the `liveActivities` bridge capability.
+- **Widget**: "Hob" shows what a hob's widget route answers (`GET /api/devices/widgets/<hob>`), refreshing at `refreshAt` or every 30 minutes, and the host's `widgets.reload` call and background push reload it.
+- **Intents**: "Run Hob Action" asks for the action's parameters one by one, posts it to the host and says its answer; "Open Hob Page" opens a hob page. Both are App Shortcuts, and the "Hob Action" and "Hob Page" controls use them. Taps on widgets and Live Activities and opening intents use `hobwork://open?hob=<hob>&path=<path>`, which the app opens at `/p/<hob><path>`.
+
 Unit tests cover argument checks, command dedup and expiry, result, event and sample encoding, Screen Time intervals and the monitor's actions, alarm schedules, the alarms screen's rows and what follows a tapped alarms command, NFC links and records, and the notification summaries. What only a device can show:
 
 - Screen Time: the Family Controls prompt, the app picker, shields from ManagedSettings, and that DeviceActivity calls the monitor extension at interval start, end and threshold (limits, schedules, the end of timed blocks).
@@ -120,6 +128,7 @@ Unit tests cover argument checks, command dedup and expiry, result, event and sa
 - The Scan NFC Tag and Send Tag to Hobwork actions from Shortcuts, the Action Button and a "When I tap an NFC tag" automation.
 - Health: authorization, queries while locked (`locked`) and background delivery waking the app.
 - The Focus filter running when a Focus turns on and off, on iOS and macOS.
+- Live Activities: push-to-start and update pushes through the relay, sealed state opening in the widget extension, the Lock Screen and Dynamic Island layouts, the button intents, and the hob widget and controls on a Home Screen, Lock Screen and in Control Center.
 - On macOS with team signing: the push token, pushes with actions and command pushes through the notification service extension, and the credentials in the app group's keychain access group.
 - Relay pushes: App Attest registration and assertions (and whether a Mac supports them), the proof push reaching the extension and the app, renewal background pushes waking the app, sealed pushes opened by the extension on iOS and macOS, and that the extension cannot make assertions for the app's key.
 

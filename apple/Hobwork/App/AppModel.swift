@@ -46,6 +46,13 @@ final class AppModel {
         @ObservationIgnored private(set) lazy var alarmEvents = AlarmEventReporter { [weak self] report in
             await self?.deliver(report)
         }
+        @ObservationIgnored let liveActivitySystem = ActivityKitSystem()
+        @ObservationIgnored private(set) lazy var liveActivities = LiveActivities(system: liveActivitySystem)
+        @ObservationIgnored private(set) lazy var liveActivityTokens = LiveActivityTokens(
+            relay: RelayClient(asserter: SystemAppAttest()),
+            host: { [weak self] in self?.pairing?.host },
+            send: { [weak self] event in await self?.send(event) }
+        )
         @ObservationIgnored let healthStore = HKHealthStore()
         @ObservationIgnored private(set) lazy var health = HealthDelivery(store: healthStore) { [weak self] event in
             await self?.send(event)
@@ -76,6 +83,8 @@ final class AppModel {
         #if os(iOS)
             health.start()
             watchAlarms()
+            LiveActivityEvents.send = { [weak self] event in await self?.send(event) }
+            liveActivitySystem.watch(liveActivityTokens)
         #endif
     }
 
@@ -142,10 +151,11 @@ final class AppModel {
         case let .renew(grants)?:
             await push.renew(grants: grants).value
         case let .sealed(grant, keyId, ciphertext)?:
-            guard let opened = try? PushOpener().open(grant: grant, keyId: keyId, ciphertext: ciphertext),
-                  let ids = opened.withdrawn
-            else { return }
-            Notifier.withdraw(ids)
+            guard let opened = try? PushOpener().open(grant: grant, keyId: keyId, ciphertext: ciphertext) else { return }
+            if let ids = opened.withdrawn { Notifier.withdraw(ids) }
+            #if os(iOS)
+                if opened.hobwork["reloadWidgets"] == .bool(true) { WidgetReloader.reloadAll() }
+            #endif
         default:
             break
         }
@@ -153,6 +163,9 @@ final class AppModel {
 
     private func sendGrant(_ grant: HostPushGrant?, to host: URL) async {
         guard let api, pairing?.host == host else { return }
+        #if os(iOS)
+            await liveActivityTokens.reportStartToken()
+        #endif
         do {
             try await api.updatePush(grant)
         } catch HostError.unauthorized {
@@ -233,6 +246,10 @@ final class AppModel {
         /// the app stays where it is.
         func open(_ url: URL) {
             guard let pairing else { return }
+            if let link = HobLink(url: url) {
+                web.open(link: link.webPath)
+                return
+            }
             if NFCTagLink.tag(from: url, host: pairing.host) != nil {
                 Task { await scanned(url, records: nil) }
                 return
@@ -303,6 +320,8 @@ final class AppModel {
         #if os(iOS)
             runner.register(NFCCapability(session: nfc, host: { [weak self] in self?.pairing?.host }), for: NFCCapability.capability)
             BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
+            runner.register(liveActivities, for: LiveActivities.capability)
+            runner.register(WidgetsCapability(), for: WidgetsCapability.capability)
         #else
             BackgroundCapabilities.register(on: runner)
         #endif
@@ -326,6 +345,9 @@ final class AppModel {
             connection.start()
             await notifier.requestAuthorization()
             await refreshCapabilities()
+            #if os(iOS)
+                HobworkShortcuts.updateAppShortcutParameters()
+            #endif
         }
     }
 
@@ -357,6 +379,10 @@ final class AppModel {
             router.register(NFCBridge(session: nfc, host: host, handoff: handoff))
             router.register(AlarmsBridge(capability: AlarmsCapability(scheduler: alarms)) { [weak self] in
                 await self?.authorizeAlarms() ?? false
+            })
+            router.register(LiveActivitiesBridge(activities: liveActivities) { [weak self] hob, op, id, args in
+                guard let api = self?.api else { throw HostError.unreachable("This device isn't connected to a Hobwork host") }
+                return try await api.liveActivity(hob: hob, op: op, id: id, args: args)
             })
         #else
             router.register(NFCBridge(host: host, handoff: handoff))

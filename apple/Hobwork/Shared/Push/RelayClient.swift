@@ -105,6 +105,12 @@ struct RelayRegistrationInfo: Decodable, Equatable, Sendable {
     var grants: [RelayGrantInfo]
 }
 
+/// `start` is the push-to-start token, `update` one activity's token.
+enum RelayActivityTokenKind: String, Codable, Sendable {
+    case start
+    case update
+}
+
 struct RelayAttestation: Encodable, Equatable, Sendable {
     /// Standard base64, as `DCAppAttestService` returns it.
     var keyId: String
@@ -183,6 +189,27 @@ struct RelayClient: Sendable {
 
     func deleteGrant(_ auth: RelayAuth, grant: String) async throws {
         _ = try await send(method: "DELETE", path: "/v1/registrations/\(auth.id)/grants/\(grant)", body: nil, auth: auth)
+    }
+
+    /// Registers an ActivityKit token under a grant and returns the ID the host pushes to.
+    /// `token` is hex.
+    func createActivityToken(_ auth: RelayAuth, grant: String, kind: RelayActivityTokenKind, token: String) async throws -> String {
+        struct Body: Encodable {
+            var kind: RelayActivityTokenKind
+            var token: String
+        }
+        struct Response: Decodable { var id: String }
+        return try await decode(
+            Response.self,
+            method: "POST",
+            path: "/v1/registrations/\(auth.id)/grants/\(grant)/activity-tokens",
+            body: Body(kind: kind, token: token),
+            auth: auth
+        ).id
+    }
+
+    func deleteActivityToken(_ auth: RelayAuth, grant: String, id: String) async throws {
+        _ = try await send(method: "DELETE", path: "/v1/registrations/\(auth.id)/grants/\(grant)/activity-tokens/\(id)", body: nil, auth: auth)
     }
 
     // MARK: Requests

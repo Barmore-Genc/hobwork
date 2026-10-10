@@ -8,6 +8,10 @@ import WidgetKit
 struct HobworkWidgets: WidgetBundle {
     var body: some Widget {
         AlarmLiveActivity()
+        HobLiveActivity()
+        HobWidget()
+        HobActionControl()
+        HobPageControl()
     }
 }
 

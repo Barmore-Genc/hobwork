@@ -220,7 +220,7 @@ struct HostAPI: Sendable {
         return request
     }
 
-    private func request(method: String, path: String, body: (any Encodable)? = nil) -> URLRequest {
+    func request(method: String, path: String, body: (any Encodable)? = nil) -> URLRequest {
         var request = URLRequest(url: host.appending(path: path))
         request.httpMethod = method
         request.timeoutInterval = 15
@@ -245,7 +245,7 @@ struct HostAPI: Sendable {
         }
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await load(request)
         switch response.statusCode {
         case 200 ..< 300: return data
@@ -257,7 +257,7 @@ struct HostAPI: Sendable {
         }
     }
 
-    private func decode<T: Decodable>(_ type: T.Type, _ request: URLRequest) async throws -> T {
+    func decode<T: Decodable>(_ type: T.Type, _ request: URLRequest) async throws -> T {
         let data = try await send(request)
         do {
             return try JSONDecoder().decode(type, from: data)

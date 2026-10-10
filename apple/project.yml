@@ -48,8 +48,11 @@ targets:
           - Shared/Alarms
           - Shared/ScreenTime
           - Shared/Health
+          - Shared/LiveActivities
+          - Shared/Hobs
           - Capabilities/NFC
           - Capabilities/Health
+          - Capabilities/LiveActivities
           - Views/ScreenTimeSettings.swift
           - Views/HealthSettings.swift
       - path: Hobwork/Alarms
@@ -63,6 +66,12 @@ targets:
       - path: Hobwork/Capabilities/NFC
         destinationFilters: [iOS]
       - path: Hobwork/Capabilities/Health
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/LiveActivities
+        destinationFilters: [iOS]
+      - path: Hobwork/Shared/Hobs
+        destinationFilters: [iOS]
+      - path: Hobwork/Capabilities/LiveActivities
         destinationFilters: [iOS]
       - path: Hobwork/Views/ScreenTimeSettings.swift
         destinationFilters: [iOS]
@@ -89,6 +98,7 @@ targets:
           - CFBundleURLName: dev.bgenc.hobwork
             CFBundleURLSchemes: [hobwork]
         NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
         # Relay grant renewals arrive as background pushes.
         UIBackgroundModes: [remote-notification]
         NSAlarmKitUsageDescription: Hobs on your Hobwork host can set alarms and timers on this device.
@@ -131,6 +141,8 @@ targets:
           - Alarms
           - ScreenTime
           - Health
+          - LiveActivities
+          - Hobs
       - path: Hobwork/Shared/Alarms
         destinationFilters: [iOS]
       - path: Hobwork/Shared/ScreenTime
@@ -192,6 +204,21 @@ targets:
       - path: Widgets
       - path: Hobwork/Shared/Alarms/HobworkAlarmMetadata.swift
       - path: Hobwork/Alarms/AlarmControlIntent.swift
+      # Live Activities, widgets and controls talk to the host and open sealed pushes.
+      - path: Hobwork/Shared/LiveActivities
+      - path: Hobwork/Shared/Hobs
+      - path: Hobwork/Shared/AppGroup.swift
+      - path: Hobwork/Shared/Encoding.swift
+      - path: Hobwork/Shared/JSONValue.swift
+      - path: Hobwork/Shared/SharedFile.swift
+      - path: Hobwork/Shared/Time.swift
+      - path: Hobwork/Shared/Host/HostAPI.swift
+      - path: Hobwork/Shared/Host/HostProbe.swift
+      - path: Hobwork/Shared/Host/Keychain.swift
+      - path: Hobwork/Shared/Push/PushStore.swift
+      - path: Hobwork/Shared/Push/PushCrypto.swift
+      - path: Hobwork/Shared/Push/RelayClient.swift
+      - path: Hobwork/Shared/Commands/DeviceMessage.swift
     info:
       path: Widgets/Info.plist
       properties:

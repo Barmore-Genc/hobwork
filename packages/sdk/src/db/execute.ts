@@ -5,6 +5,7 @@ import { constants, type DatabaseSync, type SQLInputValue, type StatementSync } 
 import type { DbRequest, DbResponse, WireResult, WireStatement, WireValue } from '../runner/protocol.ts'
 import { MIGRATIONS_TABLE } from './migrations.ts'
 import { firstKeyword, splitStatements } from './sql.ts'
+import { registerVectorFunctions } from './vector-functions.ts'
 
 export const MAX_ROWS = 10_000
 export const MAX_STATEMENTS = 1_000
@@ -98,6 +99,7 @@ function sqliteErrorCode(err: unknown): string | undefined {
 // Installs the authorizer that keeps handler statements to reading and writing
 // rows. The host's own statements (BEGIN, COMMIT) run through `asHost`.
 export function createExecutor(db: DatabaseSync) {
+  registerVectorFunctions(db)
   let host = false
   let denied: string | undefined
   let writes = false

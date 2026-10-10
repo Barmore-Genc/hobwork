@@ -61,6 +61,28 @@ test('the project DB lives in the data dir and keeps rows across connections', a
   })
 })
 
+test('handler queries on production and branch DBs have the vector functions, migrations do not', async () => {
+  const vec = (values: number[]) => `X'${Buffer.from(new Float32Array(values).buffer).toString('hex')}'`
+  const table = 'CREATE TABLE spools (id INTEGER PRIMARY KEY, embedding BLOB NOT NULL) STRICT;'
+  await deployed({ 'migrations/0001_spools.sql': table })
+  await data.execute({ project: 'filament' }, sql(`INSERT INTO spools (embedding) VALUES (${vec([1, 0])})`))
+  expect(await data.execute({ project: 'filament' }, sql(`SELECT vec_distance_l2(embedding, ${vec([1, 1])}) AS d FROM spools`))).toMatchObject({
+    results: [{ rows: [{ d: 1 }] }],
+  })
+  const files = join(workspaceDir(host, 'filament', 'dev'), 'files')
+  mkdirSync(join(files, 'migrations'), { recursive: true })
+  writeFileSync(join(files, 'migrations', '0001_spools.sql'), table)
+  await data.resetBranch('filament', 'dev')
+  const onBranch = await data.executeOnBranch('filament', 'dev', migrationsOf(host, files), sql(`SELECT vec_distance_cosine(embedding, ${vec([0, 3])}) AS d FROM spools`))
+  expect(onBranch).toMatchObject({ results: [{ rows: [{ d: 1 }] }] })
+  // A view or trigger using them would make the DB depend on Hobwork's functions.
+  const outcome = await dryRun({
+    'migrations/0001_spools.sql': table,
+    'migrations/0002_view.sql': 'CREATE VIEW near AS SELECT id FROM spools WHERE vec_dot(embedding, embedding) > 0;',
+  })
+  expect(outcome).toEqual({ status: 'failed', output: 'The migrated DB cannot be read: no such function: vec_dot' })
+})
+
 test('deploy applies only new migrations and logs them', async () => {
   await deployed({ 'migrations/0001_spools.sql': SPOOLS })
   await deployed({

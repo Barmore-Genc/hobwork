@@ -490,6 +490,16 @@ Handlers get `ctx.db` (`packages/sdk/src/index.ts`): `query(sql, params)` (rows)
 - **Rules** (`packages/sdk/src/db/execute.ts`, enforced with SQLite's authorizer and a small lexer): one statement per SQL string (node:sqlite would silently ignore the rest); no schema changes, which belong in migrations so the dry run sees them; no `BEGIN` or `SAVEPOINT`; no `ATTACH`, `VACUUM` or `load_extension`, which could read or write files on the host; only introspection PRAGMAs (`table_info` and similar); no writes to `hobwork_migrations`. Results are limited to 10,000 rows.
 - **Execution**: each open hob DB has a worker thread with one connection (`server/src/data/db-pool.ts`), so a slow query blocks that hob's queries and not the host. A query that runs longer than 30s is abandoned: SQLite cannot be interrupted from Node, so the worker is terminated and the next query opens a new connection. Workers close after 5 idle minutes. A worker sets `PRAGMA trusted_schema = OFF`, so triggers and views in a DB that a migration produced cannot call unsafe functions. node:sqlite has no `setLimit`, so `SQLITE_LIMIT_ATTACHED` is not available; the authorizer above is what keeps `ATTACH` out of queries.
 - **Isolation**: the internal handler is bound to the VM when it is created, so a runtime VM reaches only its hob's DB and a workspace VM only its branch DB.
+- **Vector search** (`packages/sdk/src/db/vector-functions.ts`): the executor registers `vec_distance_cosine(a, b)` (1 minus the cosine similarity, `NULL` for a zero vector), `vec_distance_l2(a, b)` and `vec_dot(a, b)` with node:sqlite's `db.function()`. Vectors are BLOBs of little-endian float32 values, which `vector.encode(numbers)` and `vector.decode(bytes)` from `@hobwork/sdk` write and read. `NULL` in gives `NULL`; vectors of different lengths or BLOBs that are not whole float32 values are an error. Queries compare every row (brute force), which is fast enough for hob-sized tables; there is no native extension and no index. Because the executor registers them, handler queries on the production DB, branch DBs (copies opened by the same worker) and `createTestDb()` all have them. Migrations (in the VM and in the host fallback) do not: the functions are `directOnly`, so views, triggers, `CHECK` constraints and index expressions cannot use them, and a DB file never depends on Hobwork's functions to open. A view that calls one fails the dry run with "no such function". Rejected: sqlite-vec, a native extension the host would have to ship per platform and that `load_extension` rules keep out. Usage with `embed()`:
+
+  ```ts
+  const ai = openrouter(ctx)
+  const { embeddings: [query], model } = await ai.embed(text)
+  const similar = await ctx.db.query(
+    'SELECT id, name, vec_distance_cosine(embedding, ?) AS distance FROM notes WHERE embedding_model = ? ORDER BY distance LIMIT 10',
+    [vector.encode(query!), model],
+  )
+  ```
 
 ### Migrations
 

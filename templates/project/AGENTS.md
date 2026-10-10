@@ -92,7 +92,7 @@ const label = await ai.pick('What kind of email is this?', ['bill', 'shipping', 
 
 `decide({ state, questions })` asks several questions at once through OpenRouter's Decisions API and returns typed answers: `noul` (probability of yes), `choice` (one of the `criteria` keys, with probabilities) and `score` (the expected level of an ordered scale, lowest first). Decision models read questions literally and cannot count, do arithmetic or compare dates: compute those in code and ask about the result. Ask one judgment per question, about a property of the data, and keep `state` to what the question needs.
 
-`embed(input)` takes a string or an array of strings and returns `{ embeddings, model }`, one vector per input. Store `model` with the vectors: people can change the embedding model, and vectors from different models cannot be compared, so re-embed rows whose model differs from the current one before comparing.
+`embed(input)` takes a string or an array of strings and returns `{ embeddings, model }`, one vector per input. Store `model` with the vectors: people can change the embedding model, and vectors from different models cannot be compared, so re-embed rows whose model differs from the current one before comparing. Store vectors as `BLOB` columns with `vector.encode(numbers)` from `@hobwork/sdk` (`vector.decode` reads them back) and rank rows in SQL with `vec_distance_cosine(a, b)`, `vec_distance_l2(a, b)` or `vec_dot(a, b)`, for example `SELECT id FROM notes WHERE embedding_model = ? ORDER BY vec_distance_cosine(embedding, ?) LIMIT 10`. These work in handler queries and `createTestDb()`, not in migrations, views or triggers.
 
 ### Limits
 

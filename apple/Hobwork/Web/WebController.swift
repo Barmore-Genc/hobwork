@@ -16,6 +16,8 @@ final class WebController: NSObject {
     private(set) var title: String?
 
     @ObservationIgnored let webView: WKWebView
+    /// `window.hobworkNative` for hob pages.
+    @ObservationIgnored let bridge: NativeBridge
     @ObservationIgnored private var policy: LinkPolicy?
     @ObservationIgnored private var requestWebSession: ((String) async throws -> URL)?
     @ObservationIgnored private var onUnauthorized: (() -> Void)?
@@ -29,9 +31,12 @@ final class WebController: NSObject {
     override init() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        let gatekeeper = BridgeGatekeeper(store: DefaultsPermissionStore(), prompter: AlertPrompter())
+        bridge = NativeBridge(controller: configuration.userContentController, gatekeeper: gatekeeper)
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         super.init()
+        bridge.attach(to: webView, presenter: self)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         #if os(iOS)
@@ -49,6 +54,7 @@ final class WebController: NSObject {
 
     func configure(host: URL, requestWebSession: @escaping (String) async throws -> URL, onUnauthorized: @escaping () -> Void) {
         policy = LinkPolicy(host: host)
+        bridge.configure(policy: policy)
         self.requestWebSession = requestWebSession
         self.onUnauthorized = onUnauthorized
         signInAttempts = 0
@@ -91,6 +97,7 @@ final class WebController: NSObject {
     /// Clears cookies and storage, for signing out.
     func reset() async {
         policy = nil
+        bridge.configure(policy: nil)
         requestWebSession = nil
         onUnauthorized = nil
         webView.stopLoading()
@@ -208,6 +215,10 @@ extension WebController: WKNavigationDelegate {
         return (.allow, preferences)
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        bridge.router.reset()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         endRefreshing()
         loadError = nil
@@ -245,4 +256,21 @@ extension WebController: WKUIDelegate {
         }
         return nil
     }
+}
+
+extension WebController: BridgePresenter {
+    #if os(macOS)
+        var bridgeWindow: NSWindow? { webView.window }
+        var bridgeView: NSView? { webView }
+    #else
+        var bridgeViewController: UIViewController? {
+            var controller = webView.window?.rootViewController
+            while let presented = controller?.presentedViewController, !presented.isBeingDismissed {
+                controller = presented
+            }
+            return controller
+        }
+
+        var bridgeView: UIView? { webView }
+    #endif
 }

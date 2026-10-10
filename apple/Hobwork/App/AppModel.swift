@@ -65,6 +65,7 @@ final class AppModel {
         notifier.onProof = { [weak self] nonce in self?.push.proofArrived(nonce: nonce) }
         push.onGrantChange = { [weak self] host, grant in await self?.sendGrant(grant, to: host) }
         EventSender.model = self
+        registerBridge()
         if let stored = StoredPairing.load() {
             activate(Pairing(host: stored.host, credentials: stored.credentials))
         }
@@ -92,6 +93,7 @@ final class AppModel {
         connection = nil
         if let host = pairing?.host { push.forget(host: host) }
         StoredPairing.remove()
+        owner = nil
         events.removeAll()
         pairing = nil
         self.notice = notice
@@ -266,6 +268,36 @@ final class AppModel {
     }
 
     @ObservationIgnored private var runner: CommandRunner?
+
+    // MARK: Web bridge
+
+    @ObservationIgnored let printers = PrinterMemory()
+    @ObservationIgnored private var owner: (host: URL, person: AppInfoBridge.Person)?
+
+    private func registerBridge() {
+        let router = web.bridge.router
+        router.register(AppInfoBridge(
+            deviceName: { [weak self] in self?.pairing?.credentials.name },
+            person: { [weak self] in await self?.ownerOfDevice() }
+        ))
+        router.register(ClipboardBridge())
+        router.register(LocalNotificationsBridge())
+        router.register(PrintBridge(memory: printers))
+        router.register(ShareBridge())
+        #if os(iOS)
+            router.register(HapticsBridge())
+        #endif
+    }
+
+    /// Fetched once per pairing: owners do not change.
+    private func ownerOfDevice() async -> AppInfoBridge.Person? {
+        guard let pairing, let api else { return nil }
+        if let owner, owner.host == pairing.host { return owner.person }
+        guard let device = try? await api.describeSelf() else { return nil }
+        let person = AppInfoBridge.Person(id: device.person.id, name: device.person.name)
+        if self.pairing?.host == pairing.host { owner = (pairing.host, person) }
+        return person
+    }
 
     private var hello: Hello {
         Hello(

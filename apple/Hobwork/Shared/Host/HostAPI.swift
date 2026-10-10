@@ -78,6 +78,17 @@ struct DeviceCredentials: Codable, Equatable, Sendable {
     var token: String
 }
 
+struct DeviceSelf: Decodable, Equatable, Sendable {
+    struct Person: Decodable, Equatable, Sendable {
+        var id: Int
+        var name: String
+    }
+
+    var id: Int
+    var name: String
+    var person: Person
+}
+
 /// The token exchange's answer: the credentials and the host's push keys.
 struct PairingExchange: Decodable, Equatable, Sendable {
     var credentials: DeviceCredentials
@@ -140,6 +151,11 @@ struct HostAPI: Sendable {
     /// Answers a command outside the socket. The host ignores all but the first result.
     func send(_ result: DeviceCallResult) async throws {
         _ = try await send(resultRequest(result))
+    }
+
+    /// This device and its owner, as the host knows them.
+    func describeSelf() async throws -> DeviceSelf {
+        try await decode(DeviceSelf.self, request(method: "GET", path: "api/devices/self"))
     }
 
     /// Removes this device from the host, as removing it in the web UI does.

@@ -58,6 +58,8 @@
 	<string>Hobs you open in Hobwork can scan barcodes and take photos when you ask them to.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Hobs on your Hobwork host can read the Health data you choose to share.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Hobwork only reads the Health data you choose to share and does not save data to Health.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

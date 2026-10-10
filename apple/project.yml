@@ -115,6 +115,8 @@ targets:
         # NDEF application lets Type 4 tags show up too.
         com.apple.developer.nfc.readersession.iso7816.select-identifiers: [D2760000850101]
         NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
+        # App Store Connect requires it with the HealthKit entitlement, even though the app only reads.
+        NSHealthUpdateUsageDescription: Hobwork only reads the Health data you choose to share and does not save data to Health.
     dependencies:
       - target: HobworkNotificationService
       - target: HobworkDeviceActivityMonitor

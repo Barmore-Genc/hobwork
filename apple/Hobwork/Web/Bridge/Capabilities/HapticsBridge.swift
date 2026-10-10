@@ -1,12 +1,18 @@
 #if os(iOS)
+    import CoreHaptics
     import UIKit
 
     /// `haptics`. Not on macOS: Mac haptics only reach a finger on a Force Touch trackpad
-    /// while it drags.
+    /// while it drags. iPads and other devices without a haptic engine list no methods, so
+    /// `has('haptics')` is false there.
     @MainActor
     final class HapticsBridge: BridgeCapability {
         let name = "haptics"
-        let methods = ["lift", "tick", "success", "warning", "error", "impact"]
+        let methods: [String]
+
+        init(supported: Bool = CHHapticEngine.capabilitiesForHardware().supportsHaptics) {
+            methods = supported ? ["lift", "tick", "success", "warning", "error", "impact"] : []
+        }
 
         func call(_ method: String, args: JSONValue, context: BridgeContext) async throws -> JSONValue {
             switch method {

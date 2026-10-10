@@ -251,3 +251,17 @@ struct AlarmEventReporterTests {
         #expect(sink.kinds.isEmpty)
     }
 }
+
+@MainActor
+struct HapticsBridgeTests {
+    func router(supported: Bool) -> BridgeRouter {
+        let router = BridgeRouter(gatekeeper: BridgeGatekeeper(store: MemoryPermissionStore(), prompter: FakePrompter(answer: true))) { _, _ in true }
+        router.register(HapticsBridge(supported: supported))
+        return router
+    }
+
+    @Test func listsHapticsOnlyWithAHapticEngine() {
+        #expect(router(supported: true).manifest["haptics"] == ["error", "impact", "lift", "success", "tick", "warning"])
+        #expect(router(supported: false).manifest["haptics"] == nil)
+    }
+}

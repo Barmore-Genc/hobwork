@@ -1,7 +1,8 @@
 // Native features of the Hobwork app for hob UIs: haptics, printing, the
-// share sheet, the clipboard, local notifications, NFC, alarms and app info. Everything
-// feature-detects: outside the app (a browser) `native.available` is false and
-// calls reject with NativeError code "unavailable".
+// share sheet, the clipboard, local notifications, NFC, alarms, the camera and
+// app info. Everything feature-detects: outside the app (a browser)
+// `native.available` is false and calls reject with NativeError code
+// "unavailable".
 //
 //   import { native } from '@hobwork/sdk/native'
 //   if (native.has('haptics')) await native.haptics.success()
@@ -9,6 +10,7 @@
 import { alarms } from './alarms.ts'
 import { app } from './app.ts'
 import { available, call, has, on, platform } from './bridge.ts'
+import { camera } from './camera.ts'
 import { clipboard } from './clipboard.ts'
 import { haptics } from './haptics.ts'
 import { nfc } from './nfc.ts'
@@ -19,6 +21,17 @@ import { share } from './share.ts'
 export { NativeError } from './bridge.ts'
 export type { NativeBridge, NativeData, NativeErrorCode, NativePlatform, NativeReply } from './bridge.ts'
 export type { AppInfo } from './app.ts'
+export type {
+  CameraButton,
+  CameraCode,
+  CameraPhoto,
+  CameraPhotoOptions,
+  CameraRect,
+  CameraScan,
+  CameraScanEnd,
+  CameraScanOptions,
+  CameraSymbology,
+} from './camera.ts'
 export type { NativeAlarm, NativeAlarmEvent, NativeAlarmRepeat, NativeTimer } from './alarms.ts'
 export type {
   NfcDevice,
@@ -53,6 +66,7 @@ export const native = {
   on,
   alarms,
   app,
+  camera,
   clipboard,
   haptics,
   nfc,

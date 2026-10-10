@@ -226,3 +226,86 @@ test('share sends the file as data', async () => {
   await native.share({ file: new Uint8Array([1, 2, 3]), filename: 'label.pdf' })
   expect(bridge.calls[0]!.args).toEqual({ filename: 'label.pdf', data: 'AQID' })
 })
+
+const code = { id: 'c1', payload: '042853002314', symbology: 'upca', bounds: { x: 0.2, y: 0.4, width: 0.6, height: 0.1 } }
+
+test('a camera scan streams codes, buttons and shutter photos, and captures as a Blob', async () => {
+  bridge = createFakeBridge({
+    'camera.startScan': () => {
+      bridge!.emit('camera.codes', { session: 's1', codes: [code] })
+      return { session: 's1' }
+    },
+    'camera.capture': () => ({ data: 'AQID', type: 'image/jpeg', width: 1600, height: 1200 }),
+    'camera.setTorch': () => null,
+    'camera.updateScan': () => null,
+    'camera.stopScan': () => null,
+  })
+  const codes: unknown[] = []
+  const buttons: string[] = []
+  const photos: { width: number; size: number }[] = []
+  const scan = await native.camera.scan({
+    symbologies: ['upca', 'ean13', 'qr'],
+    multiple: true,
+    shutter: true,
+    buttons: [{ id: 'ai', label: 'Read the label with AI' }],
+    onCodes: (c) => codes.push(c),
+    onButton: (id) => buttons.push(id),
+    onPhoto: (photo) => photos.push({ width: photo.width, size: photo.blob.size }),
+  })
+  bridge.emit('camera.button', { session: 'other', id: 'ai' })
+  bridge.emit('camera.button', { session: 's1', id: 'ai' })
+  bridge.emit('camera.photo', { session: 's1', data: 'AQIDBA==', type: 'image/jpeg', width: 800, height: 600 })
+  const photo = await scan.capture({ maxDimension: 1600, quality: 0.7 })
+  expect(photo.blob.type).toBe('image/jpeg')
+  expect([...new Uint8Array(await photo.blob.arrayBuffer())]).toEqual([1, 2, 3])
+  expect(photo.width).toBe(1600)
+  await scan.setTorch(true)
+  await scan.setGuidance('Barcode found')
+  await scan.stop()
+  bridge.emit('camera.ended', { session: 's1', reason: 'stopped' })
+  expect(await scan.ended).toEqual({ reason: 'stopped' })
+  bridge.emit('camera.codes', { session: 's1', codes: [] })
+  expect(codes).toEqual([[code]])
+  expect(buttons).toEqual(['ai'])
+  expect(photos).toEqual([{ width: 800, size: 4 }])
+  expect(bridge.calls.map((c) => [c.method, c.args])).toEqual([
+    [
+      'startScan',
+      { symbologies: ['upca', 'ean13', 'qr'], multiple: true, shutter: true, buttons: [{ id: 'ai', label: 'Read the label with AI' }] },
+    ],
+    ['capture', { session: 's1', maxDimension: 1600, quality: 0.7 }],
+    ['setTorch', { session: 's1', on: true }],
+    ['updateScan', { session: 's1', guidance: 'Barcode found' }],
+    ['stopScan', { session: 's1' }],
+  ])
+})
+
+test('scanCode resolves with the code read, null when closed, and rejects when the camera fails', async () => {
+  let end: Record<string, unknown> = { reason: 'selected', code }
+  bridge = createFakeBridge({
+    'camera.startScan': () => {
+      setTimeout(() => bridge!.emit('camera.ended', { session: 's1', ...end }), 0)
+      return { session: 's1' }
+    },
+  })
+  expect(await native.camera.scanCode({ symbologies: ['upca'] })).toEqual(code)
+  expect(bridge.calls[0]!.args).toEqual({ symbologies: ['upca'], multiple: false })
+  end = { reason: 'cancelled' }
+  expect(await native.camera.scanCode()).toBeNull()
+  end = { reason: 'failed', message: 'The camera stopped' }
+  expect(await rejection(native.camera.scanCode())).toMatchObject({ code: 'failed', message: 'The camera stopped' })
+})
+
+test('camera photos and their errors', async () => {
+  bridge = createFakeBridge({
+    'camera.photo': (args) => {
+      if ((args as { quality?: number }).quality === 0.1) throw new NativeError('cancelled', 'No photo was taken')
+      return { data: 'AQID', type: 'image/jpeg', width: 3, height: 1 }
+    },
+  })
+  const photo = await native.camera.photo({ maxDimension: 1600 })
+  expect(photo.blob.size).toBe(3)
+  expect((await rejection(native.camera.photo({ quality: 0.1 }))).code).toBe('cancelled')
+  expect(native.has('camera', 'startScan')).toBe(false)
+  expect((await rejection(native.camera.scan())).code).toBe('unavailable')
+})

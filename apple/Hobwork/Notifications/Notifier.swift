@@ -140,23 +140,30 @@ extension UNAuthorizationStatus {
 }
 
 extension Notifier: UNUserNotificationCenterDelegate {
+    // The completion-handler forms, completed on the main actor: UIKit asserts when the
+    // response's completion runs off the main thread, which the async forms do when
+    // nonisolated.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification
-    ) async -> UNNotificationPresentationOptions {
-        let userInfo = notification.request.content.userInfo
-        if case let .proof(nonce)? = RelayPush(userInfo: userInfo) {
-            await proofArrived(nonce)
-            return []
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let content = notification.request.content
+        let proof: String? = if case let .proof(nonce)? = RelayPush(userInfo: content.userInfo) { nonce } else { nil }
+        let options = proof == nil ? Self.presentation(for: content) : []
+        Self.complete(MainCompletion(completionHandler), with: options) {
+            if let proof { self.proofArrived(proof) }
         }
-        return Self.presentation(for: userInfo)
     }
 
     /// The extension marks a push that repeats a notification this device already showed.
-    /// The extension cannot hide a notification, but the app can while open.
-    nonisolated static func presentation(for userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions {
-        if userInfo[OpenedPush.repeatedKey] != nil { return [] }
-        return [.banner, .list, .sound]
+    /// The extension cannot hide a notification, but the app can while open. Quiet
+    /// notifications and updates stay as quiet in front as they would be in the background.
+    nonisolated static func presentation(for content: UNNotificationContent) -> UNNotificationPresentationOptions {
+        if content.userInfo[OpenedPush.repeatedKey] != nil { return [] }
+        var options: UNNotificationPresentationOptions = content.interruptionLevel == .passive ? [.list] : [.banner, .list]
+        if content.sound != nil, content.interruptionLevel != .passive { options.insert(.sound) }
+        return options
     }
 
     private func proofArrived(_ nonce: String) {
@@ -165,19 +172,37 @@ extension Notifier: UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         let userInfo = response.notification.request.content.userInfo
         let result = if let push = CommandPush(userInfo: userInfo) {
             Self.response(to: push, actionIdentifier: response.actionIdentifier)
         } else {
             Self.response(to: NotificationPayload(userInfo: userInfo), actionIdentifier: response.actionIdentifier)
         }
-        guard let result else { return }
-        await deliver(result)
+        Self.complete(MainCompletion { _ in completionHandler() }, with: ()) {
+            if let result { await self.onResponse?(result) }
+        }
     }
 
-    private func deliver(_ response: Response) async {
-        await onResponse?(response)
+    nonisolated static func complete<Value: Sendable>(
+        _ completion: MainCompletion<Value>,
+        with value: Value,
+        after work: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        Task { @MainActor in
+            await work()
+            completion.call(value)
+        }
     }
+}
+
+/// A UserNotifications completion handler, which is not Sendable, called only on the main actor.
+struct MainCompletion<Value>: @unchecked Sendable {
+    private let handler: (Value) -> Void
+
+    init(_ handler: @escaping (Value) -> Void) { self.handler = handler }
+
+    @MainActor func call(_ value: Value) { handler(value) }
 }

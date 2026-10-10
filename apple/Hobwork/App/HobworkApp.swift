@@ -53,11 +53,13 @@ import SwiftUI
         /// Background pushes: relay renewals, and notifications a hob withdrew.
         func application(
             _ application: UIApplication,
-            didReceiveRemoteNotification userInfo: [AnyHashable: Any]
-        ) async -> UIBackgroundFetchResult {
+            didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+            fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+        ) {
             let info = UncheckedUserInfo(userInfo)
-            await model.didReceiveBackgroundPush(info.value)
-            return .newData
+            Notifier.complete(MainCompletion(completionHandler), with: .newData) {
+                await self.model.didReceiveBackgroundPush(info.value)
+            }
         }
     }
 #endif

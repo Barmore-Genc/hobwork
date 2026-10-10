@@ -236,8 +236,37 @@ struct PushOpenerTests {
     }
 
     @Test func hidesRepeatsInTheForeground() {
-        #expect(Notifier.presentation(for: [OpenedPush.repeatedKey: "n1"]) == [])
-        #expect(Notifier.presentation(for: [:]) == [.banner, .list, .sound])
+        #expect(Notifier.presentation(for: content(userInfo: [OpenedPush.repeatedKey: "n1"])) == [])
+        #expect(Notifier.presentation(for: content()) == [.banner, .list, .sound])
+    }
+
+    @Test func keepsQuietNotificationsQuietInTheForeground() {
+        #expect(Notifier.presentation(for: content(level: .passive)) == [.list])
+        #expect(Notifier.presentation(for: content(sound: nil)) == [.banner, .list])
+        #expect(Notifier.presentation(for: content(level: .timeSensitive)) == [.banner, .list, .sound])
+    }
+
+    @Test func completesNotificationResponsesOnTheMainThread() async {
+        let onMain = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            Task.detached {
+                Notifier.complete(MainCompletion { _ in continuation.resume(returning: Thread.isMainThread) }, with: ()) {
+                    await Task.yield()
+                }
+            }
+        }
+        #expect(onMain)
+    }
+
+    private func content(
+        userInfo: [AnyHashable: Any] = [:],
+        level: UNNotificationInterruptionLevel = .active,
+        sound: UNNotificationSound? = .default
+    ) -> UNNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.userInfo = userInfo
+        content.interruptionLevel = level
+        content.sound = sound
+        return content
     }
 }
 

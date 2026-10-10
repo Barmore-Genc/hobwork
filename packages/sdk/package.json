@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
+    "./native": "./src/native/index.ts",
     "./testing": "./src/testing.ts",
     "./hobwork-json": "./src/hobwork-json.js",
     "./vite": "./src/vite.js",

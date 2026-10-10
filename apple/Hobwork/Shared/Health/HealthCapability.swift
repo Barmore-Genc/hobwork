@@ -32,7 +32,7 @@ final class HealthCapability: CapabilityHandler {
         guard method == "query" else { throw CallError.unsupported(Self.capability, method) }
         let query = try Self.query(from: Arguments(args, call: "health.query"))
         guard sharing().contains(query.type) else {
-            throw CallError(code: "not_shared", message: "\(query.type.title) is not shared with Hobwork on this device. Share it in the Hobwork app's settings.")
+            throw CallError(code: "not_shared", message: "Health is not connected to Hobwork on this device. Connect it in the Hobwork app's settings.")
         }
         let samples: [HealthSample]
         do {

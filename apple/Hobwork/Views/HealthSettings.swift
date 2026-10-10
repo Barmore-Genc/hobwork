@@ -4,14 +4,21 @@ import SwiftUI
 struct HealthSection: View {
     let model: AppModel
 
-    @State private var shared: Set<HealthType> = []
+    @State private var connected = false
+    @State private var needsRequest = false
     @State private var error: String?
 
     var body: some View {
         Section {
             if HKHealthStore.isHealthDataAvailable() {
-                ForEach(HealthType.allCases, id: \.self) { type in
-                    Toggle(type.title, isOn: binding(for: type))
+                if connected {
+                    LabeledContent("Health", value: "Connected")
+                }
+                if !connected || needsRequest {
+                    Button("Connect Health") { Task { await connect() } }
+                }
+                if connected {
+                    Button("Disconnect", role: .destructive) { Task { await disconnect() } }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red)
@@ -22,27 +29,29 @@ struct HealthSection: View {
         } header: {
             Text("Health")
         } footer: {
-            Text("Hobs can read the types you share and get new samples as they arrive. Health asks which data Hobwork may read. Health data can't be read while this \(DeviceModel.name) is locked.")
+            Text("Hobs can read the Health data you allow and get new samples as they arrive. To change what Hobwork may read, open the Health app, tap your picture, then Apps, then Hobwork. Health data can't be read while this \(DeviceModel.name) is locked.")
         }
-        .task { shared = HealthSharing.file.read().types }
+        .task { await refresh() }
     }
 
-    private func binding(for type: HealthType) -> Binding<Bool> {
-        Binding(
-            get: { shared.contains(type) },
-            set: { on in
-                var next = shared
-                if on { next.insert(type) } else { next.remove(type) }
-                shared = next
-                Task {
-                    do {
-                        error = nil
-                        try await model.shareHealth(next)
-                    } catch {
-                        self.error = error.localizedDescription
-                    }
-                }
-            }
-        )
+    private func refresh() async {
+        connected = !HealthSharing.file.read().types.isEmpty
+        needsRequest = await model.health.needsRequest()
+    }
+
+    private func connect() async {
+        do {
+            error = nil
+            try await model.connectHealth()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        await refresh()
+    }
+
+    private func disconnect() async {
+        error = nil
+        await model.disconnectHealth()
+        await refresh()
     }
 }

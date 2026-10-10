@@ -106,6 +106,12 @@ struct HealthTests {
         file.update { $0.shared[.steps] = isoDate("2026-05-04T00:00:00Z") }
         #expect(file.read().types == [.steps])
     }
+
+    @Test func disconnectingStopsSharingEveryType() {
+        let file = temporaryFile(HealthSharing(shared: [.steps: isoDate("2026-05-04T00:00:00Z")], anchors: [.steps: Data([1])]))
+        HealthDelivery(store: HKHealthStore(), file: file) { _ in }.disconnect()
+        #expect(file.read() == HealthSharing())
+    }
 }
 
 @MainActor

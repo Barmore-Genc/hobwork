@@ -203,8 +203,13 @@ final class AppModel {
             await refreshCapabilities()
         }
 
-        func shareHealth(_ types: Set<HealthType>) async throws {
-            try await health.share(types)
+        func connectHealth() async throws {
+            try await health.connect()
+            await refreshCapabilities()
+        }
+
+        func disconnectHealth() async {
+            health.disconnect()
             await refreshCapabilities()
         }
 

@@ -47,19 +47,30 @@ final class HealthDelivery {
         }
     }
 
-    /// Shares a set of types: asks for read access and records when each type was turned on,
-    /// so background delivery starts from then and does not send the whole history.
-    func share(_ types: Set<HealthType>, now: Date = Date()) async throws {
-        if !types.isEmpty {
-            try await store.requestAuthorization(toShare: [], read: Set(types.map(\.sampleType)))
-        }
+    /// Asks for read access to every type. The Health sheet is where the person picks what
+    /// Hobwork may read; HealthKit does not tell apps which read types were allowed, so every
+    /// type is shared and the ones not allowed return no samples. Records when each type was
+    /// turned on, so background delivery starts from then and does not send the whole history.
+    func connect(now: Date = Date()) async throws {
+        try await store.requestAuthorization(toShare: [], read: Self.readTypes)
         file.update { sharing in
-            sharing.shared = sharing.shared.filter { types.contains($0.key) }
-            sharing.anchors = sharing.anchors.filter { types.contains($0.key) }
-            for type in types where sharing.shared[type] == nil { sharing.shared[type] = now }
+            for type in HealthType.allCases where sharing.shared[type] == nil { sharing.shared[type] = now }
         }
         start()
     }
+
+    func disconnect() {
+        file.update { $0 = HealthSharing() }
+        start()
+    }
+
+    /// Whether connecting would show the Health sheet: before the first request, and after an
+    /// update adds types.
+    func needsRequest() async -> Bool {
+        (try? await store.statusForAuthorizationRequest(toShare: [], read: Self.readTypes)) == .shouldRequest
+    }
+
+    private static var readTypes: Set<HKObjectType> { Set(HealthType.allCases.map(\.sampleType)) }
 
     private func deliver(_ type: HealthType) async {
         while true {

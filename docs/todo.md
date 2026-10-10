@@ -118,7 +118,7 @@ Built in `relay/` (Push relay in `docs/architecture.md`) and running at `relay.b
 Hobwork does not use `com.apple.developer.usernotifications.filtering`. Apple grants it only for end-to-end encrypted messaging, earthquake warnings, education alerts and healthcare alert retraction, and Hobwork is none of these. The extension cannot hide a push, so:
 
 - The ownership proof shows "Notifications from Hobwork are set up." once per registration.
-- Renewal uses background pushes.
+- Renewal and notification withdrawals use background pushes.
 - Pushes that fail to decrypt or are stale show generic fallback text, as does a notification whose extension crashed or timed out.
 - A push that repeats one the app already got over the socket while open is hidden by the app's `willPresent` (see Encryption). When the app is not in the foreground with its socket open, as the Mac app often is, both show.
 
@@ -126,6 +126,18 @@ Hobwork does not use `com.apple.developer.usernotifications.filtering`. Apple gr
 
 - **macOS extension, first**: every relayed push needs the notification service extension to decrypt it. Apple documents it for macOS 10.14, but developer forum threads from 2019 to 2025 report it never being called on macOS, or killed for "sluggish startup", with no answer from Apple. Test it with a team-signed Mac build and a real APNs push before building the rest. If it does not run, Mac notifications show only the generic alert, and content still arrives over the socket, which the Mac app keeps open.
 - On a real iPhone and Mac: ownership-proof and renewal push delivery. Only the socket paths have run on devices so far.
+
+## Notifications
+
+Left from sending to people, update, withdraw, scheduling and action routes (Notifications in `docs/architecture.md`):
+
+- Deploy the relay with the `background` push kind. Until then the relay refuses withdrawals by push (`bad_request`), and a device off its socket removes a withdrawn notification only after its next `hello`.
+- Check on real devices: that the extension's `interruptionLevel` and `sound` hold (time-sensitive through Focus, passive without waking the screen), that a background action tap wakes the app long enough to post the event, and how fast background withdrawal pushes arrive on a locked iPhone. "Within 5 s" holds for apps on their socket; background pushes are best effort and dropped after a force quit.
+- An update by push shows a notification the person dismissed again (quietly), since the extension cannot drop a push. The socket path checks first.
+- Updates go out as `passive`, so a time-sensitive notification loses its place at the top once updated.
+- Named sounds: the app bundles none, so `sound` is `default` or `none`.
+- The web UI and MCP tools show no pending scheduled notifications; only withdrawing by ID cancels one.
+- Action routes run on the deployed version only; a notification sent from a branch preview cannot exist, since previews cannot use devices.
 
 ## People and callers
 

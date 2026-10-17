@@ -781,6 +781,39 @@ test('client assertions are checked', async () => {
   expect(await jsonOf(registered)).toMatchObject({ error_description: 'This client does not authenticate with a client_assertion' })
 })
 
+test('a registered client authenticates with private_key_jwt', async () => {
+  const key = signingKey('k1', 'ES256')
+  documents.set('https://agent.example/jwks.json', { keys: [key.jwk] })
+  const register = (body: Record<string, unknown>) =>
+    fetch(`${app.base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Agent', redirect_uris: ['https://app.example/callback'], token_endpoint_auth_method: 'private_key_jwt', ...body }),
+    })
+  for (const body of [{}, { jwks_uri: 'http://agent.example/jwks.json' }, { jwks_uri: 'https://agent.example/jwks.json', token_endpoint_auth_signing_alg: 'HS256' }]) {
+    const res = await register(body)
+    expect(res.status).toBe(400)
+    expect(await jsonOf(res)).toMatchObject({ error: 'invalid_client_metadata' })
+  }
+  const registered = await jsonOf(await register({ jwks_uri: 'https://agent.example/jwks.json' }))
+  expect(registered).toMatchObject({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: 'https://agent.example/jwks.json' })
+  expect(registered.client_secret).toBeUndefined()
+
+  const { url, verifier } = authorizeUrl(registered.client_id)
+  const { redirectTo } = await consent(url)
+  const params = {
+    grant_type: 'authorization_code',
+    code: redirectTo.searchParams.get('code')!,
+    redirect_uri: 'https://app.example/callback',
+    code_verifier: verifier,
+  }
+  expect((await form('/oauth/token', { ...params, client_id: registered.client_id })).status).toBe(401)
+  const own = { iss: registered.client_id, sub: registered.client_id }
+  const res = await form('/oauth/token', { ...params, ...assertionParams(clientAssertion(key, own)) })
+  expect(res.status).toBe(200)
+  expect((await mcpRequest((await jsonOf(res)).access_token)).status).toBe(200)
+})
+
 test('a rotated key is fetched again, at most once a minute', async () => {
   const first = signingKey('k1')
   const second = signingKey('k2', 'ES256')

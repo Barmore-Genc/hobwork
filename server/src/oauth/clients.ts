@@ -5,8 +5,7 @@ import { ASSERTION_ALGS } from './client-assertion.ts'
 import type { FetchedDocument } from './metadata-fetch.ts'
 
 export type AuthMethod = 'none' | 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt'
-// What registration accepts. private_key_jwt is for metadata document clients only.
-export const AUTH_METHODS: AuthMethod[] = ['none', 'client_secret_basic', 'client_secret_post']
+export const AUTH_METHODS: AuthMethod[] = ['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt']
 
 export type OAuthClient = {
   id: string
@@ -122,6 +121,16 @@ function checkRedirectUris(value: unknown): string[] {
   return value
 }
 
+function checkJwks(meta: Record<string, unknown>, code: ClientError['code']): string {
+  const jwksUri = httpsUri(meta.jwks_uri)
+  if (!jwksUri) throw new ClientError(code, 'private_key_jwt clients need an https jwks_uri')
+  const alg = meta.token_endpoint_auth_signing_alg
+  if (alg !== undefined && !ASSERTION_ALGS.includes(alg as string)) {
+    throw new ClientError(code, `token_endpoint_auth_signing_alg must be one of ${ASSERTION_ALGS.join(', ')}`)
+  }
+  return jwksUri
+}
+
 // A client ID that is an https URL with a path points to a metadata document.
 export function isMetadataDocumentUrl(clientId: string): boolean {
   try {
@@ -149,15 +158,7 @@ export function clientFromMetadataDocument(clientId: string, document: unknown):
       'Clients with a metadata document must use token_endpoint_auth_method "none" or "private_key_jwt"',
     )
   }
-  let jwksUri: string | null = null
-  if (method === 'private_key_jwt') {
-    jwksUri = httpsUri(doc.jwks_uri)
-    if (!jwksUri) throw new ClientError('invalid_client', 'private_key_jwt clients need an https jwks_uri')
-    const alg = doc.token_endpoint_auth_signing_alg
-    if (alg !== undefined && !ASSERTION_ALGS.includes(alg as string)) {
-      throw new ClientError('invalid_client', `token_endpoint_auth_signing_alg must be one of ${ASSERTION_ALGS.join(', ')}`)
-    }
-  }
+  const jwksUri = method === 'private_key_jwt' ? checkJwks(doc, 'invalid_client') : null
   try {
     checkGrantTypes(doc.grant_types)
     checkResponseTypes(doc.response_types)
@@ -194,7 +195,8 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
   if (!AUTH_METHODS.includes(authMethod as AuthMethod)) {
     throw new ClientError('invalid_client_metadata', `token_endpoint_auth_method must be one of ${AUTH_METHODS.join(', ')}`)
   }
-  const secret = authMethod === 'none' ? undefined : randomBytes(32).toString('base64url')
+  const jwksUri = authMethod === 'private_key_jwt' ? checkJwks(meta, 'invalid_client_metadata') : null
+  const secret = authMethod === 'none' || authMethod === 'private_key_jwt' ? undefined : randomBytes(32).toString('base64url')
   const client: OAuthClient = {
     id: `hwc_${randomBytes(16).toString('base64url')}`,
     name: cleanName(meta.client_name) ?? new URL(redirectUris[0]!).host,
@@ -203,7 +205,7 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
     authMethod: authMethod as AuthMethod,
     kind: 'registered',
     secretHash: secret ? hashSecret(secret) : null,
-    jwksUri: null,
+    jwksUri,
   }
   db.prepare(
     `DELETE FROM oauth_clients WHERE created_at < ? AND id NOT IN (SELECT client_id FROM oauth_grants)`,
@@ -216,7 +218,7 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
        ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`,
   ).run(MAX_UNUSED_CLIENTS - 1)
   db.prepare(
-    'INSERT INTO oauth_clients (id, name, uri, redirect_uris, secret_hash, auth_method, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO oauth_clients (id, name, uri, redirect_uris, secret_hash, auth_method, jwks_uri, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     client.id,
     client.name,
@@ -224,13 +226,14 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
     JSON.stringify(client.redirectUris),
     client.secretHash,
     client.authMethod,
+    client.jwksUri,
     new Date(now).toISOString(),
   )
   return { client, secret }
 }
 
 function registeredClient(db: DatabaseSync, id: string): OAuthClient | undefined {
-  const row = db.prepare('SELECT id, name, uri, redirect_uris, secret_hash, auth_method FROM oauth_clients WHERE id = ?').get(id)
+  const row = db.prepare('SELECT id, name, uri, redirect_uris, secret_hash, auth_method, jwks_uri FROM oauth_clients WHERE id = ?').get(id)
   if (!row) return undefined
   return {
     id: String(row.id),
@@ -240,7 +243,7 @@ function registeredClient(db: DatabaseSync, id: string): OAuthClient | undefined
     authMethod: String(row.auth_method) as AuthMethod,
     kind: 'registered',
     secretHash: row.secret_hash === null ? null : String(row.secret_hash),
-    jwksUri: null,
+    jwksUri: row.jwks_uri === null ? null : String(row.jwks_uri),
   }
 }
 

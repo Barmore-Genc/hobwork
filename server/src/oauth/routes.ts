@@ -4,6 +4,7 @@ import { AccessError, parseAccess } from '../access.ts'
 import { agentNameTaken, freeAgentName, getAgent, MAX_AGENT_NAME } from '../agents.ts'
 import type { Auth } from '../auth/auth.ts'
 import { HttpError, json, readForm, readJson, redirect } from '../http.ts'
+import { ASSERTION_ALGS, assertionSubject, createAssertionVerifier, JWT_BEARER_ASSERTION } from './client-assertion.ts'
 import { ClientError, createClientStore, isLoopback, redirectUriAllowed, registerClient, secretMatches, type OAuthClient } from './clients.ts'
 import {
   approveRequest,
@@ -80,7 +81,9 @@ export function createOAuthServer(options: {
   const issuer = publicUrl
   const resource = `${publicUrl}${options.mcpPath}`
   const resourceMetadataUrl = `${publicUrl}${PROTECTED_RESOURCE_PATH}${options.mcpPath}`
-  const clients = createClientStore({ db, fetchDocument: options.fetchDocument ?? fetchMetadataDocument, now })
+  const fetchDocument = options.fetchDocument ?? fetchMetadataDocument
+  const clients = createClientStore({ db, fetchDocument, now })
+  const assertions = createAssertionVerifier({ db, fetchDocument, now })
   const registrations = createRateLimiter({ limit: REGISTRATIONS_PER_HOUR, windowMs: 60 * 60 * 1000, now })
   const authorizations = createRateLimiter({ limit: AUTHORIZATIONS_PER_10_MINUTES, windowMs: 10 * 60 * 1000, now })
 
@@ -101,8 +104,10 @@ export function createOAuthServer(options: {
     response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
-    token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post'],
-    revocation_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt'],
+    token_endpoint_auth_signing_alg_values_supported: ASSERTION_ALGS,
+    revocation_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt'],
+    revocation_endpoint_auth_signing_alg_values_supported: ASSERTION_ALGS,
     client_id_metadata_document_supported: true,
     authorization_response_iss_parameter_supported: true,
   }
@@ -175,9 +180,20 @@ export function createOAuthServer(options: {
   }
 
   // Authenticates the client at the token and revocation endpoints (OAuth 2.1 2.4).
-  async function authenticateClient(req: IncomingMessage, params: URLSearchParams): Promise<OAuthClient> {
+  async function authenticateClient(req: IncomingMessage, params: URLSearchParams, endpoint: string): Promise<OAuthClient> {
     let id = single(params, 'client_id')
     let secret = single(params, 'client_secret')
+    const assertionType = single(params, 'client_assertion_type')
+    const assertion = single(params, 'client_assertion')
+    if (assertion !== undefined || assertionType !== undefined) {
+      if (assertionType !== JWT_BEARER_ASSERTION || !assertion) {
+        throw new OAuthError('invalid_client', `Send client_assertion with client_assertion_type ${JWT_BEARER_ASSERTION}`, 401)
+      }
+      if (secret !== undefined || req.headers.authorization?.startsWith('Basic ')) {
+        throw new OAuthError('invalid_request', 'Use one client authentication method')
+      }
+      id ??= assertionSubject(assertion)
+    }
     const header = req.headers.authorization
     const basic = header?.startsWith('Basic ') ?? false
     if (basic) {
@@ -203,7 +219,12 @@ export function createOAuthServer(options: {
       if (err instanceof ClientError) throw invalid(err.message)
       throw err
     }
-    if (client.authMethod !== 'none' && (secret === undefined || !secretMatches(client, secret))) {
+    if (client.authMethod === 'private_key_jwt') {
+      if (!assertion) throw invalid('This client authenticates with a client_assertion')
+      await assertions.verify(client, assertion, [issuer, `${issuer}${endpoint}`])
+    } else if (assertion) {
+      throw invalid('This client does not authenticate with a client_assertion')
+    } else if (client.authMethod !== 'none' && (secret === undefined || !secretMatches(client, secret))) {
       throw invalid('Client authentication failed')
     }
     return client
@@ -219,7 +240,7 @@ export function createOAuthServer(options: {
 
   async function token(req: IncomingMessage, res: ServerResponse) {
     const params = await readForm(req)
-    const client = await authenticateClient(req, params)
+    const client = await authenticateClient(req, params, TOKEN_PATH)
     const grantType = single(params, 'grant_type')
     let body
     if (grantType === 'authorization_code') {
@@ -246,7 +267,7 @@ export function createOAuthServer(options: {
 
   async function revoke(req: IncomingMessage, res: ServerResponse) {
     const params = await readForm(req)
-    const client = await authenticateClient(req, params)
+    const client = await authenticateClient(req, params, REVOKE_PATH)
     const value = single(params, 'token')
     if (!value) throw new OAuthError('invalid_request', 'Send token')
     revokeToken(db, client, value, now())

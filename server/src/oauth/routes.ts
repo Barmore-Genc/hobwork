@@ -85,6 +85,8 @@ export function createOAuthServer(options: {
   const clients = createClientStore({ db, fetchDocument, now })
   const assertions = createAssertionVerifier({ db, fetchDocument, now })
   const registrations = createRateLimiter({ limit: REGISTRATIONS_PER_HOUR, windowMs: 60 * 60 * 1000, now })
+  // The client a token or revocation request named, for logging refusals.
+  const requestClients = new WeakMap<IncomingMessage, string>()
   const authorizations = createRateLimiter({ limit: AUTHORIZATIONS_PER_10_MINUTES, windowMs: 10 * 60 * 1000, now })
 
   const protectedResourceMetadata = {
@@ -212,6 +214,7 @@ export function createOAuthServer(options: {
     const invalid = (message: string) =>
       new OAuthError('invalid_client', message, 401)
     if (!id) throw invalid('Send client_id')
+    requestClients.set(req, id)
     let client: OAuthClient
     try {
       client = await clients.get(id)
@@ -421,6 +424,8 @@ export function createOAuthServer(options: {
         await endpoint(req, res)
       } catch (err) {
         if (err instanceof OAuthError) {
+          const client = requestClients.get(req)
+          console.warn(`OAuth ${pathname} for ${client ?? 'an unknown client'} refused: ${err.code}: ${err.message}`)
           const headers: Record<string, string> = {}
           if (err.status === 401 && req.headers.authorization?.startsWith('Basic ')) headers['www-authenticate'] = 'Basic realm="Hobwork"'
           if (err.retryAfter !== undefined) headers['retry-after'] = String(err.retryAfter)

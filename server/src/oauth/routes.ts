@@ -298,6 +298,7 @@ export function createOAuthServer(options: {
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         token_endpoint_auth_method: client.authMethod,
+        ...(client.jwksUri ? { jwks_uri: client.jwksUri } : {}),
       })
     } catch (err) {
       if (err instanceof ClientError) throw new OAuthError(err.code, err.message)

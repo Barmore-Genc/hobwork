@@ -1,9 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { hashSecret } from './secrets.ts'
+import { ASSERTION_ALGS } from './client-assertion.ts'
 import type { FetchedDocument } from './metadata-fetch.ts'
 
-export type AuthMethod = 'none' | 'client_secret_basic' | 'client_secret_post'
+export type AuthMethod = 'none' | 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt'
+// What registration accepts. private_key_jwt is for metadata document clients only.
 export const AUTH_METHODS: AuthMethod[] = ['none', 'client_secret_basic', 'client_secret_post']
 
 export type OAuthClient = {
@@ -16,6 +18,8 @@ export type OAuthClient = {
   // client ID vouches for where they come from. Registered clients name themselves.
   kind: 'metadata-document' | 'registered'
   secretHash: string | null
+  // Where the keys for private_key_jwt are.
+  jwksUri: string | null
 }
 
 export class ClientError extends Error {
@@ -139,8 +143,20 @@ export function clientFromMetadataDocument(clientId: string, document: unknown):
   const name = cleanName(doc.client_name)
   if (!name) throw new ClientError('invalid_client', 'The client metadata document has no client_name')
   const method = doc.token_endpoint_auth_method ?? 'none'
-  if (method !== 'none') {
-    throw new ClientError('invalid_client', 'Clients with a metadata document must use token_endpoint_auth_method "none"')
+  if (method !== 'none' && method !== 'private_key_jwt') {
+    throw new ClientError(
+      'invalid_client',
+      'Clients with a metadata document must use token_endpoint_auth_method "none" or "private_key_jwt"',
+    )
+  }
+  let jwksUri: string | null = null
+  if (method === 'private_key_jwt') {
+    jwksUri = httpsUri(doc.jwks_uri)
+    if (!jwksUri) throw new ClientError('invalid_client', 'private_key_jwt clients need an https jwks_uri')
+    const alg = doc.token_endpoint_auth_signing_alg
+    if (alg !== undefined && !ASSERTION_ALGS.includes(alg as string)) {
+      throw new ClientError('invalid_client', `token_endpoint_auth_signing_alg must be one of ${ASSERTION_ALGS.join(', ')}`)
+    }
   }
   try {
     checkGrantTypes(doc.grant_types)
@@ -150,9 +166,10 @@ export function clientFromMetadataDocument(clientId: string, document: unknown):
       name,
       uri: httpsUri(doc.client_uri),
       redirectUris: checkRedirectUris(doc.redirect_uris),
-      authMethod: 'none',
+      authMethod: method,
       kind: 'metadata-document',
       secretHash: null,
+      jwksUri,
     }
   } catch (err) {
     if (err instanceof ClientError) throw new ClientError('invalid_client', err.message)
@@ -186,6 +203,7 @@ export function registerClient(db: DatabaseSync, body: unknown, now = Date.now()
     authMethod: authMethod as AuthMethod,
     kind: 'registered',
     secretHash: secret ? hashSecret(secret) : null,
+    jwksUri: null,
   }
   db.prepare(
     `DELETE FROM oauth_clients WHERE created_at < ? AND id NOT IN (SELECT client_id FROM oauth_grants)`,
@@ -222,6 +240,7 @@ function registeredClient(db: DatabaseSync, id: string): OAuthClient | undefined
     authMethod: String(row.auth_method) as AuthMethod,
     kind: 'registered',
     secretHash: row.secret_hash === null ? null : String(row.secret_hash),
+    jwksUri: null,
   }
 }
 

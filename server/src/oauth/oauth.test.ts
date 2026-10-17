@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -250,6 +250,8 @@ test('metadata points MCP clients at the authorization server', async () => {
     authorization_response_iss_parameter_supported: true,
   })
   expect(server.token_endpoint_auth_methods_supported).toContain('none')
+  expect(server.token_endpoint_auth_methods_supported).toContain('private_key_jwt')
+  expect(server.token_endpoint_auth_signing_alg_values_supported).toEqual(['RS256', 'ES256'])
 
   const invalid = await mcpRequest('hwa_not-a-token')
   expect(invalid.status).toBe(401)
@@ -630,12 +632,171 @@ test('metadata documents are validated', async () => {
     ['https://c.example/b', { client_id: 'https://c.example/b', redirect_uris: ['https://c.example/cb'] }],
     ['https://c.example/c', { client_id: 'https://c.example/c', client_name: 'C', redirect_uris: ['https://c.example/cb'], token_endpoint_auth_method: 'client_secret_basic' }],
     ['https://c.example/d', { client_id: 'https://c.example/d', client_name: 'D', redirect_uris: ['http://c.example/cb'] }],
+    ['https://c.example/e', { client_id: 'https://c.example/e', client_name: 'E', redirect_uris: ['https://c.example/cb'], token_endpoint_auth_method: 'private_key_jwt' }],
+    [
+      'https://c.example/f',
+      {
+        client_id: 'https://c.example/f',
+        client_name: 'F',
+        redirect_uris: ['https://c.example/cb'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks_uri: 'https://c.example/jwks.json',
+        token_endpoint_auth_signing_alg: 'HS256',
+      },
+    ],
   ]
   for (const [url, document] of bad) {
     documents.set(url, document)
     const res = await fetch(authorizeUrl(url, { redirect_uri: 'https://c.example/cb' }).url, { redirect: 'manual' })
     expect(res.headers.get('location')).toBe('/connect?error=unknown_client')
   }
+})
+
+const CHATGPT_URL = 'https://chatgpt.example/oauth/client.json'
+const CHATGPT_JWKS = 'https://chatgpt.example/oauth/jwks.json'
+const CHATGPT_REDIRECT = 'https://chatgpt.example/connector_platform_oauth_redirect'
+
+type SigningKey = { kid: string; alg: 'RS256' | 'ES256'; privateKey: KeyObject; jwk: Record<string, unknown> }
+
+function signingKey(kid: string, alg: 'RS256' | 'ES256' = 'RS256'): SigningKey {
+  const { privateKey, publicKey } =
+    alg === 'RS256'
+      ? generateKeyPairSync('rsa', { modulusLength: 2048 })
+      : generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  return { kid, alg, privateKey, jwk: { ...publicKey.export({ format: 'jwk' }), kid, use: 'sig', alg } }
+}
+
+// What ChatGPT's metadata document looks like, with test URLs.
+function chatGptDocument(keys: SigningKey[]) {
+  documents.set(CHATGPT_URL, {
+    client_id: CHATGPT_URL,
+    client_uri: 'https://chatgpt.example/',
+    redirect_uris: [CHATGPT_REDIRECT],
+    token_endpoint_auth_method: 'private_key_jwt',
+    token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    client_name: 'ChatGPT',
+    token_endpoint_auth_signing_alg: 'RS256',
+    jwks_uri: CHATGPT_JWKS,
+  })
+  documents.set(CHATGPT_JWKS, { keys: keys.map((k) => k.jwk) })
+}
+
+function clientAssertion(key: SigningKey, claims: Record<string, unknown> = {}) {
+  const seconds = Math.floor(now / 1000)
+  const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+  const signed = `${part({ alg: key.alg, kid: key.kid, typ: 'JWT' })}.${part({
+    iss: CHATGPT_URL,
+    sub: CHATGPT_URL,
+    aud: `${app.base}/oauth/token`,
+    iat: seconds,
+    exp: seconds + 300,
+    jti: randomBytes(16).toString('base64url'),
+    ...claims,
+  })}`
+  const signature = sign('sha256', Buffer.from(signed), key.alg === 'ES256' ? { key: key.privateKey, dsaEncoding: 'ieee-p1363' } : key.privateKey)
+  return `${signed}.${signature.toString('base64url')}`
+}
+
+const assertionParams = (assertion: string) => ({
+  client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+  client_assertion: assertion,
+})
+
+async function chatGptCode() {
+  const { url, verifier } = authorizeUrl(CHATGPT_URL, { redirect_uri: CHATGPT_REDIRECT })
+  const { info, redirectTo } = await consent(url)
+  return {
+    info,
+    params: {
+      grant_type: 'authorization_code',
+      code: redirectTo.searchParams.get('code')!,
+      redirect_uri: CHATGPT_REDIRECT,
+      code_verifier: verifier,
+      resource: mcpUrl(),
+    },
+  }
+}
+
+test("ChatGPT's metadata document connects with private_key_jwt", async () => {
+  const key = signingKey('k1')
+  chatGptDocument([key])
+  const { info, params } = await chatGptCode()
+  expect(info).toMatchObject({ client: { name: 'ChatGPT', domain: 'chatgpt.example' } })
+
+  expect((await form('/oauth/token', { ...params, client_id: CHATGPT_URL })).status).toBe(401)
+  const assertion = clientAssertion(key)
+  const res = await form('/oauth/token', { ...params, ...assertionParams(assertion) })
+  expect(res.status).toBe(200)
+  const tokens = await jsonOf(res)
+  expect((await mcpRequest(tokens.access_token)).status).toBe(200)
+
+  const refresh = { grant_type: 'refresh_token', client_id: CHATGPT_URL, refresh_token: tokens.refresh_token }
+  const replayed = await form('/oauth/token', { ...refresh, ...assertionParams(assertion) })
+  expect(replayed.status).toBe(401)
+  expect(await jsonOf(replayed)).toMatchObject({ error: 'invalid_client', error_description: 'This client_assertion was already used' })
+  const issuerAud = clientAssertion(key, { aud: app.base })
+  const refreshed = await form('/oauth/token', { ...refresh, ...assertionParams(issuerAud) })
+  expect(refreshed.status).toBe(200)
+
+  const revokeAssertion = clientAssertion(key, { aud: `${app.base}/oauth/revoke` })
+  const revoked = await form('/oauth/revoke', { token: (await jsonOf(refreshed)).access_token, ...assertionParams(revokeAssertion) })
+  expect(revoked.status).toBe(200)
+})
+
+test('client assertions are checked', async () => {
+  const key = signingKey('k1')
+  const other = signingKey('k1')
+  chatGptDocument([key])
+  const { params } = await chatGptCode()
+  const seconds = Math.floor(now / 1000)
+  const refused: [string, string][] = [
+    [clientAssertion(other), 'The client_assertion signature is not valid'],
+    [clientAssertion(key, { aud: 'https://elsewhere.example/oauth/token' }), 'client_assertion aud must be'],
+    [clientAssertion(key, { aud: `${app.base}/oauth/revoke` }), 'client_assertion aud must be'],
+    [clientAssertion(key, { iss: 'https://evil.example/client.json' }), 'iss and sub'],
+    [clientAssertion(key, { exp: seconds - 120 }), 'expired'],
+    [clientAssertion(key, { exp: seconds + 2 * 60 * 60 }), 'must expire within'],
+    [clientAssertion(key, { nbf: seconds + 600 }), 'not valid yet'],
+    [clientAssertion(key, { jti: undefined }), 'needs a jti'],
+    [clientAssertion({ ...key, kid: 'unknown' }), 'No key'],
+    [clientAssertion({ ...key, alg: 'ES256' }), 'No key'],
+    ['not.a.jwt!', 'not a signed JWT'],
+  ]
+  for (const [assertion, message] of refused) {
+    const res = await form('/oauth/token', { ...params, client_id: CHATGPT_URL, ...assertionParams(assertion) })
+    expect(res.status).toBe(401)
+    expect((await jsonOf(res)).error_description).toContain(message)
+  }
+  const none = `${Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')}.${clientAssertion(key).split('.')[1]}.`
+  expect((await form('/oauth/token', { ...params, ...assertionParams(none) })).status).toBe(401)
+  expect(
+    (await form('/oauth/token', { ...params, client_assertion_type: 'urn:other', client_assertion: clientAssertion(key) })).status,
+  ).toBe(401)
+  expect((await form('/oauth/token', { ...params, ...assertionParams(clientAssertion(key)) })).status).toBe(200)
+
+  const { client_id } = await registeredClient()
+  const registered = await form('/oauth/token', { grant_type: 'refresh_token', client_id, refresh_token: 'x', ...assertionParams(clientAssertion(key)) })
+  expect(await jsonOf(registered)).toMatchObject({ error_description: 'This client does not authenticate with a client_assertion' })
+})
+
+test('a rotated key is fetched again, at most once a minute', async () => {
+  const first = signingKey('k1')
+  const second = signingKey('k2', 'ES256')
+  chatGptDocument([first])
+  const exchange = async (key: SigningKey) => {
+    const { params } = await chatGptCode()
+    return form('/oauth/token', { ...params, ...assertionParams(clientAssertion(key)) })
+  }
+  expect((await exchange(first)).status).toBe(200)
+  chatGptDocument([first, second])
+  const fetchesBefore = fetched.filter((u) => u === CHATGPT_JWKS).length
+  expect((await exchange(second)).status).toBe(401)
+  expect(fetched.filter((u) => u === CHATGPT_JWKS).length).toBe(fetchesBefore)
+  now += 61 * 1000
+  expect((await exchange(second)).status).toBe(200)
+  expect(fetched.filter((u) => u === CHATGPT_JWKS).length).toBe(fetchesBefore + 1)
 })
 
 test('redirect URIs match exactly, loopback ones on any port', () => {
@@ -647,6 +808,7 @@ test('redirect URIs match exactly, loopback ones on any port', () => {
     authMethod: 'none',
     kind: 'registered',
     secretHash: null,
+    jwksUri: null,
   }
   expect(redirectUriAllowed(client, 'http://localhost:3118/callback')).toBe(true)
   expect(redirectUriAllowed(client, 'http://127.0.0.1:9/cb')).toBe(true)

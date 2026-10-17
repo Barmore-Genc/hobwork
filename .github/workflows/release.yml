@@ -108,7 +108,7 @@ jobs:
           name: hobwork-${{ steps.version.outputs.version }}-linux-x86_64
           path: release/out/
           compression-level: 0
-          retention-days: 30
+          retention-days: 3
       - if: github.ref_type == 'tag'
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes release/out/*
         env:

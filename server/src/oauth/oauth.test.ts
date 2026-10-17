@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createAgentToken } from '../agents.ts'
 import { parseTrustedProxies } from '../client-address.ts'
 import { addSshKey, generateEd25519KeyPair, listSshKeys } from '../ssh/keys.ts'
@@ -733,9 +733,12 @@ test("ChatGPT's metadata document connects with private_key_jwt", async () => {
   expect((await mcpRequest(tokens.access_token)).status).toBe(200)
 
   const refresh = { grant_type: 'refresh_token', client_id: CHATGPT_URL, refresh_token: tokens.refresh_token }
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   const replayed = await form('/oauth/token', { ...refresh, ...assertionParams(assertion) })
   expect(replayed.status).toBe(401)
   expect(await jsonOf(replayed)).toMatchObject({ error: 'invalid_client', error_description: 'This client_assertion was already used' })
+  expect(warn).toHaveBeenCalledWith(`OAuth /oauth/token for ${CHATGPT_URL} refused: invalid_client: This client_assertion was already used`)
+  warn.mockRestore()
   const issuerAud = clientAssertion(key, { aud: app.base })
   const refreshed = await form('/oauth/token', { ...refresh, ...assertionParams(issuerAud) })
   expect(refreshed.status).toBe(200)

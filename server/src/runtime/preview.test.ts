@@ -233,7 +233,7 @@ test('previews stop when idle', async () => {
   await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true, branch: 'add-spools' })
   expect(runtime.previewStatus('filament', 'add-spools').running).toBe(true)
   await vi.waitFor(() => expect(runtime.previewStatus('filament', 'add-spools').running).toBe(false), { timeout: 5000 })
-  expect(sandboxes.created.at(-1)).toMatchObject({ memory: '256M', cpus: defaultResources().runtime.cpus })
+  expect(sandboxes.created.at(-1)).toMatchObject({ memory: '384M', cpus: defaultResources().runtime.cpus })
 })
 
 test('branch handlers call Home Assistant services only while a person allows it', async () => {

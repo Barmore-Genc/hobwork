@@ -16,7 +16,7 @@ export type ResourceRequest = Partial<Record<ResourceKind, Partial<Resources>>>
 // other hosts get a whole vCPU there.
 export function defaultResources(quota: CpuQuota = cpuQuota()): Record<ResourceKind, Resources> {
   return {
-    runtime: { memoryMb: 256, cpus: quota.mode === 'cgroup' ? 0.5 : 1 },
+    runtime: { memoryMb: 384, cpus: quota.mode === 'cgroup' ? 0.5 : 1 },
     workspace: { memoryMb: 1536, cpus: 2 },
     pipeline: { memoryMb: 1536, cpus: 2 },
   }

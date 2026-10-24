@@ -14,7 +14,7 @@ test('a hob can ask for less than the defaults, never more', () => {
 test('the runtime gets half a core where the host can cap one and a whole one where it cannot', () => {
   const quota = cpuQuota()
   expect(defaultResources()).toEqual({
-    runtime: { memoryMb: 256, cpus: quota.mode === 'cgroup' ? 0.5 : 1 },
+    runtime: { memoryMb: 384, cpus: quota.mode === 'cgroup' ? 0.5 : 1 },
     workspace: { memoryMb: 1536, cpus: 2 },
     pipeline: { memoryMb: 1536, cpus: 2 },
   })
@@ -23,7 +23,7 @@ test('the runtime gets half a core where the host can cap one and a whole one wh
 test('a fraction is only allowed where the host can hold a VM to it', () => {
   const quota = cpuQuota()
   if (quota.mode === 'cgroup') {
-    expect(resolveResources('runtime', { runtime: { cpus: 0.25 } })).toEqual({ memoryMb: 256, cpus: 0.25 })
+    expect(resolveResources('runtime', { runtime: { cpus: 0.25 } })).toEqual({ memoryMb: 384, cpus: 0.25 })
   } else {
     expect(() => resolveResources('runtime', { runtime: { cpus: 0.25 } })).toThrow(
       'resources.runtime.cpus: this host cannot cap a VM at 0.25 vCPUs',

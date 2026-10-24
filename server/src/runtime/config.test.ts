@@ -24,6 +24,10 @@ test('clamps idleTimeout below the largest setTimeout delay', () => {
   expect(parseProjectConfig('{ "idleTimeout": "99999999999999999999ms" }').idleTimeoutMs).toBe(MAX_IDLE_TIMEOUT_MS)
 })
 
+test('defaults idleTimeout to 5 minutes, short enough to stop before the 1 hour lifetime does', () => {
+  expect(parseProjectConfig('{}').idleTimeoutMs).toBe(5 * 60_000)
+})
+
 test('reads static mounts, longest prefix first, and drops any that could serve something else', () => {
   expect(parseProjectConfig('{}').static).toEqual([])
   const mounts = parseProjectConfig(

@@ -207,7 +207,11 @@
         }
       }
     },
-    "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
+    "idleTimeout": {
+      "description": "How long the runtime VM stays up after the last invocation, as a number and a unit, like 30s, 5m or 1h. Default 5m. A hob that handles traffic at least this often keeps its VM, which saves the cold start.",
+      "type": "string",
+      "pattern": "^\\d+(ms|s|m|h|d)$"
+    },
     "resources": {
       "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 512 MB and 2 vCPUs, workspaces and pipeline runs (which also run builds) to 2048 MB and 4 vCPUs. Values above the defaults are capped to them.",
       "type": "object",

@@ -63,7 +63,7 @@ export type ProjectConfig = {
   appLinks: AppLinks
 }
 
-export const DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000
+export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000
 // setTimeout runs its callback immediately for delays above 2^31-1.
 export const MAX_IDLE_TIMEOUT_MS = 2 ** 31 - 1
 

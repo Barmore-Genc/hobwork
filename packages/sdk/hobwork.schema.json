@@ -14,7 +14,7 @@
       "additionalProperties": false,
       "properties": {
         "memoryMb": { "type": "integer", "minimum": 128 },
-        "cpus": { "type": "integer", "minimum": 1 }
+        "cpus": { "type": "number", "minimum": 0.25 }
       }
     },
     "cspHost": { "type": "string", "pattern": "^(https?|wss?)://(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\\d{1,5})?(/[^\\s;,'\"\\\\]*)?$" },
@@ -209,7 +209,7 @@
     },
     "idleTimeout": { "type": "string", "pattern": "^\\d+(ms|s|m|h|d)$" },
     "resources": {
-      "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 512 MB and 2 vCPUs, workspaces and pipeline runs (which also run builds) to 2048 MB and 4 vCPUs. Values above the defaults are capped to them.",
+      "description": "Memory and vCPUs for the hob's VMs, for a hob that needs less than the defaults so the host has room for more VMs. The runtime (which also runs branch previews) defaults to 384 MB and 0.5 vCPUs, workspaces and pipeline runs (which also run builds) to 1536 MB and 2 vCPUs. Values above the defaults are capped to them. A `cpus` below one is a share of a core: the VM boots with one vCPU and the host caps its CPU time at that share, with cgroup v2. A host without cgroup v2 refuses a fraction, and its runtime default is one vCPU.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

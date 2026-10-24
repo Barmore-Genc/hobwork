@@ -4,7 +4,7 @@ import { parseHobworkJson } from '../../packages/sdk/src/hobwork-json.js'
 import { HeadTailOutput } from './mcp/output.ts'
 import { MIN_RELEASE_AGE_MINUTES } from './pipeline/pnpm-settings.ts'
 import type { StartPipelineVm } from './pipeline/runner.ts'
-import { DEFAULT_RESOURCES, memorySize, resolveResources, type ResourceKind, type ResourceRequest } from './sandbox/budget.ts'
+import { defaultResources, memorySize, resolveResources, type ResourceKind, type ResourceRequest } from './sandbox/budget.ts'
 import { extraDependencies } from './platform.ts'
 import {
   GUEST_GID,
@@ -191,7 +191,7 @@ async function hobworkResources(hobworkJson: string | undefined, kind: ResourceK
   const config = await readJson(hobworkJson, parseHobworkJson)
   const requested = (config as { resources?: ResourceRequest } | undefined)?.resources
   const ask = typeof requested === 'object' && requested !== null ? requested : undefined
-  return resolveResources(kind, ask, DEFAULT_RESOURCES[kind])
+  return resolveResources(kind, ask, defaultResources()[kind])
 }
 
 export async function hasExtraDependencies(packageJson: string | undefined): Promise<boolean> {

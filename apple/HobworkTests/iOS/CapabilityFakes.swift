@@ -104,3 +104,37 @@ final class FakeNFCSession: NFCTagSession {
         onEnd?(reason)
     }
 }
+
+@MainActor
+final class FakeHomeKitStore: HomeKitStore {
+    var homesList = [HomeKitHome(id: "H1", name: "Our House", isPrimary: true)]
+    var accessoriesList = [
+        HomeKitAccessory(id: "A1", name: "Lamp", room: "Default Room", serialNumber: "light.lamp", bridge: "HASS Bridge"),
+        HomeKitAccessory(id: "A2", name: "Hue Bridge", room: nil, serialNumber: nil, bridge: nil),
+    ]
+    var failure: BridgeError?
+    var accessoryQueries: [String] = []
+    var assigned: [(accessory: String, room: String)] = []
+    var renamed: [(accessory: String, name: String)] = []
+
+    func homes() async throws(BridgeError) -> [HomeKitHome] {
+        if let failure { throw failure }
+        return homesList
+    }
+
+    func accessories(home: String) async throws(BridgeError) -> [HomeKitAccessory] {
+        accessoryQueries.append(home)
+        if let failure { throw failure }
+        return accessoriesList
+    }
+
+    func assignRoom(accessory: String, room: String) async throws(BridgeError) {
+        if let failure { throw failure }
+        assigned.append((accessory, room))
+    }
+
+    func rename(accessory: String, name: String) async throws(BridgeError) {
+        if let failure { throw failure }
+        renamed.append((accessory, name))
+    }
+}

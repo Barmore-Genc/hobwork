@@ -54,6 +54,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Hobs you open in Hobwork can scan barcodes and take photos when you ask them to.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>Hobs on your Hobwork host can read your Home and move accessories to the right room when you ask them to.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Hobs on your Hobwork host can read the Health data you choose to share.</string>
 	<key>NSHealthUpdateUsageDescription</key>

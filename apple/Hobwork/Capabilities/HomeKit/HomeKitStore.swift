@@ -83,7 +83,12 @@ protocol HomeKitStore {
             let (home, accessory) = try await find(accessory: id)
             let existing = home.rooms.first { $0.name.compare(room, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
             do {
-                let target = try await existing ?? home.addRoom(named: room)
+                let target: HMRoom
+                if let existing {
+                    target = existing
+                } else {
+                    target = try await home.addRoom(named: room)
+                }
                 if accessory.room?.uniqueIdentifier == target.uniqueIdentifier { return }
                 try await home.assignAccessory(accessory, to: target)
             } catch {

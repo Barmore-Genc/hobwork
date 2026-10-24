@@ -130,8 +130,8 @@ test('workspace VMs mount the checkout with node_modules on the VM disk', async 
   const [sandbox] = sandboxes
   expect(sandbox?.options).toMatchObject({
     image: '/image',
-    cpus: 4,
-    memory: '2G',
+    cpus: 2,
+    memory: '1536M',
     mounts: { '/workspace': { hostPath: dir, vmDisk: ['node_modules'] } },
     egress: ['registry.npmjs.org', 'api.example.com'],
   })
@@ -152,7 +152,7 @@ test('workspace VMs get the resources hobwork.json asks for, up to the defaults'
   await workspaceVmBackend(vmOptions())(workspace())
   expect(sandboxes[0]?.options).toMatchObject({
     memory: '1G',
-    cpus: 4,
+    cpus: 2,
     budget: { kind: 'workspace', project: 'filament', branch: 'spools' },
   })
 })
@@ -405,7 +405,7 @@ test('pipeline VMs only reach the registry and are stopped on shutdown', async (
   const first = await backend.start({ dir })
   await backend.start({ dir })
   expect(sandboxes[0]?.options.egress).toEqual(['registry.npmjs.org'])
-  expect(sandboxes[0]?.options.cpus).toBe(4)
+  expect(sandboxes[0]?.options.cpus).toBe(2)
   expect(sandboxes[0]?.options.env).toMatchObject({ pnpm_config_minimum_release_age: '4320' })
   const icons = sandboxes[0]?.options.mounts?.['/opt/hobwork/icons']
   expect(icons).toMatchObject({ readonly: true })

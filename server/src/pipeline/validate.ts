@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import { isTimeZone } from '../../../packages/sdk/src/time.ts'
+import { cpuShareProblem } from '../sandbox/cpu-quota.ts'
 import { matchRoute, parseRoutes } from '../runtime/routes.ts'
 
 const schemaPath = resolve(import.meta.dirname, '../../../packages/sdk/hobwork.schema.json')
@@ -35,9 +36,18 @@ export function validateHobworkJson(raw: string | undefined): string[] {
     return [`hobwork.json cannot be parsed: ${(err as Error).message}`]
   }
   const validate = validator()
-  if (validate(config)) return [...timeZoneProblems(config), ...surfaceProblems(config)]
+  if (validate(config)) return [...resourceProblems(config), ...timeZoneProblems(config), ...surfaceProblems(config)]
   // An "if" error only repeats the error inside its "then".
   return (validate.errors ?? []).filter((e) => e.keyword !== 'if').map(describe)
+}
+
+// A share of a core is only real where the host can cap the VM's CPU time.
+function resourceProblems(config: unknown): string[] {
+  const resources = (config as { resources?: Record<string, { cpus?: number }> }).resources ?? {}
+  return Object.entries(resources).flatMap(([kind, { cpus }]) => {
+    const problem = cpus === undefined ? undefined : cpuShareProblem(cpus)
+    return problem === undefined ? [] : [`/resources/${kind}/cpus: ${problem}`]
+  })
 }
 
 // The schema only checks the shape of a zone name; this host's Intl knows which exist.

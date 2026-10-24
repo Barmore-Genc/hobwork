@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test } from 'vitest'
 import { checkViteConfig, validateHobworkJson, VITE_CONFIG } from './validate.ts'
+import { cpuQuota } from '../sandbox/cpu-quota.ts'
 
 const OLD_VITE_CONFIG = "const config = JSON.parse(readFileSync('hobwork.json', 'utf8')) as HobworkJson\n"
 const JSONC = '{\n  // Greets.\n  "routes": { "GET /greeting": { "handler": "src/greeting-route.ts" }, },\n}\n'
@@ -26,6 +27,9 @@ test('checks that cron time zones exist', () => {
 
 test('validates resources', () => {
   expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 256, "cpus": 1 }, "workspace": {} } }')).toEqual([])
+  expect(validateHobworkJson('{ "resources": { "runtime": { "cpus": 0.1 } } }')).toEqual([
+    '/resources/runtime/cpus: must be >= 0.25',
+  ])
   expect(validateHobworkJson('{ "resources": { "runtime": { "memoryMb": 12 } } }')).toEqual([
     '/resources/runtime/memoryMb: must be >= 128',
   ])
@@ -34,11 +38,24 @@ test('validates resources', () => {
   ])
 })
 
+test('a share of a core is only valid where the host can hold a VM to one', () => {
+  const quota = cpuQuota()
+  const json = '{ "resources": { "runtime": { "cpus": 0.25 } } }'
+  if (quota.mode === 'cgroup') {
+    expect(validateHobworkJson(json)).toEqual([])
+  } else {
+    expect(validateHobworkJson(json)).toEqual([
+      `/resources/runtime/cpus: this host cannot cap a VM at 0.25 vCPUs, because ${quota.reason}. Ask for a whole number of vCPUs, at least 1.`,
+    ])
+  }
+})
+
 test('reports where hobwork.json cannot be parsed', () => {
   expect(validateHobworkJson('{\n  "egress": ["a.example.com" "b.example.com"]\n}')).toEqual([
     'hobwork.json cannot be parsed: Comma expected at line 2 column 30',
   ])
 })
+
 
 test('asks old projects to switch vite.config.ts when hobwork.json has comments', () => {
   expect(checkViteConfig(JSONC, OLD_VITE_CONFIG)).toContain(VITE_CONFIG)

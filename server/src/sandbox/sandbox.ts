@@ -64,6 +64,9 @@ export type SandboxOptions = {
   // VMs without it count as pipeline VMs of no hob.
   budget?: { kind: VmKind; project: string; branch?: string }
   memory?: string
+  // CPU cores for the VM, possibly a fraction. QEMU takes whole vCPUs, so the
+  // VM boots with the ceiling (at least one) and the host caps its CPU time
+  // with cgroup v2 (`cpu-quota.ts`). A fraction this host cannot cap throws.
   cpus?: number
   // Minimum root disk size, e.g. `4G`. Writes to the root disk are discarded on stop.
   diskSize?: string

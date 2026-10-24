@@ -51,7 +51,7 @@ cp -R "$root/images/build/$arch" "$stage/images/build/$arch"
 
 # pnpm links packages with relative symlinks. An absolute one would point into
 # this build machine after extraction.
-absolute=$(find "$stage" -type l -lname '/*')
+absolute=$(find "$stage" -type l -exec sh -c 'for f; do case "$(readlink "$f")" in /*) echo "$f";; esac; done' _ {} +)
 if [ -n "$absolute" ]; then
   echo "absolute symlinks in the package:" >&2
   echo "$absolute" >&2

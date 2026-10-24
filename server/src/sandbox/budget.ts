@@ -1,4 +1,5 @@
 import { cpus, totalmem } from 'node:os'
+import { cpuQuota, cpuShareProblem, type CpuQuota } from './cpu-quota.ts'
 import type { Sandbox, SandboxFactory } from './sandbox.ts'
 import type { VmScheduler } from './scheduler.ts'
 
@@ -8,23 +9,34 @@ export type Resources = { memoryMb: number; cpus: number }
 export type ResourceRequest = Partial<Record<ResourceKind, Partial<Resources>>>
 
 // Branch previews use the runtime's, builds the pipeline's.
-export const DEFAULT_RESOURCES: Record<ResourceKind, Resources> = {
-  runtime: { memoryMb: 512, cpus: 2 },
-  workspace: { memoryMb: 2048, cpus: 4 },
-  pipeline: { memoryMb: 2048, cpus: 4 },
+//
+// A handler serves one request at a time on one thread, so a runtime VM rarely
+// needs a whole core. QEMU takes whole vCPUs, and only a host that can cap a
+// VM's CPU time with cgroup v2 can give it a share of one (`cpu-quota.ts`), so
+// other hosts get a whole vCPU there.
+export function defaultResources(quota: CpuQuota = cpuQuota()): Record<ResourceKind, Resources> {
+  return {
+    runtime: { memoryMb: 256, cpus: quota.mode === 'cgroup' ? 0.5 : 1 },
+    workspace: { memoryMb: 1536, cpus: 2 },
+    pipeline: { memoryMb: 1536, cpus: 2 },
+  }
 }
 
-// A hob can ask for less than the default and never for more.
+// A hob can ask for less than the default and never for more. A fraction is
+// only allowed where the host can hold the VM to it.
 export function resolveResources(
   kind: ResourceKind,
   requested: ResourceRequest | undefined,
-  defaults: Resources = DEFAULT_RESOURCES[kind],
+  defaults: Resources = defaultResources()[kind],
 ): Resources {
   const ask = requested?.[kind]
-  return {
+  const resources = {
     memoryMb: Math.min(defaults.memoryMb, ask?.memoryMb ?? defaults.memoryMb),
     cpus: Math.min(defaults.cpus, ask?.cpus ?? defaults.cpus),
   }
+  const problem = cpuShareProblem(resources.cpus)
+  if (problem) throw new Error(`resources.${kind}.cpus: ${problem}`)
+  return resources
 }
 
 export function memoryMbOf(size: string): number {
@@ -57,7 +69,7 @@ export function loadVmBudget(
     cpuCount: cpus().length,
   },
 ): VmBudget {
-  const biggest = Object.values(DEFAULT_RESOURCES)
+  const biggest = Object.values(defaultResources())
   const headroomMb = Math.max(1024, machine.totalMemoryMb / 4)
   const memoryMb = env.HOBWORK_VM_MEMORY_MB
     ? positiveInteger('HOBWORK_VM_MEMORY_MB', env.HOBWORK_VM_MEMORY_MB)
@@ -72,16 +84,18 @@ export function loadVmBudget(
 }
 
 // Reserves the VM's memory and vCPUs before it boots and gives them back when
-// it stops, exits or fails to boot.
+// it stops, exits or fails to boot. A share of a core is reserved as that share,
+// since the sandbox holds the VM to it.
 export function budgetedSandboxFactory(create: SandboxFactory, scheduler: VmScheduler): SandboxFactory {
   return async (options) => {
     const { kind = 'pipeline', project = '(host)', branch } = options.budget ?? {}
+    const cpus = options.cpus ?? 2
     const lease = await scheduler.acquire({
       kind,
       project,
       branch,
       memoryMb: memoryMbOf(options.memory ?? '1G'),
-      cpus: options.cpus ?? 2,
+      cpus,
     })
     let sandbox: Sandbox
     try {

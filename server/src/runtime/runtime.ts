@@ -57,7 +57,7 @@ import {
   type LogLevel,
   type NewLogEntry,
 } from './logs.ts'
-import { DEFAULT_RESOURCES, memorySize, memoryMbOf, resolveResources } from '../sandbox/budget.ts'
+import { defaultResources, memorySize, memoryMbOf, resolveResources } from '../sandbox/budget.ts'
 import { HostBusyError } from '../sandbox/scheduler.ts'
 import { createLineSplitter } from './line-splitter.ts'
 import { createLogLimiter, type LogLimiter } from './log-limiter.ts'
@@ -508,9 +508,10 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     const secrets = options.secrets?.forSandbox(project) ?? {}
     const egress = [...new Set([...deployed.config.egress, ...(options.secrets?.hosts(project) ?? [])])]
     let inst: Instance | undefined
+    const defaults = defaultResources().runtime
     const resources = resolveResources('runtime', deployed.config.resources, {
-      ...DEFAULT_RESOURCES.runtime,
-      memoryMb: options.memory ? memoryMbOf(options.memory) : DEFAULT_RESOURCES.runtime.memoryMb,
+      ...defaults,
+      memoryMb: options.memory ? memoryMbOf(options.memory) : defaults.memoryMb,
     })
     const label = deployed.branch === undefined ? `runtime ${project} v${deployed.version}` : `preview ${project}/${deployed.branch}`
     const sandbox = await createSandbox({

@@ -22,6 +22,7 @@ import { hostNetworksBlockList, isPublicAddress } from '../public-address.ts'
 import { egressAllows, egressHosts, egressRules, privateEgressAllows } from './egress.ts'
 import { requestHook, upstreamFetch } from './intercept.ts'
 import { checkIsolation, createVmDir, isolationMode, prepareQemu, startVfsWorker, type VfsWorker, type VmDir } from './isolation.ts'
+import { assertCpuShare, capVmCpu, cpuQuota } from './cpu-quota.ts'
 import { relativePaths, toProviders } from './mounts.ts'
 import { qemuPath } from './qemu.ts'
 import { systemEnv } from './system-env.ts'
@@ -111,6 +112,9 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
 
   checkIsolation()
   const mounts = options.mounts ?? {}
+  const cpus = options.cpus ?? 2
+  // Before boot, so a share this host cannot hold the VM to never starts one.
+  assertCpuShare(cpus, 'cpus')
   const isolated = isolationMode() === 'namespaces' ? await startIsolated(mounts) : undefined
   let vm: VM
   try {
@@ -122,7 +126,7 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
         ...(isolated && prepareQemu(isolated.dir, options.image)),
       },
       memory: options.memory ?? '1G',
-      cpus: options.cpus ?? 2,
+      cpus: Math.max(1, Math.ceil(cpus)),
       rootfs: { mode: 'cow', size: options.diskSize },
       env: { ...systemEnv(), ...options.env, ...hooks.env },
       httpHooks: hooks.httpHooks,
@@ -144,12 +148,24 @@ export async function createGondolinSandbox(options: SandboxOptions): Promise<Sa
   try {
     await vm.start()
     await bindVmDiskDirs(vm, mounts)
+    await capCpuShare(vm, cpus)
   } catch (err) {
     await vm.close()
     isolated?.close()
     throw err
   }
   return new GondolinSandbox(vm, isolated)
+}
+
+// QEMU takes whole vCPUs, so a VM asked for a share of a core boots with one and
+// the host caps the QEMU process instead. The guest cannot do this: the guest
+// owns the VM, so anything running in it can undo a limit set from inside.
+async function capCpuShare(vm: VM, cpus: number): Promise<void> {
+  if (Number.isInteger(cpus)) return
+  const pid = vm.getHostPid()
+  if (pid === null) throw new Error(`the VM for ${cpus} vCPUs is not running`)
+  const cap = await capVmCpu(cpuQuota(), pid, cpus)
+  void vm.exited.then(() => cap.release())
 }
 
 type Isolated = { dir: VmDir, worker: VfsWorker, close(): void }

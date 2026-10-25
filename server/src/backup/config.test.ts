@@ -55,7 +55,7 @@ test('schedule, retention and the rest', () => {
   const config = loadBackupConfig({
     ...REQUIRED,
     HOBWORK_KOPIA_BIN: '/usr/bin/kopia',
-    HOBWORK_BACKUP_S3_PREFIX: 'hobwork-host/',
+    HOBWORK_BACKUP_S3_PREFIX: 'host-a/',
     HOBWORK_BACKUP_S3_REGION: 'eu-central-1',
     HOBWORK_BACKUP_SCHEDULE: '0 4 * * *',
     HOBWORK_BACKUP_KEEP_DAILY: '7',
@@ -63,7 +63,7 @@ test('schedule, retention and the rest', () => {
   })
   expect(config).toMatchObject({
     kopiaBin: '/usr/bin/kopia',
-    prefix: 'hobwork-host/',
+    prefix: 'host-a/',
     region: 'eu-central-1',
     schedule: '0 4 * * *',
     retention: { daily: 7, weekly: 8, monthly: 0 },

@@ -24,9 +24,9 @@ Edit `platform/package.json` (exact versions only), then update the lockfile:
 pnpm -C images/platform install --lockfile-only --ignore-workspace
 ```
 
-## On hobwork-host (x86_64 Linux)
+## On an x86_64 Linux host
 
-Needs `qemu-system-x86_64`, `qemu-img`, Node >= 23.6 and read-write access to `/dev/kvm`. hobwork-host has no pnpm and no Docker access for the user, so build on another machine with Docker and copy the result over. From the repo root on the Mac (the `--platform` flags make Docker emulate x86_64):
+Needs `qemu-system-x86_64`, `qemu-img`, Node >= 23.6 and read-write access to `/dev/kvm`. If the host has no Docker, build on another machine and copy the tree over. From the repo root on a development machine (the `--platform` flags make Docker emulate x86_64):
 
 ```sh
 HOBWORK_IMAGE_ARCH=x86_64 images/build.sh
@@ -34,11 +34,9 @@ HOBWORK_IMAGE_ARCH=x86_64 images/build.sh
 # linux-x64 node_modules (Gondolin optional dependencies are per platform)
 docker run --rm --platform linux/amd64 -v "$PWD:/repo" -w /repo node:26 \
   sh -euc 'npm i -g pnpm@12.5.1 && pnpm install --frozen-lockfile'
-
-rsync -a --exclude .git --exclude /data ./ hobwork-host:hobwork-bench/
 ```
 
-Do this from a scratch copy of the repo, not the working checkout, because it replaces the Mac `node_modules`. Then run on hobwork-host with the host's Node:
+Do this from a scratch copy of the repo, not the working checkout, because it replaces the development machine's `node_modules`, then copy it to the Linux host. Run it there with the host's Node:
 
 ```sh
 cd ~/hobwork-bench/server
@@ -48,4 +46,4 @@ node scripts/bench-sandbox.ts vm
 node scripts/bench-sandbox.ts vfs
 ```
 
-Once the user has Docker access on hobwork-host, `pnpm install`, `images/build.sh` and the `pnpm -C server` commands work there directly.
+With Docker access on the Linux host, `pnpm install`, `images/build.sh` and the `pnpm -C server` commands work there directly.

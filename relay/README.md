@@ -1,6 +1,6 @@
 # Hobwork push relay
 
-Sends APNs pushes to the Hobwork app for every Hobwork host. The API and the design are under Push relay in `docs/architecture.md`; what is left is in `docs/todo.md`.
+Sends APNs pushes to the Hobwork app for every Hobwork host. The API and the design are under Push relay in `docs/architecture.md`.
 
 ## Development
 

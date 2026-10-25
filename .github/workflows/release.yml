@@ -75,7 +75,7 @@ jobs:
   package:
     needs: check
     if: github.event_name != 'pull_request'
-    # x86_64, like hobwork-host. node_modules and the guest image are per architecture.
+    # x86_64, like the reference host. node_modules and the guest image are per architecture.
     runs-on: ubuntu-24.04
     permissions:
       contents: write

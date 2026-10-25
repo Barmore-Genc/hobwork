@@ -8,7 +8,7 @@ docker compose -f dev/backups/compose.yaml down           # stop and wipe the bu
 ```
 
 - S3 endpoint `http://localhost:19000`, bucket `hobwork`, access key `hobwork`, secret key `hobwork-dev-secret`. The MinIO console is at `http://localhost:19001` with the same login.
-- `dev/backups/kopia` runs the `kopia/kopia:0.17.0` image (the version on `hobwork-host`) as if Kopia were installed. It mounts Kopia's config, cache and log dirs and every absolute path argument at the same path in the container, and passes credentials through by name. Override the image with `HOBWORK_KOPIA_IMAGE`.
+- `dev/backups/kopia` runs the `kopia/kopia:0.17.0` image (the tested version) as if Kopia were installed. It mounts Kopia's config, cache and log dirs and every absolute path argument at the same path in the container, and passes credentials through by name. Override the image with `HOBWORK_KOPIA_IMAGE`.
 - The integration test starts MinIO itself, backs up a data dir twice, checks that the second backup uploads only the change, restores into an empty dir and starts a host on it:
 
   ```

@@ -21,18 +21,18 @@ final class HealthCapability: CapabilityHandler {
     static let maxSamples = 1000
 
     private let reader: any HealthReading
-    private let sharing: () -> Set<HealthType>
+    private let isConnected: () -> Bool
 
-    init(reader: any HealthReading, sharing: @escaping () -> Set<HealthType> = { HealthSharing.file.read().types }) {
+    init(reader: any HealthReading, isConnected: @escaping () -> Bool = { HealthSharing.file.read().isConnected }) {
         self.reader = reader
-        self.sharing = sharing
+        self.isConnected = isConnected
     }
 
     func handle(method: String, args: JSONValue?) async throws -> JSONValue {
         guard method == "query" else { throw CallError.unsupported(Self.capability, method) }
         let query = try Self.query(from: Arguments(args, call: "health.query"))
-        guard sharing().contains(query.type) else {
-            throw CallError(code: "not_shared", message: "Health is not connected to Hobwork on this device. Connect it in the Hobwork app's settings.")
+        guard isConnected() else {
+            throw CallError(code: "not_shared", message: "Health is not connected to Hobwork on this device. Turn it on in the Hobwork app's settings.")
         }
         let samples: [HealthSample]
         do {

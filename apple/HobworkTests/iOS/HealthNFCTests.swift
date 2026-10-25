@@ -8,8 +8,8 @@ import Testing
 struct HealthTests {
     let reader = FakeHealthReader()
 
-    func makeCapability(sharing: Set<HealthType> = [.steps, .sleep]) -> HealthCapability {
-        HealthCapability(reader: reader, sharing: { sharing })
+    func makeCapability(connected: Bool = true) -> HealthCapability {
+        HealthCapability(reader: reader, isConnected: { connected })
     }
 
     @Test func parsesQueries() throws {
@@ -34,9 +34,9 @@ struct HealthTests {
         #expect(reader.queries.first?.3 == 10)
     }
 
-    @Test func refusesTypesThatAreNotShared() async {
+    @Test func refusesQueriesWhenHealthIsOff() async {
         await #expect {
-            try await makeCapability().handle(method: "query", args: json(#"{"type":"bodyMass","from":"2026-05-04T00:00:00Z","to":"2026-05-05T00:00:00Z"}"#))
+            try await makeCapability(connected: false).handle(method: "query", args: json(#"{"type":"steps","from":"2026-05-04T00:00:00Z","to":"2026-05-05T00:00:00Z"}"#))
         } throws: { ($0 as? CallError)?.code == "not_shared" }
     }
 
@@ -101,14 +101,42 @@ struct HealthTests {
         #expect(event.data == json(#"{"type":"sleep","samples":[{"type":"sleep","start":"2026-05-04T01:00:00Z","end":"2026-05-04T01:30:00Z","stage":"core"}]}"#))
     }
 
-    @Test func keepsSharingStateInTheAppGroupFile() {
+    @Test func keepsConnectedStateInTheAppGroupFile() {
         let file = temporaryFile(HealthSharing())
-        file.update { $0.shared[.steps] = isoDate("2026-05-04T00:00:00Z") }
-        #expect(file.read().types == [.steps])
+        #expect(!file.read().isConnected)
+        let connectedAt = isoDate("2026-05-04T00:00:00Z")
+        file.update { $0.connectedAt = connectedAt }
+        #expect(file.read() == HealthSharing(connectedAt: connectedAt))
     }
 
-    @Test func disconnectingStopsSharingEveryType() {
-        let file = temporaryFile(HealthSharing(shared: [.steps: isoDate("2026-05-04T00:00:00Z")], anchors: [.steps: Data([1])]))
+    @Test func readsAnyOldTypeApprovalAsConnected() throws {
+        struct Legacy: Encodable {
+            var shared: [HealthType: Date]
+            var anchors: [HealthType: Data]
+        }
+        let first = isoDate("2026-05-04T00:00:00Z")
+        let data = try JSONEncoder().encode(Legacy(
+            shared: [.steps: first, .sleep: isoDate("2026-05-05T00:00:00Z")],
+            anchors: [.steps: Data([1])]
+        ))
+        let sharing = try JSONDecoder().decode(HealthSharing.self, from: data)
+        #expect(sharing.isConnected)
+        #expect(sharing.connectedAt == first)
+        #expect(sharing.anchors == [.steps: Data([1])])
+    }
+
+    @Test func readsNoOldTypeApprovalsAsDisconnected() throws {
+        struct Legacy: Encodable {
+            var shared: [HealthType: Date] = [:]
+            var anchors: [HealthType: Data] = [:]
+        }
+        let sharing = try JSONDecoder().decode(HealthSharing.self, from: JSONEncoder().encode(Legacy()))
+        #expect(!sharing.isConnected)
+        #expect(sharing.connectedAt == nil)
+    }
+
+    @Test func disconnectingTurnsHealthOff() {
+        let file = temporaryFile(HealthSharing(connectedAt: isoDate("2026-05-04T00:00:00Z"), anchors: [.steps: Data([1])]))
         HealthDelivery(store: HKHealthStore(), file: file) { _ in }.disconnect()
         #expect(file.read() == HealthSharing())
     }

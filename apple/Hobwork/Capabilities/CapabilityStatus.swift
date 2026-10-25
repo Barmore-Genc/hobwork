@@ -53,7 +53,7 @@ struct CapabilityStatus: Equatable, Sendable {
                 focus: FocusLabels.file.read().setUp,
                 homekit: true,
                 nfc: NFCNDEFReaderSession.readingAvailable,
-                health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty,
+                health: HKHealthStore.isHealthDataAvailable() && HealthSharing.file.read().isConnected,
                 liveActivities: ActivityAuthorizationInfo().areActivitiesEnabled
             )
         #else

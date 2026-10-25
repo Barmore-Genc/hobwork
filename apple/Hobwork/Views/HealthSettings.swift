@@ -13,17 +13,14 @@ struct HealthSection: View {
     var body: some View {
         Section {
             if HKHealthStore.isHealthDataAvailable() {
-                if connected {
-                    LabeledContent("Health", value: "Connected")
-                }
-                if !connected || needsRequest {
-                    Button("Connect Health") { Task { await connect() } }
+                Toggle("Health", isOn: binding)
+                if connected && needsRequest {
+                    Button("Allow New Data Types") { Task { await setConnected(true) } }
                 }
                 if connected {
                     Button("Change Access") {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                     }
-                    Button("Disconnect", role: .destructive) { Task { await disconnect() } }
                 }
                 if let error {
                     Text(error).foregroundStyle(.red)
@@ -34,29 +31,38 @@ struct HealthSection: View {
         } header: {
             Text("Health")
         } footer: {
-            Text("Hobs can read the Health data you allow and get new samples as they arrive. Health data can't be read while this \(DeviceModel.name) is locked.")
+            Text("Hobs can read the Health data you allow and get new samples as they arrive. To change what Hobwork may read, open the Health app, tap your picture, then Apps, then Hobwork. Health data can't be read while this \(DeviceModel.name) is locked.")
         }
         .task { await refresh() }
     }
 
+    private var binding: Binding<Bool> {
+        Binding(
+            get: { connected },
+            set: { on in
+                guard on != connected else { return }
+                connected = on
+                Task { await setConnected(on) }
+            }
+        )
+    }
+
     private func refresh() async {
-        connected = !HealthSharing.file.read().types.isEmpty
+        connected = HealthSharing.file.read().isConnected
         needsRequest = await model.health.needsRequest()
     }
 
-    private func connect() async {
+    private func setConnected(_ on: Bool) async {
+        error = nil
         do {
-            error = nil
-            try await model.connectHealth()
+            if on {
+                try await model.connectHealth()
+            } else {
+                await model.disconnectHealth()
+            }
         } catch {
             self.error = error.localizedDescription
         }
-        await refresh()
-    }
-
-    private func disconnect() async {
-        error = nil
-        await model.disconnectHealth()
         await refresh()
     }
 }

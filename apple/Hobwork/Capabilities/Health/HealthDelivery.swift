@@ -22,14 +22,15 @@ final class HealthDelivery {
     /// that background delivery causes.
     func start() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
-        let shared = file.read().types
-        for type in HealthType.allCases where !shared.contains(type) {
-            if let query = queries.removeValue(forKey: type) {
+        guard file.read().isConnected else {
+            for (type, query) in queries {
                 store.stop(query)
                 store.disableBackgroundDelivery(for: type.sampleType) { _, _ in }
             }
+            queries.removeAll()
+            return
         }
-        for type in shared where queries[type] == nil {
+        for type in HealthType.allCases where queries[type] == nil {
             let query = HKObserverQuery(sampleType: type.sampleType, predicate: nil) { [weak self] _, completion, error in
                 guard error == nil else {
                     completion()
@@ -49,13 +50,11 @@ final class HealthDelivery {
 
     /// Asks for read access to every type. The Health sheet is where the person picks what
     /// Hobwork may read; HealthKit does not tell apps which read types were allowed, so every
-    /// type is shared and the ones not allowed return no samples. Records when each type was
+    /// type is connected and the ones not allowed return no samples. Records when Health was
     /// turned on, so background delivery starts from then and does not send the whole history.
     func connect(now: Date = Date()) async throws {
         try await store.requestAuthorization(toShare: [], read: Self.readTypes)
-        file.update { sharing in
-            for type in HealthType.allCases where sharing.shared[type] == nil { sharing.shared[type] = now }
-        }
+        file.update { $0.connectedAt = $0.connectedAt ?? now }
         start()
     }
 
@@ -75,7 +74,7 @@ final class HealthDelivery {
     private func deliver(_ type: HealthType) async {
         while true {
             let sharing = file.read()
-            guard let since = sharing.shared[type] else { return }
+            guard let since = sharing.connectedAt else { return }
             let anchor = sharing.anchors[type].flatMap {
                 try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: $0)
             }

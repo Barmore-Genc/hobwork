@@ -123,13 +123,40 @@ struct HealthSample: Codable, Equatable, Sendable {
     }
 }
 
-/// Which types the person shares, and the background delivery bookkeeping, in the app group.
+/// Whether the person connected Health, and the background delivery bookkeeping, in the app group.
 struct HealthSharing: Codable, Equatable, Sendable {
-    /// When each shared type was turned on. Background delivery sends samples from then on.
-    var shared: [HealthType: Date] = [:]
+    /// When Health was turned on. Background delivery sends samples of every type from then on.
+    var connectedAt: Date?
     var anchors: [HealthType: Data] = [:]
 
     static let file = SharedFile(name: "health.json", empty: HealthSharing())
 
-    var types: Set<HealthType> { Set(shared.keys) }
+    var isConnected: Bool { connectedAt != nil }
+
+    init(connectedAt: Date? = nil, anchors: [HealthType: Data] = [:]) {
+        self.connectedAt = connectedAt
+        self.anchors = anchors
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectedAt, anchors
+    }
+
+    private enum LegacyKeys: String, CodingKey {
+        case shared
+    }
+
+    /// Health used to be a switch per type, each with its own approval. Any approved type means
+    /// the person had connected Health, and delivery keeps starting from the earliest approval.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        anchors = try container.decodeIfPresent([HealthType: Data].self, forKey: .anchors) ?? [:]
+        if let connectedAt = try container.decodeIfPresent(Date.self, forKey: .connectedAt) {
+            self.connectedAt = connectedAt
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            let shared = (try? legacy.decodeIfPresent([HealthType: Date].self, forKey: .shared)) ?? [:]
+            connectedAt = shared.values.min()
+        }
+    }
 }

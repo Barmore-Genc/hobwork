@@ -82,6 +82,7 @@ final class Notifier: NSObject, CapabilityHandler {
         content.sound = notification.sound == "none" || notification.level == .passive ? nil : .default
         content.interruptionLevel = notification.level
         if let thread = notification.thread ?? notification.project { content.threadIdentifier = thread }
+        if let icon = notification.icon { content.icon = URL(string: icon) }
         content.userInfo = [NotificationPayload.userInfoKey: notification.payload.userInfoValue]
         if let category = await NotificationCategories.register(notification.payload) {
             content.categoryIdentifier = category

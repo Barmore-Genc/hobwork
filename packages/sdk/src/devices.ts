@@ -1,3 +1,5 @@
+import type { HomeKitAccessory, HomeKitHome, HomeKitService, HomeKitValue } from './native/homekit.ts'
+export type { HomeKitAccessory, HomeKitHome, HomeKitService, HomeKitCharacteristic, HomeKitValue } from './native/homekit.ts'
 import type { LiveActivities } from './live-activities.ts'
 import type { Widgets } from './widgets.ts'
 
@@ -360,26 +362,15 @@ export type AlarmEvent = {
   seconds?: number
 }
 
-export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | HomeKitDeviceEvent | AlarmEvent
+export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | AlarmEvent
 
-// What the app calls ctx.device(name).homekit on a homekit-capable device.
+// The person's Apple Home on a paired iPhone or iPad. IDs are raw UUID strings.
 export interface HomeKit {
-  // Run an action on an accessory, room or category: "turnOn", "turnOff", "set" etc.
-  // target is "accessory:<id>", "room:<id>" or "category:<id>".
-  action(target: string, method: string, params?: Record<string, unknown>): Promise<never>
-  // Read a property from an accessory, e.g. "state", "brightness".
-  get(target: string, key: string): Promise<unknown>
-  // Write a property to an accessory.
-  set(target: string, key: string, value: unknown): Promise<never>
-}
-
-// { "device": { "capability": "homekit", "event": "action" } }: an accessory action
-// that this hob triggered (e.g. a homekit automation). ctx.payload is HomeKitDeviceEvent.
-export type HomeKitDeviceEvent = {
-  device: string
-  capability: 'homekit'
-  event: 'action'
-  target: string
-  method: string
-  params?: Record<string, unknown>
+  homes(): Promise<HomeKitHome[]>
+  accessories(options: { home: string }): Promise<HomeKitAccessory[]>
+  services(options: { accessory: string }): Promise<HomeKitService[]>
+  get(options: { accessory: string; characteristic: string }): Promise<HomeKitValue>
+  set(options: { accessory: string; characteristic: string; value: string | number | boolean }): Promise<void>
+  assignRoom(options: { accessory: string; room: string }): Promise<void>
+  rename(options: { accessory: string; name: string }): Promise<void>
 }

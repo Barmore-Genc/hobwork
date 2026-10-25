@@ -386,12 +386,10 @@ test('agents call routes on Hobwork with a token; old UI links move to the app o
   expect((await send(`${TEST_PUBLIC_URL}/p/nope/`)).status).toBe(404)
 })
 
-test('the project page and the hob list link to the app origin', async () => {
+test('the project page links to the app origin', async () => {
   const { cookie } = signedIn(host)
   const detail = JSON.parse((await send(`${TEST_PUBLIC_URL}/api/projects/filament`, { headers: { cookie } })).body)
   expect(detail.appUrl).toBe(FILAMENT)
-  const list = JSON.parse((await send(`${TEST_PUBLIC_URL}/api/projects`, { headers: { cookie } })).body)
-  expect(list.find((p: { name: string }) => p.name === 'filament').appUrl).toBe(FILAMENT)
 })
 
 test('UI and route responses on an app origin carry the default policy and nosniff', async () => {

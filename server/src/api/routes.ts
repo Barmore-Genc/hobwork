@@ -312,27 +312,23 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects$/,
-      handle: async ({ res, query }) =>
+      handle: ({ res, query }) =>
         json(
           res,
           200,
-          await Promise.all(
-            projectCall(() => listHobs(host, query.get('q') ?? '')).map(async (project) => {
-              const { status, current } = projectState(project)
-              const appUrl = options.appOrigin?.({ project: project.name })
-              return {
-                name: project.name,
-                defaultBranch: project.defaultBranch,
-                starred: project.starred,
-                tags: project.tags,
-                status,
-                currentVersion: current ? versionView(current) : null,
-                iconUrl: iconUrl(project.name),
-                appUrl: appUrl && (await hasApp(project.name)) ? appUrl : null,
-                ...(options.storage ? { storage: options.storage.get(project) } : {}),
-              }
-            }),
-          ),
+          projectCall(() => listHobs(host, query.get('q') ?? '')).map((project) => {
+            const { status, current } = projectState(project)
+            return {
+              name: project.name,
+              defaultBranch: project.defaultBranch,
+              starred: project.starred,
+              tags: project.tags,
+              status,
+              currentVersion: current ? versionView(current) : null,
+              iconUrl: iconUrl(project.name),
+              ...(options.storage ? { storage: options.storage.get(project) } : {}),
+            }
+          }),
         ),
     },
     {

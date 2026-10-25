@@ -6,7 +6,7 @@ import { createProject } from '../projects.ts'
 import { queryLogs } from '../runtime/logs.ts'
 import { createTestHost } from '../test-host.ts'
 import { signedIn, startTestApp, TEST_PUBLIC_URL } from '../test-web.ts'
-import { COMMANDS } from './commands.ts'
+import { COMMANDS, fallbackBody, promptAlert } from './commands.ts'
 import { createDevices, type DeviceTrigger, type Devices } from './devices.ts'
 import { DeviceError } from './registry.ts'
 import { COMMAND_TTL_MS, getCommand, recordHello, type Push } from './store.ts'
@@ -698,6 +698,7 @@ test('hobwork.json accepts the device trigger pairs and a device name', () => {
     expect(check({ capability, event }), `${capability}/${event}`).toEqual([])
     expect(check({ capability, event, device: 'kaans-iphone' })).toEqual([])
   }
+  expect(check({ capability: 'homekit', event: 'action' })).not.toEqual([])
   expect(check({ capability: 'focus', event: 'scanned' })).not.toEqual([])
   expect(check({ capability: 'alarms', event: 'scanned' })).not.toEqual([])
   expect(check({ capability: 'alarms', event: 'rang' })).not.toEqual([])
@@ -808,4 +809,56 @@ test('the app can ask which hob wrote a Hobwork tag', async () => {
   expect(await (await lookup({ url })).json()).toEqual({ tag, url, hob: 'bedtime' })
   expect((await lookup({ url: 'https://example.com/nfc/abc' })).status).toBe(404)
   expect((await lookup({ url: `${TEST_PUBLIC_URL}/nfc/AAAAAAAAAAAAAAAAAAAAAA` })).status).toBe(404)
+})
+
+test('HomeKit validates every command before delivery and trims names', () => {
+  const specs = COMMANDS.homekit!
+  const valid = {
+    homes: {}, accessories: { home: 'H1' }, services: { accessory: 'A1' },
+    get: { accessory: 'A1', characteristic: 'C1' }, set: { accessory: 'A1', characteristic: 'C1', value: false },
+    assignRoom: { accessory: 'A1', room: ' Study ' }, rename: { accessory: 'A1', name: ' Lamp ' },
+  }
+  for (const [method, args] of Object.entries(valid)) {
+    const spec = specs[method]!
+    expect(spec.foreground, method).toBe(true)
+    const reads = ['homes', 'accessories', 'services', 'get'].includes(method)
+    expect(fallbackBody('homekit', method)).toContain(reads ? 'request' : 'change')
+    expect(promptAlert('bedtime', 'homekit', method, args).title).toBe(reads ? 'Read Apple Home' : 'Change Apple Home')
+    expect(() => spec.parse({ ...args, hob: 'forged' }, Date.now())).toThrow(method === 'homes' ? 'takes no arguments' : 'does not take "hob"')
+    expect(spec.parse(args, Date.now())).toEqual(method === 'assignRoom' ? { accessory: 'A1', room: 'Study' } : method === 'rename' ? { accessory: 'A1', name: 'Lamp' } : args)
+    if (method !== 'homes') expect(() => spec.parse({}, Date.now())).toThrow()
+  }
+  for (const value of [null, {}, [], undefined, Infinity, NaN]) {
+    expect(() => specs.set!.parse({ accessory: 'A1', characteristic: 'C1', value }, Date.now())).toThrow('value must be')
+  }
+  for (const value of [true, false, 0, 1.5, 'on', '']) {
+    expect(specs.set!.parse({ accessory: 'A1', characteristic: 'C1', value }, Date.now()).value).toBe(value)
+  }
+  for (const name of ['', '   ', 'x'.repeat(256)]) {
+    expect(() => specs.rename!.parse({ accessory: 'A1', name }, Date.now())).toThrow()
+  }
+  expect(specs.action).toBeUndefined()
+})
+
+test('HomeKit uses foreground prompt delivery with host-owned hob provenance', async () => {
+  const device = await phone({ capabilities: ['homekit'] })
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'homekit', 'get', { accessory: 'A1', characteristic: 'C1' })
+  await vi.waitFor(() => expect(received).toHaveLength(1))
+  expect(received[0]!.body.kind).toBe('prompt')
+  const command = pushed().payload.hobwork.command
+  expect(command).toMatchObject({ capability: 'homekit', method: 'get', foreground: true, args: { hob: 'bedtime', accessory: 'A1', characteristic: 'C1' } })
+  expect((await postResult(device.token, { id: command.id, ok: true, value: false })).status).toBe(204)
+  expect(await call).toBe(false)
+})
+
+
+test('connected HomeKit commands carry the trusted hob and return characteristic values', async () => {
+  const device = await phone({ capabilities: ['homekit'] })
+  const client = await AppClient.connect(device.token, ['homekit'])
+  const call = devices.callCommand('bedtime', 'kaan-iphone', 'homekit', 'get', { accessory: 'A1', characteristic: 'C1' })
+  const message = await client.next()
+  expect(message).toMatchObject({ capability: 'homekit', method: 'get', args: { hob: 'bedtime', accessory: 'A1', characteristic: 'C1' } })
+  client.send({ type: 'result', id: message.id, ok: true, value: 42 })
+  expect(await call).toBe(42)
+  expect(received).toEqual([])
 })

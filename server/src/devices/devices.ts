@@ -475,8 +475,8 @@ export function createDevices(options: {
     if (!projectRow) bad(`Hob "${project}" does not exist`)
     const tag = capability === 'nfc' && method === 'write' && parsed.url === undefined ? newNfcTagId() : undefined
     let sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
-    // The app reports the alarm's events with it, so they reach this hob.
-    if (capability === 'alarms' && ['set', 'timer', 'reschedule'].includes(method)) sent = { ...sent, hob: project }
+    // Alarms use it for event routing; HomeKit uses it to name the requesting hob in its approval prompt.
+    if (capability === 'homekit' || capability === 'alarms' && ['set', 'timer', 'reschedule'].includes(method)) sent = { ...sent, hob: project }
     const id = randomUUID()
     const createdAt = now()
     const draft: CommandRecord = {
@@ -737,18 +737,6 @@ export function createDevices(options: {
         event: 'samples',
         type: type as HealthType,
         samples: samples as HealthSample[],
-      })
-    }
-    if (pair === 'homekit/action') {
-      const { target, method, params } = data as { target?: unknown; method?: unknown; params?: Record<string, unknown> }
-      if (typeof target !== 'string' || typeof method !== 'string' || !target || !method) return
-      return broadcast({
-        device: device.name,
-        capability: 'homekit',
-        event: 'action',
-        target,
-        method,
-        ...(typeof params === 'object' && params !== null ? { params } : {}),
       })
     }
   }

@@ -393,3 +393,21 @@ test('Apple Home is only there when the app lists it, and says why when the pers
   expect((await rejection(native.homekit.assignRoom({ accessory: 'A1', room: 'Lair' }))).code).toBe('unavailable')
   expect(bridge.calls.map((c) => c.method)).toEqual(['homes', 'rename'])
 })
+
+test('Apple Home discovers characteristic metadata and reads and writes raw IDs', async () => {
+  const characteristic = { id: 'C1', type: 'power', readable: true, writable: true, format: 'bool', unit: null, min: null, max: null, step: null }
+  const service = { id: 'S1', name: 'Lamp', type: 'lightbulb', characteristics: [characteristic] }
+  bridge = createFakeBridge({
+    'homekit.services': () => [service],
+    'homekit.get': () => false,
+    'homekit.set': () => null,
+  })
+  expect(await native.homekit.services({ accessory: { id: 'A1' } })).toEqual([service])
+  expect(await native.homekit.get({ accessory: 'A1', characteristic })).toBe(false)
+  await native.homekit.set({ accessory: { id: 'A1' }, characteristic: 'C1', value: true })
+  expect(bridge.calls).toEqual([
+    { capability: 'homekit', method: 'services', args: { accessory: 'A1' } },
+    { capability: 'homekit', method: 'get', args: { accessory: 'A1', characteristic: 'C1' } },
+    { capability: 'homekit', method: 'set', args: { accessory: 'A1', characteristic: 'C1', value: true } },
+  ])
+})

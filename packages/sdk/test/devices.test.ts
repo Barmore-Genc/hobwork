@@ -184,3 +184,32 @@ test('createTestContext rejects Live Activity and widget calls a test did not st
   await expect(ctx.person(1).widgets.reload()).rejects.toThrow('ctx.person(1).widgets.reload is not stubbed')
   await expect(ctx.device('kaan-iphone').liveActivities.start({ id: 'a', title: 'A' })).rejects.toThrow('is not stubbed')
 })
+
+test('HomeKit device methods send object arguments and preserve scalar results', async () => {
+  const requests: unknown[] = []
+  const client = createDeviceClient(async (request) => {
+    requests.push(request)
+    return { ok: true, result: request.action === 'call' && request.method === 'get' ? false : null }
+  })
+  const homekit = client.device('phone').homekit
+  await homekit.homes()
+  await homekit.accessories({ home: 'H1' })
+  await homekit.services({ accessory: 'A1' })
+  expect(await homekit.get({ accessory: 'A1', characteristic: 'C1' })).toBe(false)
+  await homekit.set({ accessory: 'A1', characteristic: 'C1', value: true })
+  await homekit.assignRoom({ accessory: 'A1', room: 'Study' })
+  await homekit.rename({ accessory: 'A1', name: 'Lamp' })
+  expect(requests).toEqual([
+    ['homes', undefined], ['accessories', { home: 'H1' }], ['services', { accessory: 'A1' }],
+    ['get', { accessory: 'A1', characteristic: 'C1' }], ['set', { accessory: 'A1', characteristic: 'C1', value: true }],
+    ['assignRoom', { accessory: 'A1', room: 'Study' }], ['rename', { accessory: 'A1', name: 'Lamp' }],
+  ].map(([method, args]) => ({ action: 'call', device: 'phone', capability: 'homekit', method, args })))
+
+  const get = vi.fn(async () => null)
+  const ctx = createTestContext({ device: () => ({ homekit: { get } }) })
+  expect(await ctx.device('phone').homekit.get({ accessory: 'A1', characteristic: 'C1' })).toBeNull()
+  expect(get).toHaveBeenCalledWith({ accessory: 'A1', characteristic: 'C1' })
+  for (const method of ['homes', 'accessories', 'services', 'set', 'assignRoom', 'rename'] as const) {
+    await expect((ctx.device('phone').homekit[method] as (args?: unknown) => Promise<unknown>)({})).rejects.toThrow(`homekit.${method} is not stubbed`)
+  }
+})

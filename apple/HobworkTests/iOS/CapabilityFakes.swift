@@ -117,6 +117,29 @@ final class FakeHomeKitStore: HomeKitStore {
     var assigned: [(accessory: String, room: String)] = []
     var renamed: [(accessory: String, name: String)] = []
 
+    var serviceQueries: [String] = []
+    var reads: [(accessory: String, characteristic: String)] = []
+    var writes: [(accessory: String, characteristic: String, value: JSONValue)] = []
+    var characteristic = HomeKitCharacteristic(id: "C1", type: "power", readable: true, writable: true, format: "bool")
+
+    func services(accessory: String) async throws(BridgeError) -> [HomeKitService] {
+        if let failure { throw failure }
+        serviceQueries.append(accessory)
+        return [HomeKitService(id: "S1", name: "Light", type: "light", characteristics: [characteristic])]
+    }
+
+    func get(accessory: String, characteristic: String) async throws(BridgeError) -> JSONValue {
+        if let failure { throw failure }
+        reads.append((accessory, characteristic))
+        return .bool(true)
+    }
+
+    func set(accessory: String, characteristic: String, value: JSONValue) async throws(BridgeError) {
+        if let failure { throw failure }
+        try self.characteristic.validate(value)
+        writes.append((accessory, characteristic, value))
+    }
+
     func homes() async throws(BridgeError) -> [HomeKitHome] {
         if let failure { throw failure }
         return homesList

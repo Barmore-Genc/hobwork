@@ -15,6 +15,7 @@ struct CapabilityStatus: Equatable, Sendable {
     #endif
     var focus = false
     #if os(iOS)
+        var homekit = false
         var nfc = false
         var health = false
         var liveActivities = false
@@ -28,6 +29,7 @@ struct CapabilityStatus: Equatable, Sendable {
                 (notifications, Notifier.capability),
                 (alarms, AlarmsCapability.capability),
                 (focus, FocusCapability.capability),
+                (homekit, HomeKitCapability.capability),
                 (nfc, NFCCapability.capability),
                 (health, HealthCapability.capability),
                 (liveActivities, LiveActivities.capability),
@@ -49,6 +51,7 @@ struct CapabilityStatus: Equatable, Sendable {
                 notifications: notifications,
                 alarms: AlarmManager.shared.authorizationState == .authorized,
                 focus: FocusLabels.file.read().setUp,
+                homekit: true,
                 nfc: NFCNDEFReaderSession.readingAvailable,
                 health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty,
                 liveActivities: ActivityAuthorizationInfo().areActivitiesEnabled

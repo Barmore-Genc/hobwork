@@ -22,10 +22,63 @@ struct HomeKitAccessory: Equatable, Sendable {
     var bridge: String?
 }
 
-/// The person's Home, as far as hobs may use it: read homes and accessories, move an accessory
-/// to a room and rename it. Everything else in HomeKit stays out of reach.
+struct HomeKitService: Equatable, Sendable {
+    var id: String
+    var name: String
+    var type: String
+    var characteristics: [HomeKitCharacteristic]
+
+    var json: JSONValue {
+        .object(["id": .string(id), "name": .string(name), "type": .string(type), "characteristics": .array(characteristics.map(\.json))])
+    }
+}
+
+struct HomeKitCharacteristic: Equatable, Sendable {
+    var id: String
+    var type: String
+    var readable: Bool
+    var writable: Bool
+    var format: String?
+    var unit: String?
+    var min: Double?
+    var max: Double?
+    var step: Double?
+
+    var json: JSONValue {
+        .object([
+            "id": .string(id), "type": .string(type), "readable": .bool(readable), "writable": .bool(writable),
+            "format": format.map(JSONValue.string) ?? .null, "unit": unit.map(JSONValue.string) ?? .null,
+            "min": min.map(JSONValue.number) ?? .null, "max": max.map(JSONValue.number) ?? .null,
+            "step": step.map(JSONValue.number) ?? .null,
+        ])
+    }
+
+    func validate(_ value: JSONValue) throws(BridgeError) {
+        guard writable else { throw .failed("This characteristic is not writable", reason: "not_writable") }
+        switch (format, value) {
+        case ("bool", .bool), ("string", .string): return
+        case ("int", .number), ("uint8", .number), ("uint16", .number), ("uint32", .number), ("uint64", .number), ("float", .number):
+            guard let number = value.numberValue, number.isFinite else { throw .failed("value must be finite") }
+            if format != "float", number.rounded() != number { throw .failed("value must be a whole number") }
+            if let format, format.hasPrefix("uint"), number < 0 { throw .failed("value must not be negative") }
+            if let min, number < min { throw .failed("value is below the characteristic minimum") }
+            if let max, number > max { throw .failed("value is above the characteristic maximum") }
+            if let step, step > 0 {
+                let steps = (number - (min ?? 0)) / step
+                guard abs(steps - steps.rounded()) < 0.000001 else { throw .failed("value does not match the characteristic step") }
+            }
+        default:
+            throw .failed("value does not match the characteristic format", reason: "invalid_value")
+        }
+    }
+}
+
+/// Home access shared by the UI bridge and device commands, with a fake in tests.
 @MainActor
 protocol HomeKitStore {
+    func services(accessory: String) async throws(BridgeError) -> [HomeKitService]
+    func get(accessory: String, characteristic: String) async throws(BridgeError) -> JSONValue
+    func set(accessory: String, characteristic: String, value: JSONValue) async throws(BridgeError)
     func homes() async throws(BridgeError) -> [HomeKitHome]
     func accessories(home: String) async throws(BridgeError) -> [HomeKitAccessory]
     /// Moves the accessory to the room with this name, making the room when the home has none.
@@ -103,6 +156,72 @@ protocol HomeKitStore {
             } catch {
                 throw .failed(error.localizedDescription, reason: "homekit")
             }
+        }
+
+        func services(accessory id: String) async throws(BridgeError) -> [HomeKitService] {
+            let (_, accessory) = try await find(accessory: id)
+            return accessory.services.map { service in
+                HomeKitService(
+                    id: service.uniqueIdentifier.uuidString,
+                    name: service.name,
+                    type: service.serviceType,
+                    characteristics: service.characteristics.map(Self.describe)
+                )
+            }
+        }
+
+        func get(accessory: String, characteristic id: String) async throws(BridgeError) -> JSONValue {
+            let characteristic = try await find(accessory: accessory, characteristic: id)
+            guard characteristic.properties.contains(HMCharacteristicPropertyReadable) else {
+                throw .failed("This characteristic is not readable", reason: "not_readable")
+            }
+            do {
+                try await characteristic.readValue()
+            } catch {
+                throw .failed(error.localizedDescription, reason: "homekit")
+            }
+            guard let value = characteristic.value else { return .null }
+            guard let json = JSONValue(foundationValue: value) else {
+                throw .failed("This characteristic has an unsupported value", reason: "unsupported_format")
+            }
+            switch json {
+            case .null, .bool, .number, .string: return json
+            default: throw .failed("This characteristic has an unsupported value", reason: "unsupported_format")
+            }
+        }
+
+        func set(accessory: String, characteristic id: String, value: JSONValue) async throws(BridgeError) {
+            let characteristic = try await find(accessory: accessory, characteristic: id)
+            try Self.describe(characteristic).validate(value)
+            do {
+                try await characteristic.writeValue(value.foundationValue)
+            } catch {
+                throw .failed(error.localizedDescription, reason: "homekit")
+            }
+        }
+
+        private func find(accessory: String, characteristic id: String) async throws(BridgeError) -> HMCharacteristic {
+            let (_, accessory) = try await find(accessory: accessory)
+            guard accessory.isReachable else { throw .failed("Accessory is not reachable", reason: "unreachable") }
+            guard let characteristic = accessory.services.flatMap(\.characteristics).first(where: { $0.uniqueIdentifier.uuidString == id }) else {
+                throw .failed("There is no characteristic with that ID on this accessory", reason: "unknown_characteristic")
+            }
+            return characteristic
+        }
+
+        private static func describe(_ characteristic: HMCharacteristic) -> HomeKitCharacteristic {
+            let metadata = characteristic.metadata
+            return HomeKitCharacteristic(
+                id: characteristic.uniqueIdentifier.uuidString,
+                type: characteristic.characteristicType,
+                readable: characteristic.properties.contains(HMCharacteristicPropertyReadable),
+                writable: characteristic.properties.contains(HMCharacteristicPropertyWritable),
+                format: metadata?.format,
+                unit: metadata?.units,
+                min: metadata?.minimumValue?.doubleValue,
+                max: metadata?.maximumValue?.doubleValue,
+                step: metadata?.stepValue?.doubleValue
+            )
         }
 
         // MARK: Loading

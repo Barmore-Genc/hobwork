@@ -1,3 +1,5 @@
+import type { HomeKitAccessory, HomeKitHome, HomeKitService, HomeKitValue } from './native/homekit.ts'
+export type { HomeKitAccessory, HomeKitHome, HomeKitService, HomeKitCharacteristic, HomeKitValue } from './native/homekit.ts'
 import type { LiveActivities } from './live-activities.ts'
 import type { Widgets } from './widgets.ts'
 
@@ -12,7 +14,7 @@ export type DeviceInfo = {
   // ID of that person (Person.id).
   ownerId: number
   // What the app on it can do and the person allowed: "notifications",
-  // "alarms", "focus", "nfc", "health", "liveActivities" (the person allows
+  // "alarms", "focus", "nfc", "health", "homekit", "liveActivities" (the person allows
   // Live Activities for Hobwork), "widgets". Calls to others fail with
   // "unsupported".
   capabilities: string[]
@@ -292,6 +294,7 @@ export interface Device {
   focus: Focus
   nfc: Nfc
   health: Health
+  homekit: HomeKit
   liveActivities: LiveActivities
   widgets: Widgets
 }
@@ -360,3 +363,14 @@ export type AlarmEvent = {
 }
 
 export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | AlarmEvent
+
+// The person's Apple Home on a paired iPhone or iPad. IDs are raw UUID strings.
+export interface HomeKit {
+  homes(): Promise<HomeKitHome[]>
+  accessories(options: { home: string }): Promise<HomeKitAccessory[]>
+  services(options: { accessory: string }): Promise<HomeKitService[]>
+  get(options: { accessory: string; characteristic: string }): Promise<HomeKitValue>
+  set(options: { accessory: string; characteristic: string; value: string | number | boolean }): Promise<void>
+  assignRoom(options: { accessory: string; room: string }): Promise<void>
+  rename(options: { accessory: string; name: string }): Promise<void>
+}

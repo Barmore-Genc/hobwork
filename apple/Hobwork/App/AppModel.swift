@@ -112,6 +112,9 @@ final class AppModel {
         StoredPairing.remove()
         owner = nil
         events.removeAll()
+        #if os(iOS)
+            homeKitCommands.removeAll()
+        #endif
         pairing = nil
         self.notice = notice
         await web.reset()
@@ -120,6 +123,7 @@ final class AppModel {
     func sceneBecameActive() {
         guard pairing != nil else { return }
         #if os(iOS)
+            homeKitCommands.sceneBecameActive()
             if scanWhenActive {
                 scanWhenActive = false
                 Task { await scanTag() }
@@ -345,6 +349,9 @@ final class AppModel {
             BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
             runner.register(liveActivities, for: LiveActivities.capability)
             runner.register(WidgetsCapability(), for: WidgetsCapability.capability)
+            runner.register(HomeKitCapability(store: homeKitStore) { [weak self] hob, method in
+                await self?.approveHomeKit(hob: hob, method: method) ?? false
+            }, for: HomeKitCapability.capability)
         #else
             BackgroundCapabilities.register(on: runner)
         #endif
@@ -381,6 +388,37 @@ final class AppModel {
     @ObservationIgnored let printers = PrinterMemory()
     @ObservationIgnored private var owner: (host: URL, person: AppInfoBridge.Person)?
 
+    #if os(iOS)
+        @ObservationIgnored private let homeKitStore = SystemHomeKitStore()
+        @ObservationIgnored private var homeKitPrompting = false
+        @ObservationIgnored private lazy var homeKitCommands = HomeKitCommandQueue(
+            isActive: { UIApplication.shared.applicationState == .active },
+            run: { [weak self] command in await self?.run(command) }
+        )
+
+        private func approveHomeKit(hob: String, method: String) async -> Bool {
+            guard !homeKitPrompting else { return false }
+            homeKitPrompting = true
+            defer { homeKitPrompting = false }
+            // Socket replay can race a notification tap and the web view mounting.
+            for _ in 0 ..< 100 {
+                if UIApplication.shared.applicationState == .active,
+                   let presenter = web.bridgeViewController,
+                   !(presenter is UIAlertController), !presenter.isBeingPresented,
+                   !presenter.isBeingDismissed, presenter.presentedViewController == nil
+                {
+                    return await AlertPrompter().ask(
+                        title: "Let “\(hob)” use your Home?",
+                        message: HomeKitCapability.approvalMessage(for: method),
+                        presenter: web
+                    ) == true
+                }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return false }
+            }
+            return false
+        }
+    #endif
+
     private func registerBridge() {
         let router = web.bridge.router
         router.register(AppInfoBridge(
@@ -398,7 +436,7 @@ final class AppModel {
         let host: () -> URL? = { [weak self] in self?.pairing?.host }
         #if os(iOS)
             router.register(HapticsBridge())
-            router.register(HomeKitBridge(store: SystemHomeKitStore()))
+            router.register(HomeKitBridge(store: homeKitStore))
             router.register(CameraBridge(device: VisionKitCamera()))
             router.register(NFCBridge(session: nfc, host: host, handoff: handoff))
             router.register(AlarmsBridge(capability: AlarmsCapability(scheduler: alarms)) { [weak self] in
@@ -445,7 +483,17 @@ final class AppModel {
             #endif
             web.open(link: path)
         }
-        if let command = response.command { await run(command) }
+        if let command = response.command {
+            #if os(iOS)
+                if command.capability == HomeKitCapability.capability {
+                    homeKitCommands.submit(command)
+                } else {
+                    await run(command)
+                }
+            #else
+                await run(command)
+            #endif
+        }
         if let event = response.event { await send(event) }
     }
 

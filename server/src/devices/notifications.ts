@@ -45,6 +45,7 @@ export type Content = {
   actions: Action[]
   data?: unknown
   open?: string
+  icon?: string
   interruptionLevel: InterruptionLevel
   sound: 'default' | 'none'
   thread?: string
@@ -121,7 +122,7 @@ function checkData(data: unknown) {
 
 export function parseNotification(args: unknown, now: number, options: { person?: boolean } = {}): ParsedNotification {
   if (!isObject(args)) bad('The notification must be an object with a title')
-  const { id, title, body, actions, data, open, interruptionLevel, sound, thread, deliverAt, devices } = args
+  const { id, title, body, actions, data, open, icon, interruptionLevel, sound, thread, deliverAt, devices } = args
   parseText(title, body)
   checkData(data)
   if (id !== undefined && (typeof id !== 'string' || !KEY.test(id))) bad('id must be letters, digits and "-_.:", at most 64')
@@ -130,6 +131,7 @@ export function parseNotification(args: unknown, now: number, options: { person?
   }
   if (sound !== undefined && sound !== 'default' && sound !== 'none') bad('sound must be "default" or "none"')
   if (thread !== undefined && (typeof thread !== 'string' || !KEY.test(thread))) bad('thread must be letters, digits and "-_.:", at most 64')
+  if (icon !== undefined && typeof icon !== 'string') bad('icon must be a string URL or path')
   if (devices !== undefined && (!options.person || (devices !== 'all' && devices !== 'lastActive'))) {
     bad(options.person ? 'devices must be "all" or "lastActive"' : 'devices only works with ctx.person(id).notifications')
   }
@@ -146,6 +148,7 @@ export function parseNotification(args: unknown, now: number, options: { person?
     actions: parseActions(actions),
     ...(data !== undefined ? { data } : {}),
     ...(open !== undefined ? { open: path(open, 'open') } : {}),
+    ...(icon !== undefined ? { icon } : {}),
     interruptionLevel: level,
     sound: level === 'passive' ? 'none' : ((sound as 'default' | 'none' | undefined) ?? 'default'),
     ...(thread !== undefined ? { thread: thread as string } : {}),
@@ -215,6 +218,7 @@ export function appNotification(id: string, project: string, content: Content, r
     title: content.title,
     ...(content.body !== undefined ? { body: content.body } : {}),
     actions: appActions(content.actions),
+    ...(content.icon !== undefined ? { icon: content.icon } : {}),
     ...(level !== 'active' ? { interruptionLevel: level } : {}),
     ...(content.sound === 'none' || mode === 'update' ? { sound: 'none' } : {}),
     ...(content.thread !== undefined ? { thread: threadOf(project, content) } : {}),
@@ -240,13 +244,14 @@ export function pushPayload(id: string, project: string, content: Content, revis
       // before iOS shows it.
       ...(content.actions.length ? { category: `hobwork.${id}`, 'mutable-content': 1 } : {}),
     },
-    // Title and body are in aps.alert only: repeating them here could take a
-    // valid notification past APNs' 4 KB.
+    // Title, body and icon are in aps.alert only for push fallback: repeating
+    // them here could take a valid notification past APNs' 4 KB.
     hobwork: {
       id,
       project,
       actions: appActions(content.actions),
       ...(content.open !== undefined ? { open: content.open } : {}),
+      ...(content.icon !== undefined ? { icon: content.icon } : {}),
       ...revisionField(revision),
       ...(mode === 'update' ? { update: true } : {}),
     },

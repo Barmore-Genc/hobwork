@@ -144,6 +144,35 @@ test('a person gets the notification on every device: over the socket or by push
   expect(push!.plaintext.hobwork).toEqual({ id: shown.id, project: 'filament', actions, open: '/print/problem' })
 })
 
+test('an icon goes into the encrypted hobwork payload, not the relay aps', async () => {
+  const phone = pair('kaan-iphone', { activeAt: clock - 1000 })
+  pair('kaan-mac', { activeAt: clock - 5000 })
+  const calls = connect(phone)
+
+  const sent = await devices.notifyPerson('filament', userId, {
+    id: 'print:42',
+    title: 'Gojira stopped',
+    body: 'Tray 3 would not feed.',
+    icon: '/api/projects/filament/icon?size=64',
+  })
+  expect(sent).toEqual({
+    id: 'print:42',
+    scheduled: false,
+    devices: [
+      { device: 'kaan-iphone', delivery: 'app' },
+      { device: 'kaan-mac', delivery: 'push' },
+    ],
+  })
+
+  const [push] = pushes('kaan-mac')
+  expect(push!.plaintext.aps.alert).toEqual({ title: 'Gojira stopped', body: 'Tray 3 would not feed.' })
+  // Icon is in the encrypted payload, not visible to the relay.
+  expect(push!.plaintext.hobwork).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), project: 'filament', icon: '/api/projects/filament/icon?size=64', actions: [] })
+
+  const shown = calls[0]!.args as Record<string, unknown>
+  expect(shown).toMatchObject({ id: expect.any(String), project: 'filament', title: 'Gojira stopped', icon: '/api/projects/filament/icon?size=64' })
+})
+
 test('lastActive sends to the device the person used last; silent and passive ones make no sound', async () => {
   pair('kaan-iphone', { activeAt: clock - 1000 })
   pair('kaan-mac', { activeAt: clock - 5000 })

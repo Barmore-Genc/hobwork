@@ -147,6 +147,17 @@ test('a project without a rendered icon gets its first letter', async () => {
   expect((await get('/api/projects/nope/icon')).status).toBe(404)
 })
 
+test('an icon endpoint falls back to SVG regardless of size parameter', async () => {
+  await projectWithTwoVersions()
+  // Without a build, the icon falls back to SVG (size ignored).
+  for (const size of [32, 64, 180, 192, 512]) {
+    const res = await get(`/api/projects/filament/icon?size=${size}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/svg+xml')
+    expect(await res.text()).toContain('>F</text>')
+  }
+})
+
 test('project detail shows the hob', async () => {
   await projectWithTwoVersions()
   const body = await jsonOf(await get('/api/projects/filament'))

@@ -59,6 +59,7 @@ test('renders an emoji on a background, and without one for the favicon', async 
     'icon-192.png',
     'icon-32.png',
     'icon-512.png',
+    'icon-64.png',
   ])
   expect(await pixel(512, 0, 0)).toEqual([0xf5, 0xf7, 0xf2, 255])
   expect(await pixel(180, 179, 179)).toEqual([0xf5, 0xf7, 0xf2, 255])

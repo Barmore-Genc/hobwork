@@ -4,9 +4,11 @@
 
 // Favicon, apple-touch-icon, and the web manifest's icons. The project list
 // uses 192 too.
-export const ICON_SIZES = [32, 180, 192, 512] as const
+// 64px is for notification banners.
+export const ICON_SIZES = [32, 64, 180, 192, 512] as const
 export const FAVICON_SIZE = 32
 export const LIST_ICON_SIZE = 192
+export const NOTIFICATION_ICON_SIZE = 64
 
 // Relative to the build (dist/). Paths under /_hobwork/ on an app origin are
 // the host's, so project files there were never reachable anyway.

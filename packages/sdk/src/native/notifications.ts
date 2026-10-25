@@ -13,6 +13,8 @@ export type LocalNotification = {
   thread?: string
   // A path of the hob's UI that a tap opens.
   open?: string
+  // URL of an image to show on the notification banner.
+  icon?: string
   // When to show it. Default: now.
   deliverAt?: Date | string
 }

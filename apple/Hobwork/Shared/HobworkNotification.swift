@@ -8,6 +8,8 @@ struct HobworkNotification: Codable, Equatable, Sendable {
     var title: String
     var body: String?
     var actions: [NotificationAction]?
+    /// URL of an image to show on the notification banner.
+    var icon: String?
     /// `passive` or `timeSensitive`; `active` when left out.
     var interruptionLevel: String?
     /// `none` for no sound.
@@ -22,7 +24,7 @@ struct HobworkNotification: Codable, Equatable, Sendable {
     var update: Bool?
 
     var payload: NotificationPayload {
-        NotificationPayload(id: id, project: project, actions: actions, open: open, revision: revision)
+        NotificationPayload(id: id, project: project, actions: actions, open: open, icon: icon, revision: revision)
     }
 
     var level: UNNotificationInterruptionLevel {
@@ -67,13 +69,15 @@ struct NotificationPayload: Codable, Equatable, Sendable {
     var project: String?
     var actions: [NotificationAction]?
     var open: String?
+    var icon: String?
     var revision: Int?
 
-    init(id: String, project: String?, actions: [NotificationAction]?, open: String? = nil, revision: Int? = nil) {
+    init(id: String, project: String?, actions: [NotificationAction]?, open: String? = nil, icon: String? = nil, revision: Int? = nil) {
         self.id = id
         self.project = project
         self.actions = actions
         self.open = open
+        self.icon = icon
         self.revision = revision
     }
 

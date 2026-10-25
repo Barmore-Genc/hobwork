@@ -69,6 +69,9 @@ export type NotificationContent = {
   // Opens the hob in the app at this path of its UI when the notification is
   // tapped, e.g. "/print/problem". Default: the hob's home.
   open?: string
+  // URL of an image to show on the notification banner. Hosts the project icon
+  // at "/api/projects/<project>/icon?size=64" by default.
+  icon?: string
 }
 
 export type Notification = NotificationContent & {

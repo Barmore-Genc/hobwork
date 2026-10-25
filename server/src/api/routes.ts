@@ -398,11 +398,13 @@ export function createApiRoutes(options: {
     {
       method: 'GET',
       pattern: /^\/api\/projects\/([^/]+)\/icon$/,
-      handle: async ({ req, res, params }) => {
+      handle: async ({ req, res, params, query }) => {
         const project = requireProjectByName(host, params[0]!)
+        const size = queryInt(query, 'size') ?? LIST_ICON_SIZE
+        const iconSize = [32, 64, 180, 192, 512].includes(size) ? size : LIST_ICON_SIZE
         // Never builds: a list of projects must not start builds for each of them.
         const build = await runtime?.storedBuild(project.name).catch(() => undefined)
-        const path = build && join(build, ICONS_DIR, iconFile(LIST_ICON_SIZE))
+        const path = build && join(build, ICONS_DIR, iconFile(iconSize))
         const stats = path ? fileStats(path) : undefined
         if (path && stats) return sendFile(req, res, path, stats, 'no-cache', { 'x-content-type-options': 'nosniff' })
         const svg = Buffer.from(letterIconSvg(defaultIcon(project.name)))

@@ -89,8 +89,6 @@ struct OpenedPush: Equatable, Sendable {
         }
         if let score = aps["relevance-score"]?.numberValue { content.relevanceScore = score }
         if let badge = aps["badge"]?.numberValue { content.badge = NSNumber(value: badge) }
-        // Icon comes from the encrypted payload, not the relay's fallback aps.
-        content.icon = URL(string: hobwork["icon"]?.stringValue)
         content.userInfo = userInfo
     }
 }

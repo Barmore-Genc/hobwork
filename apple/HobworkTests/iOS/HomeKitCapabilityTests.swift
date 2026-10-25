@@ -52,3 +52,33 @@ struct HomeKitCapabilityTests {
         #expect(throws: BridgeError.self) { try characteristic.validate(.number(50)) }
     }
 }
+
+@MainActor
+struct HomeKitCommandQueueTests {
+    @Test func defersNotificationCommandsUntilActivationAndDeduplicatesThem() async {
+        var active = false
+        var ran: [String] = []
+        let queue = HomeKitCommandQueue(isActive: { active }) { command in ran.append(command.key) }
+        let command = DeviceCommand(id: .string("one"), capability: "homekit", method: "homes")
+        queue.submit(command)
+        queue.submit(command)
+        await Task.yield()
+        #expect(ran.isEmpty)
+        active = true
+        queue.sceneBecameActive()
+        for _ in 0 ..< 10 { await Task.yield() }
+        #expect(ran == ["one"])
+    }
+
+    @Test func signOutDiscardsCommandsWaitingForActivation() async {
+        var active = false
+        var ran = false
+        let queue = HomeKitCommandQueue(isActive: { active }) { _ in ran = true }
+        queue.submit(DeviceCommand(id: .string("one"), capability: "homekit", method: "homes"))
+        queue.removeAll()
+        active = true
+        queue.sceneBecameActive()
+        await Task.yield()
+        #expect(!ran)
+    }
+}

@@ -47,6 +47,18 @@ function only(args: Args, method: string, allowed: string[]) {
   }
 }
 
+function homeKitId(args: Args, key: string): string {
+  const value = args[key]
+  if (typeof value !== 'string' || !value.trim()) bad(`${key} must be a non-empty string`)
+  return value
+}
+
+function homeKitName(args: Args, key: string): string {
+  const value = homeKitId(args, key).trim()
+  if (value.length > 255) bad(`${key} must be at most 255 characters`)
+  return value
+}
+
 function title(args: Args): string {
   const value = args.title
   if (typeof value !== 'string' || !value.trim()) bad('title must be a non-empty string')
@@ -277,6 +289,61 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
       },
     },
   },
+  homekit: {
+    homes: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.homes', [])
+        return {}
+      },
+    },
+    accessories: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.accessories', ['home'])
+        return { home: homeKitId(args, 'home') }
+      },
+    },
+    services: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.services', ['accessory'])
+        return { accessory: homeKitId(args, 'accessory') }
+      },
+    },
+    assignRoom: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.assignRoom', ['accessory', 'room'])
+        return { accessory: homeKitId(args, 'accessory'), room: homeKitName(args, 'room') }
+      },
+    },
+    rename: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.rename', ['accessory', 'name'])
+        return { accessory: homeKitId(args, 'accessory'), name: homeKitName(args, 'name') }
+      },
+    },
+    get: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.get', ['accessory', 'characteristic'])
+        return { accessory: homeKitId(args, 'accessory'), characteristic: homeKitId(args, 'characteristic') }
+      },
+    },
+    set: {
+      foreground: true,
+      parse(args) {
+        only(args, 'homekit.set', ['accessory', 'characteristic', 'value'])
+        const value = args.value
+        if (typeof value !== 'string' && typeof value !== 'boolean' && !(typeof value === 'number' && Number.isFinite(value))) {
+          bad('value must be a string, finite number, or boolean')
+        }
+        return { accessory: homeKitId(args, 'accessory'), characteristic: homeKitId(args, 'characteristic'), value }
+      },
+    },
+  },
 }
 
 export function commandSpec(capability: string, method: string): CommandSpec | undefined {
@@ -289,8 +356,8 @@ export function knownMethods(): string {
   return ['notifications.send', ...Object.entries(COMMANDS).flatMap(([c, methods]) => Object.keys(methods).map((m) => `${c}.${m}`))].join(', ')
 }
 
-const NAMES: Record<string, string> = { alarms: 'Alarm', focus: 'Focus', health: 'Health' }
-const READS = new Set(['alarms.list', 'focus.status', 'health.query'])
+const NAMES: Record<string, string> = { alarms: 'Alarm', focus: 'Focus', health: 'Health', homekit: 'HomeKit' }
+const READS = new Set(['alarms.list', 'focus.status', 'health.query', 'homekit.homes', 'homekit.accessories', 'homekit.services', 'homekit.get'])
 
 // What the person sees if the notification service extension fails or runs
 // out of time before it replaces the text.
@@ -309,6 +376,9 @@ export function promptAlert(project: string, capability: string, method: string,
       title: method === 'write' ? 'Write an NFC tag' : 'Scan an NFC tag',
       body: `${project} on ${from} is waiting. Tap to ${method === 'write' ? 'write the tag' : 'scan the tag'} with this device.`,
     }
+  }
+  if (capability === 'homekit') {
+    return { title: READS.has(`homekit.${method}`) ? 'Read Apple Home' : 'Change Apple Home', body: `${project} is waiting. Open Hobwork to review this HomeKit request.` }
   }
   if (capability === 'alarms') {
     const name = typeof args.title === 'string' ? `"${args.title}"` : undefined

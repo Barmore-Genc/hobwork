@@ -444,6 +444,7 @@ export function createDevices(options: {
     focus: 'Focus status',
     nfc: 'NFC',
     health: 'Health data',
+    homekit: 'HomeKit',
   }
 
   // A call other than notifications.send. Resolves with the device's answer,
@@ -474,8 +475,8 @@ export function createDevices(options: {
     if (!projectRow) bad(`Hob "${project}" does not exist`)
     const tag = capability === 'nfc' && method === 'write' && parsed.url === undefined ? newNfcTagId() : undefined
     let sent = tag ? { tag, url: `${publicUrl}/nfc/${tag}`, ...parsed } : parsed
-    // The app reports the alarm's events with it, so they reach this hob.
-    if (capability === 'alarms' && ['set', 'timer', 'reschedule'].includes(method)) sent = { ...sent, hob: project }
+    // Alarms use it for event routing; HomeKit uses it to name the requesting hob in its approval prompt.
+    if (capability === 'homekit' || capability === 'alarms' && ['set', 'timer', 'reschedule'].includes(method)) sent = { ...sent, hob: project }
     const id = randomUUID()
     const createdAt = now()
     const draft: CommandRecord = {

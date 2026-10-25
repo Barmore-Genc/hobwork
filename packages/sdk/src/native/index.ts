@@ -52,7 +52,7 @@ export type {
 export type { ClipboardContents, ClipboardKinds, PasteOptions } from './clipboard.ts'
 export type { LinkOpened } from './links.ts'
 export type { ImpactStyle } from './haptics.ts'
-export type { HomeKitAccessory, HomeKitHome } from './homekit.ts'
+export type { HomeKitAccessory, HomeKitHome, HomeKitService, HomeKitCharacteristic, HomeKitValue } from './homekit.ts'
 export type { LiveActivityStatus } from './live-activities.ts'
 export type { LocalNotification } from './notifications.ts'
 export type { MediaSize, Printer, PrintOptions, PrintResult } from './print.ts'

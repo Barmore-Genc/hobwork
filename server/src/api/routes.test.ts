@@ -89,6 +89,7 @@ test('projects overview shows status and the current version', async () => {
       status: 'ready',
       currentVersion: expect.objectContaining({ number: 2, summary: 'Track spools', by: null, restoredFrom: null }),
       iconUrl: '/api/projects/filament/icon',
+      appUrl: null,
     },
   ])
 })

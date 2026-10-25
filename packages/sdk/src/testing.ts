@@ -113,6 +113,7 @@ const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
   focus: ['status'],
   nfc: ['write', 'read'],
   health: ['query'],
+  homekit: ['action', 'get', 'set'],
   liveActivities: ['start', 'update', 'end'],
   widgets: ['reload'],
 }

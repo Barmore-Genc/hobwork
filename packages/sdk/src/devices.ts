@@ -12,7 +12,7 @@ export type DeviceInfo = {
   // ID of that person (Person.id).
   ownerId: number
   // What the app on it can do and the person allowed: "notifications",
-  // "alarms", "focus", "nfc", "health", "liveActivities" (the person allows
+  // "alarms", "focus", "nfc", "health", "homekit", "liveActivities" (the person allows
   // Live Activities for Hobwork), "widgets". Calls to others fail with
   // "unsupported".
   capabilities: string[]
@@ -292,6 +292,7 @@ export interface Device {
   focus: Focus
   nfc: Nfc
   health: Health
+  homekit: HomeKit
   liveActivities: LiveActivities
   widgets: Widgets
 }
@@ -359,4 +360,26 @@ export type AlarmEvent = {
   seconds?: number
 }
 
-export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | AlarmEvent
+export type DeviceEvent = NotificationActionEvent | FocusChangedEvent | NfcScannedEvent | HealthSamplesEvent | HomeKitDeviceEvent | AlarmEvent
+
+// What the app calls ctx.device(name).homekit on a homekit-capable device.
+export interface HomeKit {
+  // Run an action on an accessory, room or category: "turnOn", "turnOff", "set" etc.
+  // target is "accessory:<id>", "room:<id>" or "category:<id>".
+  action(target: string, method: string, params?: Record<string, unknown>): Promise<never>
+  // Read a property from an accessory, e.g. "state", "brightness".
+  get(target: string, key: string): Promise<unknown>
+  // Write a property to an accessory.
+  set(target: string, key: string, value: unknown): Promise<never>
+}
+
+// { "device": { "capability": "homekit", "event": "action" } }: an accessory action
+// that this hob triggered (e.g. a homekit automation). ctx.payload is HomeKitDeviceEvent.
+export type HomeKitDeviceEvent = {
+  device: string
+  capability: 'homekit'
+  event: 'action'
+  target: string
+  method: string
+  params?: Record<string, unknown>
+}

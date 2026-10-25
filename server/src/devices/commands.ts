@@ -277,6 +277,42 @@ export const COMMANDS: Record<string, Record<string, CommandSpec>> = {
       },
     },
   },
+  homekit: {
+    // Run an accessory action: "turnOn", "turnOff", "set", etc. target is
+    // "accessory:<id>", "room:<id>" or "category:<id>".
+    action: {
+      parse(args) {
+        const target = args.target
+        if (typeof target !== 'string' || !target.startsWith('accessory:') && !target.startsWith('room:') && !target.startsWith('category:')) bad('target must be "accessory:<id>", "room:<id>", or "category:<id>"')
+        const method = args.method
+        if (typeof method !== 'string' || !method) bad('method is required')
+        const params = args.params
+        if (params !== undefined && params !== null && typeof params !== 'object') bad('params must be an object')
+        return defined({ target, method, params })
+      },
+    },
+    // Read a property from an accessory.
+    get: {
+      parse(args) {
+        const target = args.target
+        if (typeof target !== 'string' || !target.startsWith('accessory:') && !target.startsWith('room:') && !target.startsWith('category:')) bad('target must be "accessory:<id>", "room:<id>", or "category:<id>"')
+        const key = args.key
+        if (typeof key !== 'string' || !key) bad('key is required')
+        return defined({ target, key })
+      },
+    },
+    // Write a property to an accessory.
+    set: {
+      parse(args) {
+        const target = args.target
+        if (typeof target !== 'string' || !target.startsWith('accessory:') && !target.startsWith('room:') && !target.startsWith('category:')) bad('target must be "accessory:<id>", "room:<id>", or "category:<id>"')
+        const key = args.key
+        if (typeof key !== 'string' || !key) bad('key is required')
+        if (args.value === undefined) bad('value is required')
+        return defined({ target, key, value: args.value })
+      },
+    },
+  },
 }
 
 export function commandSpec(capability: string, method: string): CommandSpec | undefined {
@@ -289,7 +325,7 @@ export function knownMethods(): string {
   return ['notifications.send', ...Object.entries(COMMANDS).flatMap(([c, methods]) => Object.keys(methods).map((m) => `${c}.${m}`))].join(', ')
 }
 
-const NAMES: Record<string, string> = { alarms: 'Alarm', focus: 'Focus', health: 'Health' }
+const NAMES: Record<string, string> = { alarms: 'Alarm', focus: 'Focus', health: 'Health', homekit: 'HomeKit' }
 const READS = new Set(['alarms.list', 'focus.status', 'health.query'])
 
 // What the person sees if the notification service extension fails or runs

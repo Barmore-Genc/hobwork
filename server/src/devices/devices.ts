@@ -444,6 +444,7 @@ export function createDevices(options: {
     focus: 'Focus status',
     nfc: 'NFC',
     health: 'Health data',
+    homekit: 'HomeKit',
   }
 
   // A call other than notifications.send. Resolves with the device's answer,
@@ -736,6 +737,18 @@ export function createDevices(options: {
         event: 'samples',
         type: type as HealthType,
         samples: samples as HealthSample[],
+      })
+    }
+    if (pair === 'homekit/action') {
+      const { target, method, params } = data as { target?: unknown; method?: unknown; params?: Record<string, unknown> }
+      if (typeof target !== 'string' || typeof method !== 'string' || !target || !method) return
+      return broadcast({
+        device: device.name,
+        capability: 'homekit',
+        event: 'action',
+        target,
+        method,
+        ...(typeof params === 'object' && params !== null ? { params } : {}),
       })
     }
   }

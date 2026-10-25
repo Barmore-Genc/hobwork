@@ -408,6 +408,7 @@ final class AppModel {
                 guard let api = self?.api else { throw HostError.unreachable("This device isn't connected to a Hobwork host") }
                 return try await api.liveActivity(hob: hob, op: op, id: id, args: args)
             })
+            router.register(HomeKitBridge())
         #else
             router.register(NFCBridge(host: host, handoff: handoff))
         #endif

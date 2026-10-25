@@ -78,6 +78,11 @@ export function createDeviceClient(send: DeviceSend): DeviceClient {
       focus: { status: method('focus', 'status') },
       nfc: { write: method('nfc', 'write'), read: method('nfc', 'read') },
       health: { query: method('health', 'query') },
+      homekit: {
+        action: method('homekit', 'action'),
+        get: method('homekit', 'get'),
+        set: method('homekit', 'set'),
+      },
       liveActivities: liveActivities({ device: deviceName }),
       widgets: widgets({ device: deviceName }),
     }

@@ -345,6 +345,16 @@ final class AppModel {
             BackgroundCapabilities.register(on: runner, alarms: alarms, health: HealthKitReader(store: healthStore))
             runner.register(liveActivities, for: LiveActivities.capability)
             runner.register(WidgetsCapability(), for: WidgetsCapability.capability)
+            runner.register(HomeKitCapability(store: homeKitStore) { [weak self] hob, method in
+                guard let self, UIApplication.shared.applicationState == .active,
+                      let presenter = web.bridgeViewController, presenter.presentedViewController == nil
+                else { return false }
+                return await AlertPrompter().ask(
+                    title: "Let “\(hob)” use your Home?",
+                    message: HomeKitCapability.approvalMessage(for: method),
+                    presenter: web
+                ) == true
+            }, for: HomeKitCapability.capability)
         #else
             BackgroundCapabilities.register(on: runner)
         #endif
@@ -381,6 +391,10 @@ final class AppModel {
     @ObservationIgnored let printers = PrinterMemory()
     @ObservationIgnored private var owner: (host: URL, person: AppInfoBridge.Person)?
 
+    #if os(iOS)
+        @ObservationIgnored private let homeKitStore = SystemHomeKitStore()
+    #endif
+
     private func registerBridge() {
         let router = web.bridge.router
         router.register(AppInfoBridge(
@@ -398,7 +412,7 @@ final class AppModel {
         let host: () -> URL? = { [weak self] in self?.pairing?.host }
         #if os(iOS)
             router.register(HapticsBridge())
-            router.register(HomeKitBridge(store: SystemHomeKitStore()))
+            router.register(HomeKitBridge(store: homeKitStore))
             router.register(CameraBridge(device: VisionKitCamera()))
             router.register(NFCBridge(session: nfc, host: host, handoff: handoff))
             router.register(AlarmsBridge(capability: AlarmsCapability(scheduler: alarms)) { [weak self] in
@@ -408,7 +422,6 @@ final class AppModel {
                 guard let api = self?.api else { throw HostError.unreachable("This device isn't connected to a Hobwork host") }
                 return try await api.liveActivity(hob: hob, op: op, id: id, args: args)
             })
-            router.register(HomeKitBridge())
         #else
             router.register(NFCBridge(host: host, handoff: handoff))
         #endif

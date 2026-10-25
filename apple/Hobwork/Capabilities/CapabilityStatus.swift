@@ -3,7 +3,6 @@
     import AlarmKit
     import CoreNFC
     import HealthKit
-    import HomeKit
 #endif
 import UserNotifications
 
@@ -52,7 +51,7 @@ struct CapabilityStatus: Equatable, Sendable {
                 notifications: notifications,
                 alarms: AlarmManager.shared.authorizationState == .authorized,
                 focus: FocusLabels.file.read().setUp,
-                homekit: HomeKit.isAvailable,
+                homekit: true,
                 nfc: NFCNDEFReaderSession.readingAvailable,
                 health: HKHealthStore.isHealthDataAvailable() && !HealthSharing.file.read().shared.isEmpty,
                 liveActivities: ActivityAuthorizationInfo().areActivitiesEnabled

@@ -32,8 +32,8 @@ struct HomeKitBridgeTests {
 
     // MARK: What it offers
 
-    @Test func offersTheFourMethodsAndNothingElse() {
-        #expect(router().manifest == ["homekit": ["accessories", "assignRoom", "homes", "rename"]])
+    @Test func offersTheSupportedMethods() {
+        #expect(router().manifest == ["homekit": ["accessories", "assignRoom", "get", "homes", "rename", "services", "set"]])
     }
 
     // MARK: Reading
@@ -68,6 +68,50 @@ struct HomeKitBridgeTests {
         #expect(errorCode(reply) == "failed")
         #expect(errorMessage(reply) == "home is required")
         #expect(home.accessoryQueries.isEmpty)
+    }
+
+    @Test func discoversServicesAndReadsACharacteristic() async {
+        let router = router()
+        let reply = await call(router, "services", args(["accessory": "A1"]))
+        #expect(home.serviceQueries == ["A1"])
+        #expect(reply["value"]?.arrayValue?.first?["characteristics"]?.arrayValue?.first == home.characteristic.json)
+        let value = await call(router, "get", args(["accessory": "A1", "characteristic": "C1"]))
+        #expect(value["value"] == .bool(true))
+        #expect(home.reads.map(\.characteristic) == ["C1"])
+        #expect(prompter.questions.count == 1)
+    }
+
+    @Test func controlNeedsItsOwnGrantEvenAfterRenaming() async {
+        let router = router()
+        _ = await call(router, "rename", args(["accessory": "A1", "name": "Lux"]))
+        prompter.answer = false
+        let reply = await call(router, "set", .object(["accessory": .string("A1"), "characteristic": .string("C1"), "value": .bool(false)]))
+        #expect(errorCode(reply) == "denied")
+        #expect(home.writes.isEmpty)
+        #expect(permissions.all[filament.permissionKey]?["homekit.write"] == true)
+        #expect(permissions.all[filament.permissionKey]?["homekit.control"] == false)
+    }
+
+    @Test func writesTheRequestedValueNotTheArgumentObject() async {
+        let reply = await call(router(), "set", .object(["accessory": .string("A1"), "characteristic": .string("C1"), "value": .bool(false)]))
+        #expect(reply["ok"] == .bool(true))
+        #expect(home.writes.count == 1)
+        #expect(home.writes.first?.accessory == "A1")
+        #expect(home.writes.first?.characteristic == "C1")
+        #expect(home.writes.first?.value == .bool(false))
+    }
+
+    @Test(arguments: [JSONValue.null, .array([]), .object([:])])
+    func rejectsNonScalarWrites(value: JSONValue) async {
+        let reply = await call(router(), "set", .object(["accessory": .string("A1"), "characteristic": .string("C1"), "value": value]))
+        #expect(errorCode(reply) == "failed")
+        #expect(home.writes.isEmpty)
+    }
+
+    @Test func refusesMissingCharacteristic() async {
+        let reply = await call(router(), "get", args(["accessory": "A1"]))
+        #expect(errorCode(reply) == "failed")
+        #expect(home.reads.isEmpty)
     }
 
     // MARK: Changing
@@ -167,6 +211,9 @@ struct HomeKitBridgeTests {
         #expect(bridge.permission(for: "accessories")?.key == "homekit.read")
         #expect(bridge.permission(for: "assignRoom")?.key == "homekit.write")
         #expect(bridge.permission(for: "rename")?.key == "homekit.write")
+        #expect(bridge.permission(for: "services")?.key == "homekit.read")
+        #expect(bridge.permission(for: "get")?.key == "homekit.read")
+        #expect(bridge.permission(for: "set")?.key == "homekit.control")
         #expect(bridge.permission(for: "shout") == nil)
     }
 }

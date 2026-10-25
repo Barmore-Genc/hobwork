@@ -344,3 +344,52 @@ test('links opened while a page listens arrive as link.opened', async () => {
   bridge.emit('link.opened', { url: 'https://filament.apps.example.com/bin/4', path: '/bin/4' })
   expect(opened).toEqual([{ url: 'https://filament.apps.example.com/spool/78', path: '/spool/78' }])
 })
+
+test('Apple Home calls send the IDs and the new room or name, and accept the objects they came from', async () => {
+  const home = { id: 'H1', name: 'Our House', primary: true }
+  const lamp = { id: 'A1', name: 'Lamp', room: 'Default Room', serialNumber: 'light.lamp', bridge: 'HASS Bridge' }
+  bridge = createFakeBridge({
+    'homekit.homes': () => [home],
+    'homekit.accessories': () => [lamp],
+    'homekit.assignRoom': () => null,
+    'homekit.rename': () => null,
+  })
+  expect(await native.homekit.homes()).toEqual([home])
+  expect(await native.homekit.accessories({ home })).toEqual([lamp])
+  expect(await native.homekit.accessories({ home: 'H2' })).toEqual([lamp])
+  await native.homekit.assignRoom({ accessory: lamp, room: 'Lair' })
+  await native.homekit.assignRoom({ accessory: 'A2', room: 'Laundry room' })
+  await native.homekit.rename({ accessory: lamp, name: 'Lux' })
+  expect(bridge.calls).toEqual([
+    { capability: 'homekit', method: 'homes', args: null },
+    { capability: 'homekit', method: 'accessories', args: { home: 'H1' } },
+    { capability: 'homekit', method: 'accessories', args: { home: 'H2' } },
+    { capability: 'homekit', method: 'assignRoom', args: { accessory: 'A1', room: 'Lair' } },
+    { capability: 'homekit', method: 'assignRoom', args: { accessory: 'A2', room: 'Laundry room' } },
+    { capability: 'homekit', method: 'rename', args: { accessory: 'A1', name: 'Lux' } },
+  ])
+})
+
+test('Apple Home is only there when the app lists it, and says why when the person said no', async () => {
+  expect(native.has('homekit')).toBe(false)
+  expect((await rejection(native.homekit.homes())).code).toBe('unavailable')
+
+  bridge = createFakeBridge({
+    'homekit.homes': () => {
+      throw new NativeError('denied', 'Allow Hobwork to use Home in Settings', 'not_authorized')
+    },
+    'homekit.rename': () => {
+      throw new NativeError('failed', 'There is no accessory with that ID', 'unknown_accessory')
+    },
+  })
+  expect(native.has('homekit')).toBe(true)
+  expect(native.has('homekit', 'homes')).toBe(true)
+  expect(native.has('homekit', 'assignRoom')).toBe(false)
+  const denied = await rejection(native.homekit.homes())
+  expect([denied.code, denied.reason]).toEqual(['denied', 'not_authorized'])
+  const missing = await rejection(native.homekit.rename({ accessory: 'nope', name: 'Lux' }))
+  expect([missing.code, missing.reason]).toEqual(['failed', 'unknown_accessory'])
+  // A method the app does not list is refused before it is sent.
+  expect((await rejection(native.homekit.assignRoom({ accessory: 'A1', room: 'Lair' }))).code).toBe('unavailable')
+  expect(bridge.calls.map((c) => c.method)).toEqual(['homes', 'rename'])
+})

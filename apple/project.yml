@@ -48,6 +48,7 @@ targets:
           - Shared/Share
           - Capabilities/NFC
           - Capabilities/Health
+          - Capabilities/HomeKit
           - Capabilities/LiveActivities
           - Views/HealthSettings.swift
       - path: Hobwork/Alarms
@@ -59,6 +60,8 @@ targets:
       - path: Hobwork/Capabilities/NFC
         destinationFilters: [iOS]
       - path: Hobwork/Capabilities/Health
+        destinationFilters: [iOS]
+      - path: Hobwork/Capabilities/HomeKit
         destinationFilters: [iOS]
       - path: Hobwork/Shared/LiveActivities
         destinationFilters: [iOS]
@@ -99,6 +102,7 @@ targets:
         # Tag reader sessions that poll ISO 14443 need this list. The NFC Forum
         # NDEF application lets Type 4 tags show up too.
         com.apple.developer.nfc.readersession.iso7816.select-identifiers: [D2760000850101]
+        NSHomeKitUsageDescription: Hobs on your Hobwork host can read your Home and move accessories to the right room when you ask them to.
         NSHealthShareUsageDescription: Hobs on your Hobwork host can read the Health data you choose to share.
         # App Store Connect requires it with the HealthKit entitlement, even though the app only reads.
         NSHealthUpdateUsageDescription: Hobwork only reads the Health data you choose to share and does not save data to Health.

@@ -46,7 +46,7 @@ export type SchedulerOptions = {
   clock?: Clock
 }
 
-const realClock: Clock = {
+export const systemClock: Clock = {
   now: () => Date.now(),
   setTimeout(callback, ms) {
     const timer = setTimeout(callback, ms)
@@ -74,7 +74,7 @@ type Waiter = {
 // to make room: any of them for a runtime, build or preview, and only those of
 // other hobs that are over their equal share for a workspace.
 export function createVmScheduler(options: SchedulerOptions) {
-  const clock = options.clock ?? realClock
+  const clock = options.clock ?? systemClock
   const retryMs = options.retryMs ?? 5_000
   const held = new Set<Held>()
   const queues = new Map<string, Waiter[]>()

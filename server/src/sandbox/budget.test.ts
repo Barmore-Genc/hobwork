@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest'
 import { budgetedSandboxFactory, defaultResources, loadMemoryOvercommit, loadVmBudget, memoryMbOf, resolveResources } from './budget.ts'
 import { cpuQuota } from './cpu-quota.ts'
+import type { OomVictim } from './oom.ts'
 import type { Sandbox } from './sandbox.ts'
 import { createVmScheduler } from './scheduler.ts'
 
@@ -112,4 +113,28 @@ test('releases the reservation when the VM exits on its own', async () => {
   await sandbox.stop()
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 1024, cpus: 1 })
   await other.stop()
+})
+
+test('hands every VM to the killer, which can stop it, until it exits', async () => {
+  const scheduler = createVmScheduler({ memoryMb: 4096, cpus: 4, waitMs: 100 })
+  const victims: OomVictim[] = []
+  const oom = {
+    watch(victim: OomVictim) {
+      victims.push(victim)
+      return () => victims.splice(victims.indexOf(victim), 1)
+    },
+  }
+  let exit: () => void = () => {}
+  let stopped = false
+  const exited = new Promise<void>((resolve) => (exit = resolve))
+  const sandbox = { id: 'vm', exited, stop: async () => void (stopped = true) } as unknown as Sandbox
+  const create = budgetedSandboxFactory(async () => sandbox, scheduler, 2, oom)
+  await create({ image: 'x', memory: '1536M', cpus: 2, budget: { kind: 'workspace', project: 'filament', branch: 'main' } })
+  expect(victims).toHaveLength(1)
+  expect(victims[0]).toMatchObject({ kind: 'workspace', project: 'filament', branch: 'main', memoryMb: 768, cpus: 2 })
+  await victims[0]!.stop()
+  expect(stopped).toBe(true)
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 0, cpus: 0 })
+  exit()
+  await vi.waitFor(() => expect(victims).toHaveLength(0))
 })

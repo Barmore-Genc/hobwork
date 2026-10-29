@@ -57,4 +57,9 @@ if [ -n "$merge" ]; then
   done
 fi
 if [ "${HOBWORK_QEMU_SANDBOX:-}" = 1 ]; then qemu=$here/qemu-sandboxed.sh; else qemu=qemu-system-$(uname -m); fi
+# The host stops VMs itself when it runs out of memory, and the kernel's own OOM
+# killer is the backstop for when that comes too late. Its score is mostly how
+# much memory a process holds, which a QEMU usually wins, so marking QEMU puts
+# it ahead of the host's own processes instead of leaving the two to compete.
+if [ -w /proc/self/oom_score_adj ]; then echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true; fi
 exec bwrap --args 3 -- "$qemu" "$@" 3<"$dir/qemu.bwrap"

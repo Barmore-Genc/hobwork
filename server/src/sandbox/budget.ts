@@ -1,5 +1,6 @@
 import { cpus, totalmem } from 'node:os'
 import { cpuQuota, cpuShareProblem, type CpuQuota } from './cpu-quota.ts'
+import type { OomKiller } from './oom.ts'
 import type { Sandbox, SandboxFactory } from './sandbox.ts'
 import type { VmScheduler } from './scheduler.ts'
 
@@ -101,11 +102,13 @@ export function loadMemoryOvercommit(env: NodeJS.ProcessEnv = process.env): numb
 // Reserves the VM's memory and vCPUs before it boots and gives them back when
 // it stops, exits or fails to boot. A share of a core is reserved as that share,
 // since the sandbox holds the VM to it, and a share of the memory by
-// `memoryOvercommit`, since the guest only faults in what it uses.
+// `memoryOvercommit`, since the guest only faults in what it uses. Every VM is
+// handed to `oom`, which stops them when the host runs out of memory.
 export function budgetedSandboxFactory(
   create: SandboxFactory,
   scheduler: VmScheduler,
   memoryOvercommit: number,
+  oom?: Pick<OomKiller, 'watch'>,
 ): SandboxFactory {
   return async (options) => {
     const { kind = 'pipeline', project = '(host)', branch } = options.budget ?? {}
@@ -124,8 +127,24 @@ export function budgetedSandboxFactory(
       lease.release()
       throw err
     }
+    const stop = async () => {
+      try {
+        await sandbox.stop()
+      } finally {
+        lease.release()
+      }
+    }
     // A VM that dies on its own would otherwise keep its share until someone calls stop().
     void sandbox.exited.then(() => lease.release())
+    const unwatch = oom?.watch({
+      kind,
+      project,
+      ...(branch === undefined ? {} : { branch }),
+      memoryMb: lease.memoryMb,
+      cpus,
+      stop,
+    })
+    void sandbox.exited.then(() => unwatch?.())
     // Delegates by hand: the Gondolin sandbox has private fields, so its
     // methods must run with the real instance as `this`.
     return {
@@ -139,13 +158,7 @@ export function budgetedSandboxFactory(
       readFile: (path) => sandbox.readFile(path),
       writeFile: (path, data) => sandbox.writeFile(path, data),
       hostPid: () => sandbox.hostPid(),
-      async stop() {
-        try {
-          await sandbox.stop()
-        } finally {
-          lease.release()
-        }
-      },
+      stop,
     }
   }
 }

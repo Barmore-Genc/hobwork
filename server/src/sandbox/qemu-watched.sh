@@ -8,6 +8,11 @@ vm=$$
   while kill -0 "$host" 2>/dev/null && kill -0 "$vm" 2>/dev/null; do sleep 1; done
   kill -0 "$host" 2>/dev/null || kill -KILL "$vm" 2>/dev/null
 ) </dev/null >/dev/null 2>&1 &
+# The host stops VMs itself when it runs out of memory, and the kernel's own OOM
+# killer is the backstop for when that comes too late. Its score is mostly how
+# much memory a process holds, which a QEMU usually wins, so marking QEMU puts
+# it ahead of the host's own processes instead of leaving the two to compete.
+if [ -w /proc/self/oom_score_adj ]; then echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true; fi
 # Guest RAM is marked mergeable, so a host running KSM merges the pages every VM
 # holds the same copy of: the kernel, the initramfs, and what each guest read
 # from the same rootfs. QEMU refuses the option on a kernel without KSM, so by

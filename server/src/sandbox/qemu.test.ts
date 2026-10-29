@@ -84,6 +84,14 @@ test('the watcher leaves a machine that already asks for memory merging alone', 
   expect(out.split('\n').slice(0, -1)).toEqual(args)
 })
 
+test.runIf(process.platform === 'linux')('the watcher leaves QEMU first in line for the kernel\'s OOM killer', () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, `qemu-system-${watchedMachine}`), '#!/bin/sh\ncat /proc/self/oom_score_adj\n')
+  chmodSync(join(dir, `qemu-system-${watchedMachine}`), 0o755)
+  const out = execFileSync(qemuPath({}, 'linux'), [], { encoding: 'utf8', env: { PATH: `${dir}:${process.env.PATH}` } })
+  expect(out).toBe('1000\n')
+})
+
 test('the watcher kills QEMU when the host dies', async () => {
   const dir = tempDir()
   writeFileSync(join(dir, `qemu-system-${watchedMachine}`), '#!/bin/sh\nexec sleep 60\n')

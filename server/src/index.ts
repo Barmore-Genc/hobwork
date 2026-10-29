@@ -28,7 +28,7 @@ import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/home
 import { callRoute, jsonBody } from './runtime/http.ts'
 import { runUploadTriggers } from './runtime/uploads.ts'
 import { createRuntime } from './runtime/runtime.ts'
-import { budgetedSandboxFactory } from './sandbox/budget.ts'
+import { budgetedSandboxFactory, loadMemoryOvercommit } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { createVmScheduler } from './sandbox/scheduler.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
@@ -90,7 +90,11 @@ const vmScheduler = createVmScheduler({
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? {
       image,
-      createSandbox: budgetedSandboxFactory((options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }), vmScheduler),
+      createSandbox: budgetedSandboxFactory(
+        (options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }),
+        vmScheduler,
+        loadMemoryOvercommit(),
+      ),
       log: (message) => console.warn(message),
       readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),

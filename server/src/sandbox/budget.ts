@@ -83,10 +83,30 @@ export function loadVmBudget(
   return { memoryMb, cpus: vcpus, waitMs: waitSeconds * 1000 }
 }
 
+const DEFAULT_MEMORY_OVERCOMMIT = 2
+
+// Guest RAM is faulted in only as the guest touches it, so a VM costs far less
+// than the memory it asks for: a 384MB runtime VM measured about 50MB soon after
+// boot, and a workspace VM about 400MB of its 1536MB after reading its
+// toolchain. VMs reserve a share of what they ask for, and the budget then holds
+// that many times the nominal memory. The rest is a bet: a hob that uses all of
+// its memory really does, and what a VM costs outside its guest RAM (QEMU, and
+// the VFS worker per VM with isolation) is not in the budget at all. 1 reserves
+// everything.
+export function loadMemoryOvercommit(env: NodeJS.ProcessEnv = process.env): number {
+  const value = env.HOBWORK_VM_MEMORY_OVERCOMMIT
+  return value === undefined ? DEFAULT_MEMORY_OVERCOMMIT : positiveInteger('HOBWORK_VM_MEMORY_OVERCOMMIT', value)
+}
+
 // Reserves the VM's memory and vCPUs before it boots and gives them back when
 // it stops, exits or fails to boot. A share of a core is reserved as that share,
-// since the sandbox holds the VM to it.
-export function budgetedSandboxFactory(create: SandboxFactory, scheduler: VmScheduler): SandboxFactory {
+// since the sandbox holds the VM to it, and a share of the memory by
+// `memoryOvercommit`, since the guest only faults in what it uses.
+export function budgetedSandboxFactory(
+  create: SandboxFactory,
+  scheduler: VmScheduler,
+  memoryOvercommit: number,
+): SandboxFactory {
   return async (options) => {
     const { kind = 'pipeline', project = '(host)', branch } = options.budget ?? {}
     const cpus = options.cpus ?? 2
@@ -94,7 +114,7 @@ export function budgetedSandboxFactory(create: SandboxFactory, scheduler: VmSche
       kind,
       project,
       branch,
-      memoryMb: memoryMbOf(options.memory ?? '1G'),
+      memoryMb: Math.ceil(memoryMbOf(options.memory ?? '1G') / memoryOvercommit),
       cpus,
     })
     let sandbox: Sandbox

@@ -103,7 +103,8 @@ test('credentials limited to some hobs do not see the Home Assistant tools', asy
 
   const readOnly = await connect({ readOnly: true, projects: ['filament'] })
   expect((await readOnly.tools()).filter((name) => name.startsWith('ha_'))).toEqual([])
-  expect((await connect({ readOnly: true, projects: null })).tools()).resolves.toContain('ha_list_entities')
+  const readOnlyUnrestricted = await connect({ readOnly: true, projects: null })
+  expect(await readOnlyUnrestricted.tools()).toContain('ha_list_entities')
 })
 
 test('update_ha_services follows hob access', async () => {

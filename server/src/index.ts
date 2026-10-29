@@ -33,6 +33,7 @@ import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { createVmScheduler } from './sandbox/scheduler.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { checkIsolation } from './sandbox/isolation.ts'
+import { memoryMergeNotice } from './sandbox/memory-merge.ts'
 import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
 import { createStorageUsage } from './storage.ts'
@@ -95,8 +96,13 @@ const vmOptions: GuestVmOptions | undefined = imageExists(image)
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
     }
   : undefined
-if (vmOptions) console.log(`guest image: ${image}`)
-else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
+if (vmOptions) {
+  console.log(`guest image: ${image}`)
+  const mergeNotice = memoryMergeNotice()
+  if (mergeNotice) console.warn(mergeNotice)
+} else {
+  console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
+}
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
 data.useMigrationVm(vmOptions && migrationVmBackend(vmOptions))
 

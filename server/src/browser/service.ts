@@ -141,7 +141,7 @@ export function createBrowserService(options: {
         engine = started
         starting = undefined
         startingAt = new Date().toISOString()
-        log('info', `Browser: started ${settings.headless ? 'headless' : 'with a display'}`)
+        log('info', 'Browser: started')
         return started
       })
       .catch((err: unknown) => {

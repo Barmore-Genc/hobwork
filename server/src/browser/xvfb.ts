@@ -16,8 +16,8 @@ export type DisplayStart =
   // Nothing here can show a window, so a headful browser is impossible.
   | { kind: 'headless'; reason: string }
 
-const FIRST_DISPLAY = 90
-const LAST_DISPLAY = 130
+export const FIRST_DISPLAY = 90
+export const LAST_DISPLAY = 130
 // One number can fail while the next one works, so trying a few beats falling
 // back to a browser without a display at the first hiccup.
 const ATTEMPTS = 3
@@ -52,15 +52,7 @@ const realDeps: DisplayDeps = {
   exists: existsSync,
   read: (path) => readFileSync(path, 'utf8'),
   remove: (path) => rmSync(path, { force: true }),
-  running: (pid) => {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch (err) {
-      // EPERM means the process is there, just not ours to signal.
-      return (err as NodeJS.ErrnoException).code === 'EPERM'
-    }
-  },
+  running: processRunning,
   // Xvfb says why it will not start ("Server is already active for display 90",
   // a library it cannot load) on stderr, and that is the only way to know.
   spawn: (number, size) =>
@@ -68,8 +60,22 @@ const realDeps: DisplayDeps = {
   sleep: (ms) => delay(ms),
 }
 
-function socketPath(number: number): string {
+// Through EPERM a process is there, just not ours to signal.
+export function processRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+export function socketPath(number: number): string {
   return `/tmp/.X11-unix/X${number}`
+}
+
+export function lockPath(number: number): string {
+  return `/tmp/.X${number}-lock`
 }
 
 // An X server writes its pid to /tmp/.X<n>-lock before it listens, and refuses
@@ -78,7 +84,7 @@ function socketPath(number: number): string {
 // does not keep its display.
 function lockPid(deps: DisplayDeps, number: number): number | undefined {
   try {
-    const pid = Number.parseInt(deps.read(`/tmp/.X${number}-lock`).trim(), 10)
+    const pid = Number.parseInt(deps.read(lockPath(number)).trim(), 10)
     return Number.isInteger(pid) && pid > 0 ? pid : undefined
   } catch {
     return undefined

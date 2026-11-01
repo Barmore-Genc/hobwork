@@ -91,6 +91,7 @@ Access follows Home Assistant: the deployed version browses, a branch preview do
 - Commands for one tab run in order and in parallel across tabs, with at most 4 waiting per tab (`busy` after that), `HOBWORK_BROWSER_MAX_TABS` per hob (default 8) and `HOBWORK_BROWSER_MAX_TABS_TOTAL` (default 32).
 - `disconnected` marks the browser dead, forgets its tabs and logs it; the next command starts a new one, and the dead one's Xvfb stops with it.
 - A display is the first from `:90` to `:130` whose X server lock names no living process, so display numbers come back when their browser stops. A host with no Xvfb runs headless and logs the warning; a host whose Xvfb will not start answers `not_configured` with what Xvfb said, rather than launching a headful browser that has no display.
+- Before it starts a browser, the host stops the Xvfb servers it left behind itself: a process in its own cgroup, with exactly the arguments `startDisplay` passes and a socket in its own `/tmp`, gets `SIGTERM`, then `SIGKILL` after a moment, and its lock file and socket go with it. A host process that restarts therefore heals its display numbers without a unit restart.
 - Logs: `browser` lines for opens and navigations at `info`, reads at `debug`, blocks and refusals at `warn` with `browser-blocked`, one line per command. Typed text is never logged.
 
 ## Install and updates

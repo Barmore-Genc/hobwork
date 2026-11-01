@@ -60,6 +60,38 @@ test('the watcher starts plain QEMU with Gondolin\'s arguments', () => {
   expect(out.split('\n').slice(0, -1)).toEqual(['-m', '1G', '-append', 'a b'])
 })
 
+test('the watcher asks for mergeable guest RAM', () => {
+  const dir = tempDir()
+  fakeCommand(dir, `qemu-system-${watchedMachine}`)
+  const args = ['-m', '1G', '-machine', 'microvm,isa-serial=on', '-append', 'a b']
+  const run = (merge: string) =>
+    execFileSync(qemuPath({}, 'linux'), args, {
+      encoding: 'utf8',
+      env: { PATH: `${dir}:${process.env.PATH}`, HOBWORK_VM_MEMORY_MERGE: merge },
+    }).split('\n').slice(0, -1)
+  expect(run('1')).toEqual(['-m', '1G', '-machine', 'microvm,isa-serial=on,mem-merge=on', '-append', 'a b'])
+  expect(run('0')).toEqual(args)
+})
+
+test('the watcher leaves a machine that already asks for memory merging alone', () => {
+  const dir = tempDir()
+  fakeCommand(dir, `qemu-system-${watchedMachine}`)
+  const args = ['-machine', 'microvm,mem-merge=on', '-m', '1G']
+  const out = execFileSync(qemuPath({}, 'linux'), args, {
+    encoding: 'utf8',
+    env: { PATH: `${dir}:${process.env.PATH}`, HOBWORK_VM_MEMORY_MERGE: '1' },
+  })
+  expect(out.split('\n').slice(0, -1)).toEqual(args)
+})
+
+test.runIf(process.platform === 'linux')('the watcher leaves QEMU first in line for the kernel\'s OOM killer', () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, `qemu-system-${watchedMachine}`), '#!/bin/sh\ncat /proc/self/oom_score_adj\n')
+  chmodSync(join(dir, `qemu-system-${watchedMachine}`), 0o755)
+  const out = execFileSync(qemuPath({}, 'linux'), [], { encoding: 'utf8', env: { PATH: `${dir}:${process.env.PATH}` } })
+  expect(out).toBe('1000\n')
+})
+
 test('the watcher kills QEMU when the host dies', async () => {
   const dir = tempDir()
   writeFileSync(join(dir, `qemu-system-${watchedMachine}`), '#!/bin/sh\nexec sleep 60\n')
@@ -109,6 +141,24 @@ test('the namespace wrapper starts QEMU through bwrap with the VM\'s options and
     '--unshare-all', '--bind', '/x y', '/x y',
   ])
   expect(run({ HOBWORK_QEMU_SANDBOX: '1' })[3]).toMatch(/\/qemu-sandboxed\.sh$/)
+})
+
+test('the namespace wrapper asks for mergeable guest RAM', () => {
+  const path = qemuPath({ HOBWORK_SANDBOX_ISOLATION: 'namespaces' }, 'linux')
+  const bin = tempDir()
+  fakeCommand(bin, 'bwrap', true)
+  const vm = join(tempDir(), 'v1')
+  mkdirSync(join(vm, 'vm'), { recursive: true })
+  writeFileSync(join(vm, 'qemu.bwrap'), '')
+  const control = ['-chardev', `socket,id=virtiocon0,path=${vm}/vm/control.sock,server=off`]
+  const out = execFileSync(path, ['-machine', 'microvm', ...control], {
+    encoding: 'utf8',
+    env: { PATH: `${bin}:${process.env.PATH}`, HOBWORK_VM_MEMORY_MERGE: '1' },
+  })
+  expect(out.split('\n').slice(0, -1)).toEqual([
+    '--args', '3', '--', `qemu-system-${machine}`,
+    '-machine', 'microvm,mem-merge=on', ...control,
+  ])
 })
 
 test('the namespace wrapper refuses a command line without the control socket', () => {

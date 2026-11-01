@@ -28,11 +28,13 @@ import { homeAssistantClientLogger, triggerRegistryLogger } from './runtime/home
 import { callRoute, jsonBody } from './runtime/http.ts'
 import { runUploadTriggers } from './runtime/uploads.ts'
 import { createRuntime } from './runtime/runtime.ts'
-import { budgetedSandboxFactory } from './sandbox/budget.ts'
+import { budgetedSandboxFactory, loadMemoryOvercommit } from './sandbox/budget.ts'
 import { createGondolinSandbox } from './sandbox/gondolin.ts'
 import { createVmScheduler } from './sandbox/scheduler.ts'
 import { imageDir, imageExists } from './sandbox/image.ts'
 import { checkIsolation } from './sandbox/isolation.ts'
+import { memoryMergeNotice } from './sandbox/memory-merge.ts'
+import { createOomKiller, hostAvailableMb, loadOomHeadroom } from './sandbox/oom.ts'
 import { createSecretStore, loadSecretKey } from './secrets.ts'
 import { createSshGateway, loadHostKey } from './ssh/gateway.ts'
 import { createStorageUsage } from './storage.ts'
@@ -86,17 +88,53 @@ const vmScheduler = createVmScheduler({
   ...config.vmBudget,
   reclaim: async ({ project, branch }) => (branch === undefined ? false : workspaces.stopIfIdle(project, branch)),
 })
+const memoryHeadroomMb = loadOomHeadroom()
+const oomKiller = createOomKiller({
+  availableMb: () => hostAvailableMb(),
+  headroomMb: memoryHeadroomMb,
+  log: (message) => console.warn(message),
+  // A workspace VM comes back with its next command, but only the workspace
+  // manager closes its branch DB and marks it stopped.
+  stop: async (victim) => {
+    try {
+      if (victim.kind === 'workspace' && victim.branch !== undefined) await workspaces.stop(victim.project, victim.branch)
+      else await victim.stop()
+      return true
+    } catch (err) {
+      console.error(`Could not stop the ${victim.kind} VM of ${victim.project} to free memory`, err)
+      return false
+    }
+  },
+})
 const vmOptions: GuestVmOptions | undefined = imageExists(image)
   ? {
       image,
-      createSandbox: budgetedSandboxFactory((options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }), vmScheduler),
+      createSandbox: budgetedSandboxFactory(
+        (options) => createGondolinSandbox({ ...options, privateEgress: config.privateEgress }),
+        vmScheduler,
+        loadMemoryOvercommit(),
+        oomKiller,
+      ),
       log: (message) => console.warn(message),
       readBranchFile: branchFileReader(host),
       workspaceEnvironment: createWorkspaceEnvironment(host, { data, secrets, homeAssistant, devices, ai }),
     }
   : undefined
-if (vmOptions) console.log(`guest image: ${image}`)
-else console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
+if (vmOptions) {
+  console.log(`guest image: ${image}`)
+  const mergeNotice = memoryMergeNotice()
+  if (mergeNotice) console.warn(mergeNotice)
+  if (memoryHeadroomMb === 0) {
+    console.log('Stopping VMs to free memory is off (HOBWORK_VM_MEMORY_HEADROOM_MB=0).')
+  } else if (hostAvailableMb() === undefined) {
+    console.log('This host cannot say how much memory it has free, so VMs are never stopped to free some. Only Linux can.')
+  } else {
+    console.log(`Stopping the least important VM when the host has less than ${memoryHeadroomMb}MB free.`)
+    oomKiller.start()
+  }
+} else {
+  console.warn(`No guest image at ${image}, so bash, merge and handlers are unavailable. Build it with images/build.sh or set HOBWORK_IMAGE_DIR.`)
+}
 const pipelineVms = vmOptions && pipelineVmBackend(vmOptions)
 data.useMigrationVm(vmOptions && migrationVmBackend(vmOptions))
 

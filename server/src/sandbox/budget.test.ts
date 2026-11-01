@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest'
-import { budgetedSandboxFactory, defaultResources, loadVmBudget, memoryMbOf, resolveResources } from './budget.ts'
+import { budgetedSandboxFactory, defaultResources, loadMemoryOvercommit, loadVmBudget, memoryMbOf, resolveResources } from './budget.ts'
 import { cpuQuota } from './cpu-quota.ts'
+import type { OomVictim } from './oom.ts'
 import type { Sandbox } from './sandbox.ts'
 import { createVmScheduler } from './scheduler.ts'
 
@@ -59,7 +60,7 @@ test('reserves on create and releases on stop or a failed boot', async () => {
   const create = budgetedSandboxFactory(async (options) => {
     if (options.env?.FAIL) throw new Error('boot failed')
     return fakeSandbox()
-  }, scheduler)
+  }, scheduler, 1)
   const sandbox = await create({ image: 'x', memory: '2G', cpus: 4, budget: { kind: 'workspace', project: 'a' } })
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 2048, cpus: 4 })
   await expect(create({ image: 'x', memory: '1G', env: { FAIL: '1' } })).rejects.toThrow('boot failed')
@@ -70,7 +71,7 @@ test('reserves on create and releases on stop or a failed boot', async () => {
 
 test('reserves a share of a core as that share', async () => {
   const scheduler = createVmScheduler({ memoryMb: 2048, cpus: 1, waitMs: 100 })
-  const create = budgetedSandboxFactory(async () => fakeSandbox(), scheduler)
+  const create = budgetedSandboxFactory(async () => fakeSandbox(), scheduler, 1)
   const one = await create({ image: 'x', memory: '256M', cpus: 0.5, budget: { kind: 'runtime', project: 'a' } })
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 256, cpus: 0.5 })
   const two = await create({ image: 'x', memory: '256M', cpus: 0.5, budget: { kind: 'runtime', project: 'b' } })
@@ -80,11 +81,30 @@ test('reserves a share of a core as that share', async () => {
   await two.stop()
 })
 
+test('reserves a share of the memory a VM asks for', async () => {
+  const scheduler = createVmScheduler({ memoryMb: 1024, cpus: 4, waitMs: 100 })
+  const create = budgetedSandboxFactory(async () => fakeSandbox(), scheduler, 2)
+  const one = await create({ image: 'x', memory: '1G', cpus: 1, budget: { kind: 'workspace', project: 'a' } })
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 512, cpus: 1 })
+  const two = await create({ image: 'x', memory: '1G', cpus: 1, budget: { kind: 'workspace', project: 'b' } })
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 1024, cpus: 2 })
+  await one.stop()
+  await two.stop()
+})
+
+test('overcommits memory twice unless the host says otherwise', () => {
+  expect(loadMemoryOvercommit({})).toBe(2)
+  expect(loadMemoryOvercommit({ HOBWORK_VM_MEMORY_OVERCOMMIT: '1' })).toBe(1)
+  expect(loadMemoryOvercommit({ HOBWORK_VM_MEMORY_OVERCOMMIT: '4' })).toBe(4)
+  expect(() => loadMemoryOvercommit({ HOBWORK_VM_MEMORY_OVERCOMMIT: '0' })).toThrow('HOBWORK_VM_MEMORY_OVERCOMMIT')
+  expect(() => loadMemoryOvercommit({ HOBWORK_VM_MEMORY_OVERCOMMIT: 'half' })).toThrow('HOBWORK_VM_MEMORY_OVERCOMMIT')
+})
+
 test('releases the reservation when the VM exits on its own', async () => {
   const scheduler = createVmScheduler({ memoryMb: 4096, cpus: 8, waitMs: 1000 })
   let exit: () => void = () => {}
   const exited = new Promise<void>((resolve) => (exit = resolve))
-  const create = budgetedSandboxFactory(async (options) => fakeSandbox(options.env?.LIVE ? undefined : exited), scheduler)
+  const create = budgetedSandboxFactory(async (options) => fakeSandbox(options.env?.LIVE ? undefined : exited), scheduler, 1)
   const sandbox = await create({ image: 'x', memory: '2G', cpus: 4 })
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 2048, cpus: 4 })
   exit()
@@ -93,4 +113,28 @@ test('releases the reservation when the VM exits on its own', async () => {
   await sandbox.stop()
   expect(scheduler.snapshot().used).toEqual({ memoryMb: 1024, cpus: 1 })
   await other.stop()
+})
+
+test('hands every VM to the killer, which can stop it, until it exits', async () => {
+  const scheduler = createVmScheduler({ memoryMb: 4096, cpus: 4, waitMs: 100 })
+  const victims: OomVictim[] = []
+  const oom = {
+    watch(victim: OomVictim) {
+      victims.push(victim)
+      return () => victims.splice(victims.indexOf(victim), 1)
+    },
+  }
+  let exit: () => void = () => {}
+  let stopped = false
+  const exited = new Promise<void>((resolve) => (exit = resolve))
+  const sandbox = { id: 'vm', exited, stop: async () => void (stopped = true) } as unknown as Sandbox
+  const create = budgetedSandboxFactory(async () => sandbox, scheduler, 2, oom)
+  await create({ image: 'x', memory: '1536M', cpus: 2, budget: { kind: 'workspace', project: 'filament', branch: 'main' } })
+  expect(victims).toHaveLength(1)
+  expect(victims[0]).toMatchObject({ kind: 'workspace', project: 'filament', branch: 'main', memoryMb: 768, cpus: 2 })
+  await victims[0]!.stop()
+  expect(stopped).toBe(true)
+  expect(scheduler.snapshot().used).toEqual({ memoryMb: 0, cpus: 0 })
+  exit()
+  await vi.waitFor(() => expect(victims).toHaveLength(0))
 })

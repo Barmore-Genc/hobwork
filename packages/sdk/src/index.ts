@@ -1,10 +1,12 @@
 import type { Device, DeviceInfo, NotificationControl } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
+import type { Browser } from './webbrowser.ts'
 import type { LiveActivityControl } from './live-activities.ts'
 import type { Caller, Person, PersonDevices } from './people.ts'
 import type { FileInfo } from './runner/protocol.ts'
 
 export type * from './devices.ts'
+export type * from './webbrowser.ts'
 export type * from './homeassistant.ts'
 export type * from './people.ts'
 export type * from './live-activities.ts'
@@ -14,6 +16,7 @@ export * from './time.ts'
 export { DeviceError } from './runner/device-client.ts'
 export { FilesError } from './runner/files-client.ts'
 export type { FileInfo, FilesErrorCode } from './runner/protocol.ts'
+export { BrowserError } from './webbrowser.ts'
 export { HomeAssistantError } from './runner/ha-client.ts'
 export * from './openrouter.ts'
 export { vector } from './vector.ts'
@@ -57,6 +60,8 @@ export type Context = {
   files: Files
   // Home Assistant service calls and states, through the Hobwork host.
   ha: HomeAssistant
+  // The browser the host runs, for sites hobwork.json declares.
+  browser: Browser
   // A paired phone or computer by name, e.g. ctx.device('kaan-iphone').notifications.send(...).
   // Calls go through the Hobwork host.
   device(name: string): Device

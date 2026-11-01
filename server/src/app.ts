@@ -11,6 +11,7 @@ import { peopleRoutes } from './api/people.ts'
 import { projectLifecycleRoutes } from './api/project-lifecycle.ts'
 import { userRoutes } from './api/router.ts'
 import { createApiRoutes } from './api/routes.ts'
+import type { BrowserService } from './browser/service.ts'
 import { createAppHttp } from './apps/http.ts'
 import { createAppOrigins } from './apps/origins.ts'
 import { createAuth } from './auth/auth.ts'
@@ -77,6 +78,7 @@ export function createApp(
     secrets?: SecretStore
     storage?: StorageUsage
     backups?: Backups
+    browser?: BrowserService
     devices?: Devices
     ai?: AiConfig
     sshPort?: number
@@ -142,6 +144,7 @@ export function createApp(
     secrets: options.secrets,
     storage: options.storage,
     privateEgress: web.privateEgress ?? [],
+    browser: options.browser,
   })
   const handleBackups = createBackupRoutes({ host, auth, backups: options.backups })
   const handleDevices = createDeviceRoutes({

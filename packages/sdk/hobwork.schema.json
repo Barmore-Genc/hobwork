@@ -9,6 +9,11 @@
     "routePath": { "type": "string", "pattern": "^/[^\\s#]{0,511}$" },
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "linkPath": { "type": "string", "pattern": "^/[^\\s#]{0,255}$" },
+    "egressEntry": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^((\\[[0-9A-Fa-f:.]+\\]|[^\\s:\\[\\]/]+)(:\\d{1,5})?|[0-9A-Fa-f]*:[0-9A-Fa-f:.]+)$"
+    },
     "vmResources": {
       "type": "object",
       "additionalProperties": false,
@@ -144,14 +149,24 @@
         }
       }
     },
+    "browser": {
+      "description": "Sites the hob opens in the browser it drives with ctx.browser. One entry is a host (\"shop.example.com\", on any port), a subdomain pattern (\"*.example.org\") or \"host:port\"; https only, and never localhost. The list applies to the pages a tab opens, not to what those pages load: scripts, styles, fonts and images from anywhere are the page's own business. Everything else is refused with code not_allowed. Without this block the hob has no browser.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sites": {
+          "description": "The sites the hob may open, e.g. [\"shop.example.com\", \"*.example.org\"].",
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/egressEntry" }
+        }
+      }
+    },
     "egress": {
       "description": "Hosts handlers may reach over HTTP and HTTPS. \"api.example.com\" or \"*.example.com\" on any port, \"host:port\" (\"[IPv6]:port\") on that port only. Private, LAN and tailnet addresses (like \"100.66.127.125:7912\") work only when the Hobwork host lists them too, in HOBWORK_PRIVATE_EGRESS. Secrets are only sent over https.",
       "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^((\\[[0-9A-Fa-f:.]+\\]|[^\\s:\\[\\]/]+)(:\\d{1,5})?|[0-9A-Fa-f]*:[0-9A-Fa-f:.]+)$"
-      },
+      "items": { "$ref": "#/definitions/egressEntry" },
       "uniqueItems": true
     },
     "csp": {

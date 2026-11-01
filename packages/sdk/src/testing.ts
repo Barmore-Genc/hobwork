@@ -7,6 +7,7 @@ import { applyMigrations, MIGRATIONS_DIR, notStrictMessage, parseMigrations } fr
 import type { Device, DeviceInfo, NotificationControl, PersonNotifications } from './devices.ts'
 import type { HomeAssistant } from './homeassistant.ts'
 import type { LiveActivityControl, PersonLiveActivities } from './live-activities.ts'
+import type { Browser, BrowserTab } from './webbrowser.ts'
 import type { Widgets } from './widgets.ts'
 import type { Context, Db, FileBody, FileInfo, Files, Logger, StoredFile } from './index.ts'
 import { createDbClient } from './runner/db-client.ts'
@@ -107,6 +108,35 @@ function unstubbedHa(): HomeAssistant {
   return { callService: reject('callService'), getState: reject('getState'), getStates: reject('getStates'), fireEvent: reject('fireEvent') }
 }
 
+// Every method rejects, so a test that reaches the browser notices.
+function unstubbedBrowser(): Browser {
+  const reject = (what: string) => () => Promise.reject(new Error(`${what} is not stubbed in this test. Pass browser to createTestContext`))
+  const unstubbedTab = (id: string): BrowserTab => ({
+    id,
+    goto: reject('ctx.browser tab goto'),
+    back: reject('ctx.browser tab back'),
+    reload: reject('ctx.browser tab reload'),
+    click: reject('ctx.browser tab click'),
+    hover: reject('ctx.browser tab hover'),
+    fill: reject('ctx.browser tab fill'),
+    type: reject('ctx.browser tab type'),
+    press: reject('ctx.browser tab press'),
+    select: reject('ctx.browser tab select'),
+    waitFor: reject('ctx.browser tab waitFor'),
+    text: reject('ctx.browser tab text'),
+    html: reject('ctx.browser tab html'),
+    evaluate: reject('ctx.browser tab evaluate'),
+    url: reject('ctx.browser tab url'),
+    title: reject('ctx.browser tab title'),
+    close: reject('ctx.browser tab close'),
+  })
+  return {
+    open: reject('ctx.browser.open'),
+    tabs: reject('ctx.browser.tabs'),
+    tab: async (id) => unstubbedTab(id),
+  }
+}
+
 const DEVICE_METHODS: { [C in keyof Device]: (keyof Device[C])[] } = {
   notifications: ['send'],
   alarms: ['set', 'timer', 'reschedule', 'cancel', 'list'],
@@ -147,9 +177,10 @@ function byLastActive(a: DeviceInfo, b: DeviceInfo): number {
   return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '') || (b.lastSeenAt ?? '').localeCompare(a.lastSeenAt ?? '')
 }
 
-export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'device' | 'notifications' | 'liveActivities'> & {
+export type TestContextOverrides = Omit<Partial<Context>, 'ha' | 'browser' | 'device' | 'notifications' | 'liveActivities'> & {
   // Methods not given reject, like fetch.
   ha?: Partial<HomeAssistant>
+  browser?: Browser
   device?: (name: string) => DeviceStub
   notifications?: Partial<NotificationControl>
   // ctx.person(id).notifications.
@@ -165,7 +196,7 @@ function unstubbed(what: string, hint: string) {
 }
 
 // A handler context for tests. `db` defaults to a fresh test DB and `files` to
-// empty test files; `fetch`, `ha` and devices reject until a test stubs them,
+// empty test files; `fetch`, `ha`, `browser` and devices reject until a test stubs them,
 // since tests should not reach the network, change the home or notify anyone.
 // `caller` defaults to null. ctx.person(id) reads the stubbed ctx.devices(),
 // so stub devices with ownerId and lastActiveAt to test who gets notified.
@@ -212,6 +243,7 @@ export function createTestContext(overrides: TestContextOverrides = {}): Context
     },
     devices,
     ha: { ...unstubbedHa(), ...overrides.ha },
+    browser: overrides.browser ?? unstubbedBrowser(),
     device: (name) => stubbedDevice(name, overrides.device?.(name)),
     db: overrides.db ?? createTestDb(),
     files: overrides.files ?? createTestFiles(),

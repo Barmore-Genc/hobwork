@@ -5,6 +5,7 @@ import { defaultIcon, ICONS_DIR, iconFile, LIST_ICON_SIZE, letterIconSvg } from 
 import { AccessError, parseAccess, type Access } from '../access.ts'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
+import type { BrowserService } from '../browser/service.ts'
 import { branchRoutes } from './branches.ts'
 import type { Auth } from '../auth/auth.ts'
 import type { User } from '../auth/users.ts'
@@ -174,6 +175,7 @@ export function createApiRoutes(options: {
   secrets?: SecretStore
   storage?: StorageUsage
   privateEgress?: PrivateEgressRule[]
+  browser?: BrowserService
 }) {
   const { host, auth, delivery, runtime } = options
 
@@ -237,6 +239,10 @@ export function createApiRoutes(options: {
       entryPoints: entryPoints ?? null,
       ...(configError ? { configError } : {}),
       egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort().map((entry) => describeEgress(entry, options.privateEgress ?? [])),
+      browser: {
+        sites: config?.browser.sites ?? [],
+        ...(options.browser ? options.browser.status() : { running: false, tabs: 0 }),
+      },
       database: options.data?.status(project.name) ?? null,
       ...(options.storage ? { storage: options.storage.get(project) } : {}),
       app: config ? await hasApp(project.name) : false,

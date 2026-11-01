@@ -43,12 +43,16 @@ export type ShareEntry = {
 // syntax of apple-app-site-association components.
 export type AppLinks = { include?: string[]; exclude: string[] }
 
+// `browser.sites`: the sites the hob opens with ctx.browser.
+export type BrowserConfig = { sites: string[] }
+
 export type ProjectConfig = {
   routes: Record<string, Entry>
   crons: Record<string, Entry & CronEntry>
   webhooks: Record<string, Entry>
   triggers: Record<string, Entry & TriggerEntry>
   egress: string[]
+  browser: BrowserConfig
   csp: CspSources
   crossAppRequests: string[]
   // Longest prefix first.
@@ -139,6 +143,11 @@ function shareEntries(entries: unknown): ShareEntry[] {
   })
 }
 
+function browserConfig(value: unknown): BrowserConfig {
+  const sites = (value as { sites?: unknown } | undefined)?.sites
+  return { sites: Array.isArray(sites) ? sites.filter((site): site is string => typeof site === 'string') : [] }
+}
+
 function paths(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string' && p.startsWith('/')) : undefined
 }
@@ -166,6 +175,7 @@ export function parseProjectConfig(raw: string): ProjectConfig {
     webhooks: json.webhooks ?? {},
     triggers: json.triggers ?? {},
     egress: json.egress ?? [],
+    browser: browserConfig(json.browser),
     csp: json.csp ?? {},
     resources: json.resources ?? {},
     crossAppRequests: json.crossAppRequests ?? [],

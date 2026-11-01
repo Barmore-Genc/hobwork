@@ -133,6 +133,40 @@ export type DeviceRequest = (
 
 export type DeviceResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
 
+// POST http://hobwork.internal/v1/browser
+export type BrowserRequest = (
+  | { action: 'open'; url: string }
+  | { action: 'tabs' }
+  | { action: 'close' }
+  | { action: 'goto'; url: string }
+  | { action: 'back' }
+  | { action: 'reload' }
+  | { action: 'click'; selector: string }
+  | { action: 'hover'; selector: string }
+  | { action: 'fill'; selector: string; text: string }
+  | { action: 'type'; selector: string; text: string }
+  | { action: 'press'; key: string; selector?: string }
+  | { action: 'select'; selector: string; values: string[] }
+  | { action: 'waitFor'; selector: string }
+  | { action: 'text' }
+  | { action: 'html' }
+  | { action: 'evaluate'; source: string; arg?: unknown; world?: 'isolated' | 'main' }
+  | { action: 'url' }
+  | { action: 'title' }
+) & {
+  // The tab the command acts on, except for open and tabs.
+  tab?: string
+  // Set by the runner inside an invocation, so the call is logged with it.
+  invocation?: number
+  timeoutMs?: number
+  // ctx.secrets: environment name -> the placeholder the guest was given. The
+  // host swaps a placeholder in typed text for the real value, when the secret
+  // is assigned to this hob and the tab's site is one of its hosts.
+  secrets?: Record<string, string>
+}
+
+export type BrowserResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
+
 // PUT http://hobwork.internal/v1/files/<path> stores the body (streamed, up to
 // MAX_FILE_BYTES) and answers FilesResponse with a FileInfo. GET on the same
 // path answers the bytes with FILE_SIZE_HEADER and FILE_MODIFIED_HEADER (the

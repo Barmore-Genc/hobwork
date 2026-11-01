@@ -25,6 +25,7 @@ import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { limitTools } from './access.ts'
 import { registerAiTools } from './ai.ts'
 import { runBash } from './bash.ts'
+import { registerBranchBrowserTools } from './branch-browser.ts'
 import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
 import { registerDeviceTools } from './devices.ts'
@@ -557,6 +558,7 @@ export function createMcpServer({
     registerHomeAssistantTools(server, homeAssistant)
     registerBranchHaTools(server, { host, agent })
   }
+  registerBranchBrowserTools(server, { host, agent })
   registerRuntimeTools(server, { host, runtime, appOrigin })
   registerHobViewTools(server, { host, agent, appOrigin, appsUrl })
   registerSecretTools(server, { host, secrets, agent, publicUrl })

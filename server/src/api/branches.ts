@@ -1,6 +1,7 @@
 import type { AppTarget } from '../apps/origins.ts'
 import { deleteBranch, unmergedCommits } from '../branch-deletion.ts'
 import { branchMerges, cleanupAfter } from '../branch-merges.ts'
+import { getBranchBrowserApproval, grantBranchBrowser, revokeBranchBrowser } from '../browser/approvals.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { Delivery } from '../delivery.ts'
 import { getBranchHaApproval, grantBranchHa, revokeBranchHa } from '../homeassistant/approvals.ts'
@@ -27,9 +28,9 @@ async function requireBranch(host: Host, project: Project, branch: string) {
   }
 }
 
-// Branches with their preview address, recent preview runs, whether they
-// may control Home Assistant (agents change that over MCP) and when a merged
-// branch is cleaned up.
+// Branches with their preview address, recent preview runs, whether they may
+// control Home Assistant or use the browser (agents change both over MCP) and
+// when a merged branch is cleaned up.
 export function branchRoutes(options: {
   host: Host
   runtime?: Runtime
@@ -62,12 +63,31 @@ export function branchRoutes(options: {
             previewUrl: appOrigin?.({ project: project.name, branch: branch.name }) ?? null,
             running: runtime?.previewStatus(project.name, branch.name).running ?? false,
             homeAssistant: getBranchHaApproval(host, project.name, branch.name) ?? null,
+            browser: getBranchBrowserApproval(host, project.name, branch.name) ?? null,
             recentRuns: listInvocations(host, { project: project.name, branch: branch.name, limit: RECENT_RUNS }).map((i) =>
               invocationView(i, false),
             ),
           }
           }),
         )
+      },
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/api\/projects\/([^/]+)\/branches\/([^/]+)\/browser$/,
+      handle: async ({ res, user, params }) => {
+        const project = projectOf(host, params[0]!)
+        await requireBranch(host, project, params[1]!)
+        json(res, 200, grantBranchBrowser(host, project.name, params[1]!, { userId: user.id }))
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: /^\/api\/projects\/([^/]+)\/branches\/([^/]+)\/browser$/,
+      handle: ({ res, params }) => {
+        const project = projectOf(host, params[0]!)
+        revokeBranchBrowser(host, project.name, params[1]!)
+        res.writeHead(204).end()
       },
     },
     {

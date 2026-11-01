@@ -35,9 +35,15 @@ type Tab = {
   queued: number
 }
 
+export type BrowserTabView = { id: string; branch?: string; url: string; title: string }
+
 export type BrowserService = {
   run(call: BrowserCall): Promise<unknown>
   status(): { running: boolean; tabs: number; startedAt?: string }
+  // Tabs of a hob, for the page that shows them to the person who runs the host.
+  tabsOf(project: string): Promise<BrowserTabView[]>
+  // A JPEG of one tab as it is now, base64, for that page.
+  screenshotOf(tabId: string): Promise<string | undefined>
   close(): Promise<void>
 }
 
@@ -65,10 +71,13 @@ export function createBrowserService(options: {
   // Tests swap the browser for a fake; the host uses patchright.
   engine?: EngineFactory
   log?: (level: 'info' | 'warn', message: string) => void
+  // Tabs came or went, or the browser started or stopped.
+  onChange?: (project: string) => void
 }): BrowserService {
   const { settings } = options
   const createEngine = options.engine ?? patchrightEngine
   const log = options.log ?? (() => {})
+  const changed = options.onChange ?? (() => {})
 
   let engine: Engine | undefined
   let starting: Promise<Engine> | undefined
@@ -85,10 +94,12 @@ export function createBrowserService(options: {
   async function stop(reason: string): Promise<void> {
     const current = engine
     if (!current) return
+    const projects = new Set([...tabs.values()].map((tab) => tab.session.project))
     engine = undefined
     starting = undefined
     startingAt = undefined
     forget()
+    for (const project of projects) changed(project)
     if (reason !== 'host is stopping') log('info', `Browser: stopped (${reason})`)
     await current.close().catch(() => {})
   }
@@ -116,10 +127,12 @@ export function createBrowserService(options: {
       onBlocked: (url, reason) => log('warn', `Browser: blocked ${url}. ${reason}`),
       onClosed: (reason) => {
         if (!engine) return
+        const projects = new Set([...tabs.values()].map((tab) => tab.session.project))
         engine = undefined
         starting = undefined
         startingAt = undefined
         forget()
+        for (const project of projects) changed(project)
         log('warn', `Browser: ${reason}. It starts again with the next call`)
       },
       log,
@@ -183,6 +196,7 @@ export function createBrowserService(options: {
           tabs.delete(tab.id)
           byEngineTab.delete(tab.engine)
           await page.close()
+          changed(tab.session.project)
           return null
         case 'goto':
           return await page.goto(request.url, timeoutMs).then(() => null)
@@ -298,6 +312,7 @@ export function createBrowserService(options: {
     await engineTab.goto(url.href, timeoutMs).catch((err: unknown) => {
       throw browserError(err, 'open', timeoutMs)
     })
+    changed(session.project)
     return { id: tab.id, url: engineTab.url(), title: await engineTab.title().catch(() => '') }
   }
 
@@ -368,6 +383,24 @@ export function createBrowserService(options: {
     },
     status() {
       return { running: engine !== undefined, tabs: tabs.size, ...(startingAt === undefined ? {} : { startedAt: startingAt }) }
+    },
+    async tabsOf(project) {
+      const mine = [...tabs.values()].filter((tab) => tab.session.project === project)
+      return Promise.all(
+        mine.map(async (tab) => ({
+          id: tab.id,
+          ...(tab.session.branch === undefined ? {} : { branch: tab.session.branch }),
+          url: tab.engine.url(),
+          title: await tab.engine.title().catch(() => ''),
+        })),
+      )
+    },
+    async screenshotOf(tabId) {
+      const tab = tabs.get(tabId)
+      // The person who runs the host sees it as it is, without the blocks a
+      // handler's screenshot has.
+      if (!tab) return undefined
+      return tab.engine.screenshot({ fullPage: false, mask: [], timeoutMs: 15_000 }).catch(() => undefined)
     },
     async close() {
       clearInterval(idle)

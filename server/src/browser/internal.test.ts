@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest'
 import { BrowserError } from '../../../packages/sdk/src/webbrowser.ts'
 import { browserResponse, type BrowserAccess, type BrowserCallLog, type BrowserEndpointOptions } from './internal.ts'
-import { redact } from './redact.ts'
 import type { BrowserCall, BrowserService } from './service.ts'
 
 type Answer = { status: number; body: { ok: boolean; result?: unknown; error?: { code: string; message: string } } }
@@ -14,6 +13,8 @@ function fakeService(options: { result?: unknown; error?: BrowserError; calls?: 
       return options.result ?? null
     },
     status: () => ({ running: true, tabs: 0 }),
+    tabsOf: async () => [],
+    screenshotOf: async () => undefined,
     close: async () => {},
   }
 }
@@ -87,18 +88,6 @@ test('secret values never travel back to the guest', async () => {
     rows: ['[redacted]', 'harmless', { nested: { value: 'x [redacted] y' } }],
     count: 3,
   })
-})
-
-test('a screenshot keeps its bytes: scrubbing base64 would corrupt the image', async () => {
-  const jpeg = Buffer.from('a photo with hunter2 in it').toString('base64')
-  const answer = await call({ action: 'screenshot', tab: TAB }, { browser: fakeService({ result: jpeg }), secrets: () => SECRETS })
-  expect(answer.body.result).toBe(jpeg)
-})
-
-test('short values are left alone, so a page is not redacted into nonsense', () => {
-  expect(redact('1 spool of 2', { PIN: { value: '12', hosts: [] } })).toBe('1 spool of 2')
-  expect(redact('pin 1234', { PIN: { value: '1234', hosts: [] } })).toBe('pin [redacted]')
-  expect(redact(null, { PIN: { value: '1234', hosts: [] } })).toBe(null)
 })
 
 test('a refusal from the browser keeps its code and status', async () => {

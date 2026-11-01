@@ -960,6 +960,8 @@ test('handlers browse through the host, only for the sites hobwork.json declares
       return { id: 'a1b2c3d4e5f60718', url: 'https://shop.example.com/' }
     },
     status: () => ({ running: false, tabs: 0 }),
+    tabsOf: async () => [],
+    screenshotOf: async () => undefined,
     close: async () => {},
   }
   const secrets = createSecretStore(host, randomBytes(32))

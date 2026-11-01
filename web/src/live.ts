@@ -8,6 +8,7 @@ export type Change =
   | { kind: 'invocations'; project: string; id: number }
   | { kind: 'logs'; project: string }
   | { kind: 'branches'; project: string }
+  | { kind: 'browser'; project: string }
   | { kind: 'secrets' }
   | { kind: 'agents' }
   | { kind: 'devices' }
@@ -142,6 +143,10 @@ export function projectChanged(project: string): LiveFilter {
 
 export function kindChanged(kind: Change['kind'], project?: string): LiveFilter {
   return (change) => change.kind === kind && (project === undefined || !('project' in change) || change.project === project)
+}
+
+export function browserChanged(project: string): LiveFilter {
+  return (change) => change.kind === 'browser' && change.project === project
 }
 
 export function branchesChanged(project: string): LiveFilter {

@@ -20,7 +20,7 @@ Implemented. Where it lives:
 - **Headful under Xvfb**, never `--headless`, on a Linux host. Patchright's maintainer: "Running Headless Chrome can always be detected without a Custom Compiled Chromium" ([#82](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright/issues/82)). Measured here with Chrome 156: even the full build in new headless mode reports `HeadlessChrome/156.0.0.0` in the user agent. `HOBWORK_BROWSER_HEADLESS=1` still exists for a host with neither a display nor Xvfb, and the host logs a warning when it runs that way. Rejected: masking the token with `--user-agent`. Chrome's own user agent is the only one that agrees with `Sec-CH-UA`, the worker user agent and everything else, and patchright refuses to change it for the same reason.
 - **The browser is a Linux desktop, not a fake Mac.** Faking macOS would mean faking `navigator.platform`, the user agent, `Sec-CH-UA-Platform`, `navigator.userAgentData.platform`, the font set, the text metrics that come out of CoreText rather than FreeType, `Intl`, `navigator.maxTouchPoints` and the WebGL renderer (ANGLE on Metal on an Apple GPU). Each of those is a lie a page can compare against the others, and the first missing macOS font places the browser on Linux anyway. So: the real user agent, `locale` and `timezoneId` set explicitly, a real window at `HOBWORK_BROWSER_WINDOW` (default 1920x1080) with `viewport: null`, and a normal desktop font set on the host (`fonts-liberation`, `fonts-dejavu-core`, `fonts-noto-core`, `fonts-noto-color-emoji`). WebGL falls back to SwiftShader and needs `--enable-unsafe-swiftshader` to exist at all; a software renderer is closer to a real Linux user than no WebGL. What patchright cannot fix stays unfixed: IP reputation and behaviour.
 - **uBlock Origin Lite**, the newest MV3 build from `uBOL-home` releases, unpacked under the data dir and loaded with `--disable-extensions-except` and `--load-extension`. Its manifest declares `host_permissions: ["<all_urls>"]`, so the main rulesets (easylist, easyprivacy, ublock-filters and friends) filter without anyone granting anything; the annoyances lists, cookie banners among them, start off. A page cannot observe it, since its rules are declarativeNetRequest rather than content scripts. The host logs whether it loaded.
-- **No screenshots, no PDF, no downloads.** Screenshots would hand the hob pixels that the redaction filter cannot touch.
+- **Screenshots are JPEG, with the fields a secret was typed into covered.** Pixels cannot be scrubbed like text, so the service remembers which selectors received a secret value and passes them to Playwright's `mask`, which paints a solid block over them. That answers the accidental leak the redaction filter exists for: a field showing a password. It cannot answer a page that prints the secret somewhere else (an error message, a canvas, an image), which is documented in the API and in the template `AGENTS.md`. JPEG at quality 80 keeps a 1920x1080 window at a few hundred KB, under the endpoint's result limit; the person who runs the host sees the same tabs without the blocks, since the pixels never reach a hob that way. No PDF, no downloads.
 
 ## Declared sites
 
@@ -53,7 +53,7 @@ await tab.close()
 ```
 
 - `ctx.browser`: `open(url)`, `tabs()`, `tab(id)`.
-- A tab: `goto`, `back`, `reload`, `click`, `hover`, `fill`, `type`, `press`, `select`, `waitFor`, `text`, `html`, `evaluate`, `url`, `title`, `close`. Selectors go straight to Playwright, so `css=`, `text=`, `role=` and XPath all work.
+- A tab: `goto`, `back`, `reload`, `click`, `hover`, `fill`, `type`, `press`, `select`, `waitFor`, `text`, `html`, `evaluate`, `url`, `title`, `screenshot`, `close`. Selectors go straight to Playwright, so `css=`, `text=`, `role=` and XPath all work.
 - `evaluate` runs in patchright's isolated world by default, which is what keeps the `Runtime.enable` leak closed: it sees the DOM but not globals a page set. `{ world: 'main' }` reads those, and reopens the leak for that execution.
 - Tabs outlive invocations. Tab IDs are opaque and belong to the hob and branch that opened them; the API has no browser-level close, so a hob cannot shut the browser down.
 - Every command has a timeout (default 30 s, at most 120 s) and a hard ceiling 5 s above it, since Playwright does not time out `evaluate`. Every returned string is bounded, and a result over 2 MB is refused.
@@ -63,6 +63,19 @@ await tab.close()
 A `fill`, `type` or `press` may carry a secret placeholder: the runner sends its `ctx.secrets` map with the command, and the host swaps a placeholder for the real value, only when the tab's current origin host is one of the secret's hosts, the same rule `secretGuard` applies to `ctx.fetch`. The plaintext never enters the guest. Every string the host returns (text, html, `evaluate` results, error messages, URLs, titles) has any occurrence of any of the hob's secret values replaced with `[redacted]`, values shorter than 4 characters excepted, since they would redact ordinary page text.
 
 This is aimed at accidental leaks: a page that transforms the value, or a hob that asks the page to encode it, gets through. It is not a boundary against a malicious hob working with a malicious site.
+
+## Agents
+
+Agents drive the same browser over MCP, in the same tabs and with the same profile, so a flow that logs in once works for both. The tools are `browser_open` (a new tab, or navigate one), `browser_act` (click, hover, fill, type, press, select, waitFor), `browser_read` (text, html, url, title), `browser_evaluate`, `browser_screenshot` (returned as image content in the tool result), `browser_tabs` and `browser_close` (`server/src/mcp/browser.ts`).
+
+- The session is `{ project, branch }`: an agent working on a branch navigates the branch's tabs, and sees the sites the branch's committed `hobwork.json` declares.
+- A branch preview needs `set_branch_browser`, the same approval a handler does, and the refusal says so.
+- Everything an agent sees is redacted like a handler's answer, except the bytes of a screenshot, which cannot be.
+- `browser_read`, `browser_tabs` and `browser_screenshot` are marked read-only, so a read-only credential keeps them: it can look at a tab a hob already has open, and cannot open one.
+
+## Watching
+
+The hob page shows the browser: each open tab with the version or branch that opened it, its address, and a picture of the page (`GET /api/projects/<hob>/browser` and `GET /api/projects/<hob>/browser/<tab>.jpg`, signed-in users only, `no-store`). It refreshes on a click and when the host publishes a `browser` change for tabs opening or closing, and it never interacts with the page: a person watches, the hob clicks.
 
 ## Endpoint
 
@@ -89,8 +102,8 @@ Access follows Home Assistant: the deployed version browses, a branch preview do
 
 ## Tests
 
-- Unit: `allowlist.test.ts`, `commands.test.ts`, `internal.test.ts`, `service.test.ts` (a fake engine for lifecycle, ownership, caps, queue, timeouts, crash, idle stop, secret hosts).
-- `runtime.test.ts` covers the wiring end to end on the host side: `/v1/browser` bound to the VM's hob, the committed `browser.sites`, secret values from the store, and a preview refused until its branch is approved.
+- Unit: `allowlist.test.ts`, `commands.test.ts`, `internal.test.ts`, `redact.test.ts` (the filter itself), `service.test.ts` (a fake engine for lifecycle, ownership, caps, queue, timeouts, crash, idle stop, secret hosts, screenshot masking), `server/src/mcp/browser.test.ts` (the agent tools: sites from the committed config, branch approval, request shapes, redaction, image results) and a route test for the hob page's tab list and picture.
+- `runtime.test.ts` covers the wiring end to end on the host side: `/v1/browser` bound to the VM's hob, the committed `browser.sites`, secret values from the store, and a preview refused until its branch is approved. `engine.integration.test.ts` also takes a real screenshot and checks the bytes are a JPEG.
 - `engine.integration.test.ts` boots a real browser against a local http server: launch, navigation rules, fill and click, text, `evaluate` in both worlds, profile persistence, uBlock Origin Lite loading, `navigator.webdriver`. Skipped unless asked:
 
   ```sh
@@ -102,6 +115,6 @@ Access follows Home Assistant: the deployed version browses, a branch preview do
 
 ## Later
 
-- Agent access from workspaces over MCP, which needs the workspace internal API and its committed `browser.sites`.
-- A read-only live view of a tab on the hob page.
-- Screenshots, if the redaction question gets an answer.
+- PDFs of a page, and downloads, if a hob ever needs them.
+- A form of interaction from the hob page, rather than watching only.
+- Choosing another Chrome channel from the web UI, instead of `HOBWORK_BROWSER_CHANNEL`.

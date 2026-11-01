@@ -113,7 +113,7 @@ describe.skipIf(!enabled)('the real browser', () => {
       const base64 = await tab.screenshot({ fullPage: false, mask: ['#search', '#nothing-here'], timeoutMs: 15_000 })
       const jpeg = Buffer.from(base64, 'base64')
       expect(jpeg.byteLength).toBeGreaterThan(1_000)
-      expect([...jpeg.slice(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+      expect(jpeg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]))
 
       // A navigation the rules refuse never lands, and the host hears about it.
       await expect(tab.goto(`${pages.base}/blocked`, 15_000)).rejects.toThrow()

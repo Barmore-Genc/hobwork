@@ -26,6 +26,8 @@ function fakeBrowser(options: { results?: Record<string, unknown> } = {}) {
       return options.results?.[call.request.action] ?? null
     },
     status: () => ({ running: true, tabs: calls.length }),
+    tabsOf: async () => [],
+    screenshotOf: async () => undefined,
     close: async () => {},
   }
   return { browser, calls }

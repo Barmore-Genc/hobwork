@@ -510,6 +510,15 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/versions/${version}/restore`,
     ),
   branches: (project: string) => request<Branch[]>('GET', `/api/projects/${encodeURIComponent(project)}/branches`),
+  browserTabs: (project: string) =>
+    request<{ running: boolean; tabs: { id: string; branch?: string; url: string; title: string }[] }>(
+      'GET',
+      `/api/projects/${encodeURIComponent(project)}/browser`,
+    ),
+  // The revision makes a picture load again rather than come from the cache: a
+  // new one whenever the tab changes, and when Refresh is pressed.
+  browserPicture: (project: string, tab: string, revision: string) =>
+    `/api/projects/${encodeURIComponent(project)}/browser/${tab}.jpg?r=${encodeURIComponent(revision)}`,
   allowBranchHomeAssistant: (project: string, branch: string) =>
     request<{ by: string; grantedAt: string }>(
       'PUT',

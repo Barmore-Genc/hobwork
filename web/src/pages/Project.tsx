@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { api, ApiError, type EntryPoints, type LastRun, type ProjectDetail, type Version } from '../api.ts'
 import { bytes, dayTime, exactTime, shortDate, timeAgo } from '../format.ts'
-import { kindChanged } from '../live.ts'
+import { browserChanged, kindChanged } from '../live.ts'
 import { Link } from '../router.tsx'
 import { Button, ConfirmDialog, Notice } from '../ui.tsx'
+import { useLoad } from '../useLoad.ts'
 import { usePaged } from '../usePaged.ts'
 import { DeleteProjectSection } from './project/DeleteProject.tsx'
 import { RenameProjectSection } from './project/RenameProject.tsx'
@@ -593,6 +594,71 @@ function VersionsSection({ project, reload }: { project: ProjectDetail; reload: 
   )
 }
 
+// What the host's browser is doing for this hob: its tabs, on the versions and
+// branches that opened them, as pictures. Read-only: a person watches, and the
+// hob does the clicking.
+function BrowserSection({ project }: { project: ProjectDetail }) {
+  const { data, error, reload } = useLoad(() => api.browserTabs(project.name), project.name, browserChanged(project.name))
+  const [refreshed, setRefreshed] = useState(() => Date.now())
+  const tabs = data?.tabs ?? []
+  if (project.browser.sites.length === 0) return null
+  return (
+    <section className="mt-12" aria-labelledby="browser">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <h2 id="browser" className="text-2xl font-semibold">
+          Browser
+        </h2>
+        {tabs.length > 0 && (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted">
+              {data?.running ? `Running, ${tabs.length} ${tabs.length === 1 ? 'page' : 'pages'} open` : 'Not running'}
+            </span>
+            <Button
+              variant="quiet"
+              onClick={() => {
+                setRefreshed(Date.now())
+                reload()
+              }}
+            >
+              Refresh
+            </Button>
+          </div>
+        )}
+      </div>
+      {error && (
+        <div className="mt-4">
+          <Notice tone="error">{error}</Notice>
+        </div>
+      )}
+      {tabs.length === 0 ? (
+        <p className="mt-2 max-w-prose text-muted">
+          No pages are open. The hob opens them itself, on the sites it declares, and the browser stops when nothing uses it.
+        </p>
+      ) : (
+        <ul className="mt-4 grid gap-6 sm:grid-cols-2">
+          {tabs.map((tab) => (
+            <li key={tab.id} className="min-w-0">
+              <p className="text-sm font-semibold break-all">{tab.title || tab.url}</p>
+              <p className="mt-0.5 text-sm break-all text-muted">
+                {tab.branch ? `On ${tab.branch}` : 'The live version'}
+                {tab.title ? `, ${tab.url}` : ''}
+              </p>
+              <a href={tab.url} target="_blank" rel="noopener" className="mt-2 block">
+                <img
+                  src={api.browserPicture(project.name, tab.id, `${refreshed}-${tab.url}`)}
+                  alt={`What ${tab.url} shows now`}
+                  loading="lazy"
+                  className="w-full rounded-md border border-border bg-surface"
+                />
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 export function ProjectPage({ name }: { name: string }) {
   return (
     <ProjectLayout name={name} tab="overview">
@@ -600,6 +666,7 @@ export function ProjectPage({ name }: { name: string }) {
         <>
           <EntryPointsSection project={project} reload={reload} />
           <BranchesSection project={project.name} />
+          <BrowserSection project={project} />
           <HealthSection project={project} />
           <VersionsSection project={project} reload={reload} />
           <RenameProjectSection name={project.name} />

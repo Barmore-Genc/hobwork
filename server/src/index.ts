@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { openRouterCatalog } from './ai/catalog.ts'
 import { createAiGateway } from './ai/gateway.ts'
 import { createApp } from './app.ts'
+import { publishChange } from './changes.ts'
 import { createBrowserService } from './browser/service.ts'
 import { loadBrowserSettings } from './browser/settings.ts'
 import { createAppOrigins } from './apps/origins.ts'
@@ -54,6 +55,7 @@ const secrets = createSecretStore(host, secretKey)
 const browser = createBrowserService({
   settings: loadBrowserSettings(config.dataDir),
   log: (level, message) => (level === 'warn' ? console.warn(message) : console.log(message)),
+  onChange: (project) => publishChange(host.db, { kind: 'browser', project }),
 })
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)

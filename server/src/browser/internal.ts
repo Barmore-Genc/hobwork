@@ -141,6 +141,8 @@ export async function browserResponse(body: string, options: BrowserEndpointOpti
   }
 
   const secrets = options.secrets?.() ?? {}
+  // A URL can carry a token, so log lines are scrubbed like results.
+  const scrub = (text: string) => String(redact(text, secrets))
   try {
     const result = await browser.run({
       session: typeof options.access === 'object' ? { project: options.project, branch: options.access.branch } : { project: options.project },
@@ -155,12 +157,12 @@ export async function browserResponse(body: string, options: BrowserEndpointOpti
         `The command returned ${Math.round(size / 1024)} KB, more than the ${Math.round(MAX_RESULT_CHARS / 1024)} KB a browser call may return. Ask the page for less`,
       )
     }
-    log(READ_ACTIONS.has(request.action) ? 'debug' : 'info', `Browser: ${describe(request)}`)
+    log(READ_ACTIONS.has(request.action) ? 'debug' : 'info', `Browser: ${scrub(describe(request))}`)
     return answer({ ok: true, result: redact(result, secrets) })
   } catch (err) {
     const code = err instanceof BrowserError ? err.code : 'host_error'
     const message = err instanceof Error ? err.message : String(err)
-    log(code === 'not_allowed' || code === 'not_approved' ? 'warn' : 'debug', `Browser: ${describe(request)} failed (${code}): ${short(message)}`)
+    log(code === 'not_allowed' || code === 'not_approved' ? 'warn' : 'debug', `Browser: ${scrub(describe(request))} failed (${code}): ${scrub(short(message))}`)
     return failure(code, message)
   }
 }

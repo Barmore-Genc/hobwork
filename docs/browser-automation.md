@@ -90,6 +90,7 @@ Access follows Home Assistant: the deployed version browses, a branch preview do
 ## Tests
 
 - Unit: `allowlist.test.ts`, `commands.test.ts`, `internal.test.ts`, `service.test.ts` (a fake engine for lifecycle, ownership, caps, queue, timeouts, crash, idle stop, secret hosts).
+- `runtime.test.ts` covers the wiring end to end on the host side: `/v1/browser` bound to the VM's hob, the committed `browser.sites`, secret values from the store, and a preview refused until its branch is approved.
 - `engine.integration.test.ts` boots a real browser against a local http server: launch, navigation rules, fill and click, text, `evaluate` in both worlds, profile persistence, uBlock Origin Lite loading, `navigator.webdriver`. Skipped unless asked:
 
   ```sh

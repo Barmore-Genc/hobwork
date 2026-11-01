@@ -1,5 +1,6 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http'
 import { createServer, type AddressInfo } from 'node:net'
+import type { BrowserService } from './browser/service.ts'
 import type { AiConfig } from './ai/settings.ts'
 import type { Backups } from './backup/backups.ts'
 import { createAppCode, redeemAppCode } from './apps/sessions.ts'
@@ -48,6 +49,7 @@ export async function startTestApp(
     homeAssistantSettings?: HomeAssistantSettings
     devices?: Devices
     ai?: AiConfig
+    browser?: BrowserService
   } = {},
 ) {
   const port = options.selfPublicUrl ? await freePort() : 0
@@ -62,6 +64,7 @@ export async function startTestApp(
     data: options.data,
     backups: options.backups,
     devices: options.devices,
+    browser: options.browser,
     ai: options.ai,
     web: {
       publicUrl: options.selfPublicUrl ? `http://127.0.0.1:${port}` : TEST_PUBLIC_URL,

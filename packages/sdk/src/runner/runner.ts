@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { format } from 'node:util'
 import type { Context, Handler, Invocation, LogLevel, Logger } from '../index.ts'
+import { createBrowserClient, httpBrowserSender } from './browser-client.ts'
 import { createDbClient, httpDbSender } from './db-client.ts'
 import { createDeviceClient, httpDeviceSender } from './device-client.ts'
 import { createFilesClient } from './files-client.ts'
@@ -123,6 +124,9 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
   const devices = createDeviceClient(httpDeviceSender(options.internalUrl, () => current.getStore()?.id))
   const files = createFilesClient(options.internalUrl)
   const secrets = Object.freeze({ ...options.secrets })
+  // The placeholders go along, so the host can swap one for the value when a
+  // handler types it into a form.
+  const browser = createBrowserClient(httpBrowserSender(options.internalUrl, () => current.getStore()?.id), secrets)
 
   // Console output inside an invocation belongs to it. Output outside any
   // invocation (module top level, stray timers) goes to the runner's own
@@ -176,6 +180,7 @@ export async function startRunner(options: RunnerOptions, port: number): Promise
         db,
         files,
         ha,
+        browser,
         device: devices.device,
         devices: devices.devices,
         people: devices.people,

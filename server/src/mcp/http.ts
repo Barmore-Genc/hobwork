@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import type { BrowserService } from '../browser/service.ts'
 import { verifyAgentToken, type AuthenticatedAgent } from '../agents.ts'
 import type { AiConfig } from '../ai/settings.ts'
 import type { AppTarget } from '../apps/origins.ts'
@@ -62,6 +63,7 @@ export function createMcpHandler(options: {
   ai?: AiConfig
   storage?: StorageUsage
   devices?: Devices
+  browser?: BrowserService
   appOrigin?: (target: AppTarget) => string | undefined
   appsUrl?: string
 }) {
@@ -96,6 +98,7 @@ export function createMcpHandler(options: {
       secrets: options.secrets,
       storage: options.storage,
       devices: options.devices,
+      browser: options.browser,
       ai: options.ai,
       appOrigin: options.appOrigin,
       appsUrl: options.appsUrl,

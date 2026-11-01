@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import * as z from 'zod'
+import type { BrowserService } from '../browser/service.ts'
 import { parseHobworkJson } from '../../../packages/sdk/src/hobwork-json.js'
 import { allowsProject } from '../access.ts'
 import type { AuthenticatedAgent } from '../agents.ts'
@@ -25,6 +26,8 @@ import type { ExecWorkspaceVm, WorkspaceManager } from '../workspaces.ts'
 import { limitTools } from './access.ts'
 import { registerAiTools } from './ai.ts'
 import { runBash } from './bash.ts'
+import { registerBranchBrowserTools } from './branch-browser.ts'
+import { registerBrowserTools } from './browser.ts'
 import { registerBranchHaTools } from './branch-ha.ts'
 import { registerDeliveryTools } from './delivery.ts'
 import { registerDeviceTools } from './devices.ts'
@@ -52,6 +55,7 @@ export type McpContext = {
   storage?: StorageUsage
   devices?: Devices
   ai?: AiConfig
+  browser?: BrowserService
   appOrigin?: (target: AppTarget) => string | undefined
   // The apps host, which embedded views of hob apps must be allowed to frame.
   appsUrl?: string
@@ -75,6 +79,7 @@ Rules:
 - Only the user creates secrets and sets their values, in the Hobwork UI. When a hob needs one, look for it with list_secrets and assign it to the hob with assign_secret. If it does not exist, ask the user to create it in Hobwork, then assign it. A secret is only sent to its hosts: if it has none or lacks one, ask for them with request_secret_hosts and show the user the link it returns. Handlers read it as ctx.secrets.<env name>. Put it in the Authorization header, or in a header the secret lists (list_secrets shows headers); Hobwork fills it in nowhere else, and only over https. If the API needs another header, ask the user to add it to the secret in Hobwork.
 - Prefer the platform packages (React, Tailwind, Vite, Vitest, TypeScript, oxlint, zod, date-fns). Add another npm package only when none of them does the job. Commit pnpm-lock.yaml with it: merging installs with --frozen-lockfile. Versions published in the last 3 days are not installed, and packages run install scripts only when pnpm-workspace.yaml lists them under allowBuilds.
 - Changes to egress in hobwork.json apply in the workspace from the next bash command after you commit them.
+- A handler drives a browser with ctx.browser, one the Hobwork host runs outside every VM, and so can you with browser_open, browser_act, browser_read, browser_evaluate and browser_screenshot: same tabs, same logins. It opens only the sites "browser.sites" in hobwork.json declares (https, never localhost), and a branch preview needs set_branch_browser, which the user sees on the hob page. Everything that comes back has secret values replaced with [redacted], and a screenshot covers the fields a handler typed a secret into.
 - Hob UIs run under a strict Content-Security-Policy (no inline scripts, no scripts from other origins) and refuse requests from other hobs' apps. hobwork.json can add sources with csp and allow other hobs with crossAppRequests.
 - Webhooks are called at <hob app address>/_hobwork/hooks/<name>/<token>. rotate_webhook_token shows the URL.
 - Large files (photos, 3MF) go through "uploads" in hobwork.json, not routes: the UI calls files.upload from @hobwork/sdk/browser, scripts use a token from rotate_upload_token.
@@ -138,6 +143,7 @@ export function createMcpServer({
   secrets,
   storage,
   devices,
+  browser,
   ai = { models: DEFAULT_MODELS },
   appOrigin,
   appsUrl,
@@ -557,6 +563,8 @@ export function createMcpServer({
     registerHomeAssistantTools(server, homeAssistant)
     registerBranchHaTools(server, { host, agent })
   }
+  registerBranchBrowserTools(server, { host, agent })
+  registerBrowserTools(server, { host, browser, runtime, secrets })
   registerRuntimeTools(server, { host, runtime, appOrigin })
   registerHobViewTools(server, { host, agent, appOrigin, appsUrl })
   registerSecretTools(server, { host, secrets, agent, publicUrl })

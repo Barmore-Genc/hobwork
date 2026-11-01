@@ -100,6 +100,13 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
   expect(tools.map((t) => t.name).sort()).toEqual(
     [
       'add_ssh_key',
+      'browser_act',
+      'browser_close',
+      'browser_evaluate',
+      'browser_open',
+      'browser_read',
+      'browser_screenshot',
+      'browser_tabs',
       'assign_secret',
       'bash',
       'commit',
@@ -131,6 +138,7 @@ test('lists tools and sends instructions pointing at AGENTS.md', async () => {
       'rotate_webhook_token',
       'search',
       'set_ai_model',
+      'set_branch_browser',
       'show_hob',
       'star_hob',
       'tag_hob',

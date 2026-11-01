@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { createAgentToken } from '../agents.ts'
+import type { BrowserService } from '../browser/service.ts'
 import { createApp } from '../app.ts'
 import type { ProjectData } from '../data/project-data.ts'
 import type { HomeAssistant } from '../homeassistant/client.ts'
@@ -32,14 +33,26 @@ export async function startTestMcp(
     data?: (host: Host) => ProjectData
     secrets?: (host: Host) => SecretStore
     storage?: (host: Host) => StorageUsage
+    browser?: BrowserService
     sshPort?: number
+    // Runs before the other factories, for a hob a secret is assigned to.
+    setup?: (host: Host) => Promise<unknown> | void
   } = {},
 ): Promise<TestMcp> {
   const host = createTestHost()
+  await options.setup?.(host)
   const { token } = createAgentToken(host.db, 'claude')
   const runtime = options.runtime?.(host)
   const data = options.data?.(host)
-  const server = createApp(host, { homeAssistant: options.homeAssistant, runtime, data, secrets: options.secrets?.(host), storage: options.storage?.(host), sshPort: options.sshPort })
+  const server = createApp(host, {
+    homeAssistant: options.homeAssistant,
+    runtime,
+    data,
+    secrets: options.secrets?.(host),
+    storage: options.storage?.(host),
+    browser: options.browser,
+    sshPort: options.sshPort,
+  })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`)
   const client = new Client({ name: 'test', version: '0.0.0' })

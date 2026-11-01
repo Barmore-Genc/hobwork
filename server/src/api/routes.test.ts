@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import type { BrowserService } from '../browser/service.ts'
 import { verifyAgentToken } from '../agents.ts'
 import { createDelivery, type Deployment } from '../delivery.ts'
 import { git } from '../git.ts'
@@ -296,4 +297,40 @@ test('request bodies must be JSON', async () => {
   expect((await fetch(`${app.base}/api/agents`, { method: 'POST', headers, body: 'name=x' })).status).toBe(415)
   const bad = await fetch(`${app.base}/api/agents`, { method: 'POST', headers: writeHeaders(cookie), body: '{' })
   expect(bad.status).toBe(400)
+})
+
+test('the browser page shows the tabs of a hob, and a picture of one', async () => {
+  const jpeg = Buffer.from('not really a photo').toString('base64')
+  const browser: BrowserService = {
+    run: async () => null,
+    status: () => ({ running: true, tabs: 1 }),
+    tabsOf: async (project) =>
+      project === 'filament' ? [{ id: 'a1b2c3d4e5f60718', url: 'https://shop.example.com/', title: 'Shop' }] : [],
+    screenshotOf: async (id) => (id === 'a1b2c3d4e5f60718' ? jpeg : undefined),
+    close: async () => {},
+  }
+  await app.close()
+  app = await startTestApp(host, { delivery: createDelivery(host, { workspaces: createWorkspaceManager<ExecWorkspaceVm>(host) }), browser })
+  await createProject(host, 'filament')
+
+  const tabs = await jsonOf(await get('/api/projects/filament/browser'))
+  expect(tabs).toEqual({
+    running: true,
+    tabs: [{ id: 'a1b2c3d4e5f60718', url: 'https://shop.example.com/', title: 'Shop' }],
+  })
+  // Another hob sees its own, which are none.
+  await createProject(host, 'spools')
+  expect(await jsonOf(await get('/api/projects/spools/browser'))).toEqual({ running: true, tabs: [] })
+
+  const picture = await get('/api/projects/filament/browser/a1b2c3d4e5f60718.jpg')
+  expect(picture.status).toBe(200)
+  expect(picture.headers.get('content-type')).toBe('image/jpeg')
+  expect(Buffer.from(await picture.arrayBuffer()).toString()).toBe('not really a photo')
+
+  // A tab of another hob, or one that closed, is not there.
+  expect((await get('/api/projects/spools/browser/a1b2c3d4e5f60718.jpg')).status).toBe(404)
+  expect((await get('/api/projects/filament/browser/ffffffffffffffff.jpg')).status).toBe(404)
+  expect((await get('/api/projects/nope/browser')).status).toBe(404)
+  // Signing in is what shows it.
+  expect((await get('/api/projects/filament/browser', {})).status).toBe(401)
 })

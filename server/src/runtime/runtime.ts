@@ -18,6 +18,9 @@ import {
 } from '../../../packages/sdk/src/runner/protocol.ts'
 import type { Migration } from '../../../packages/sdk/src/db/migrations.ts'
 import { onChange, publishChange } from '../changes.ts'
+import { getBranchBrowserApproval } from '../browser/approvals.ts'
+import { browserResponse, type BrowserAccess } from '../browser/internal.ts'
+import type { BrowserService } from '../browser/service.ts'
 import { dbResponse } from '../data/internal.ts'
 import { readMigrationsFromGit } from '../data/migrations.ts'
 import type { ProjectData } from '../data/project-data.ts'
@@ -84,7 +87,7 @@ const MAX_LINES_PER_INVOCATION = 1000
 const MAX_INTERNAL_BODY_BYTES = 5 * 1024 * 1024
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 const OUTPUT_TAIL_LINES = 30
-const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha', 'POST /v1/devices'])
+const INTERNAL_ROUTES = new Set(['POST /v1/logs', 'POST /v1/db', 'POST /v1/ha', 'POST /v1/devices', 'POST /v1/browser'])
 // Previews are for trying a branch out, so their VMs go away sooner.
 const PREVIEW_IDLE_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -102,6 +105,8 @@ export type RuntimeOptions = {
   homeAssistant?: HomeAssistant
   // Answers ctx.device and ctx.devices calls from handlers.
   devices?: Devices
+  // Answers ctx.browser calls from handlers.
+  browser?: BrowserService
   // People for crons that run in each person's time zone.
   people?: () => Person[]
   // Project DBs for handlers (ctx.db) and migrations on deploy.
@@ -435,6 +440,25 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
         ha: options.homeAssistant,
         access,
         services: () => getHaServices(host.db, getProject(host, project)?.id ?? -1),
+        log: ({ invocation, level, message }) => {
+          const lines = invocationLines(project, branch, instance())
+          lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
+          appendLogs(host, lines.entries)
+        },
+      })
+    }
+    if (route === 'POST /v1/browser') {
+      const access: BrowserAccess =
+        branch === undefined ? 'full' : { branch, allowed: () => getBranchBrowserApproval(host, project, branch) !== undefined }
+      return browserResponse(body, {
+        project,
+        browser: options.browser,
+        access,
+        sites: () => deployed.config.browser.sites,
+        secrets: () => {
+          const assigned = options.secrets?.forSandbox(project) ?? {}
+          return Object.fromEntries(Object.entries(assigned).map(([name, secret]) => [name, { value: secret.value, hosts: secret.hosts }]))
+        },
         log: ({ invocation, level, message }) => {
           const lines = invocationLines(project, branch, instance())
           lines.add({ project, branch, invocationId: invocation, source: 'runtime', level, message })
@@ -960,9 +984,9 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async crossAppRequests(project: string, branch?: string): Promise<string[]> {
       return (await deployedFor(project, branch)).config.crossAppRequests
     },
-    // What the deployed version declares in hobwork.json.
-    async config(project: string): Promise<{ config: ProjectConfig; version: number | null }> {
-      const deployed = await deployment(project)
+    // What the deployed version declares in hobwork.json, or a branch's latest commit.
+    async config(project: string, branch?: string): Promise<{ config: ProjectConfig; version: number | null }> {
+      const deployed = await deployedFor(project, branch)
       return { config: deployed.config, version: deployed.version }
     },
     // The deployed version's build, or the branch's for a preview, built

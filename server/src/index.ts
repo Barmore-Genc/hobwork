@@ -2,6 +2,9 @@ import { join } from 'node:path'
 import { openRouterCatalog } from './ai/catalog.ts'
 import { createAiGateway } from './ai/gateway.ts'
 import { createApp } from './app.ts'
+import { publishChange } from './changes.ts'
+import { createBrowserService } from './browser/service.ts'
+import { loadBrowserSettings } from './browser/settings.ts'
 import { createAppOrigins } from './apps/origins.ts'
 import { createBackups } from './backup/backups.ts'
 import { loadConfig } from './config.ts'
@@ -49,6 +52,11 @@ for (const project of listProjects(host)) installHooks(repoPath(host, project.na
 
 const secretKey = loadSecretKey(config.dataDir, config.secretKey)
 const secrets = createSecretStore(host, secretKey)
+const browser = createBrowserService({
+  settings: loadBrowserSettings(config.dataDir),
+  log: (level, message) => (level === 'warn' ? console.warn(message) : console.log(message)),
+  onChange: (project) => publishChange(host.db, { kind: 'browser', project }),
+})
 const homeAssistantSettings = createHomeAssistantSettings({ db: host.db, key: secretKey, env: config.homeAssistant })
 const data = createProjectData(host)
 const aiConfig = { models: config.aiModels, catalog: openRouterCatalog() }
@@ -166,6 +174,7 @@ const runtime = createRuntime(host, {
   triggers,
   homeAssistant,
   devices,
+  browser,
   people: () => listPeople(host.db, config.allowlist),
   data,
   secrets,
@@ -208,6 +217,7 @@ const server = createApp(host, {
   delivery,
   homeAssistant,
   homeAssistantSettings,
+  browser,
   runtime,
   data,
   secrets,
@@ -244,7 +254,7 @@ async function shutdown() {
   backups?.stop()
   housekeeping.stop()
   ssh?.close()
-  await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop()])
+  await Promise.all([workspaces.stopAll(), pipelineVms?.stopAll(), runtime.stop(), browser.close()])
   await data.stop()
   server.close(() => {
     host.db.close()

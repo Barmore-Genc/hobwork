@@ -6,9 +6,15 @@ import type { HaServiceTarget, HaStatesFilter } from '../homeassistant.ts'
 import type { Invocation, LogLevel } from '../index.ts'
 import type { Caller } from '../people.ts'
 
-// Here rather than in homeassistant.ts, since runtime VMs get the runner
-// directory without the rest of the SDK and only type imports may leave it.
+// Here rather than in homeassistant.ts or webbrowser.ts, since runtime VMs get
+// the runner directory without the rest of the SDK and only type imports may
+// leave it.
 export const HA_MAX_RETRIES = 5
+
+export const BROWSER_DEFAULT_TIMEOUT_MS = 30_000
+export const BROWSER_MAX_TIMEOUT_MS = 120_000
+// Returned page text and HTML are cut here, like command output.
+export const BROWSER_MAX_TEXT_CHARS = 100_000
 
 // Inside the guest. Nothing else listens there.
 export const RUNNER_PORT = 8080
@@ -132,6 +138,42 @@ export type DeviceRequest = (
 }
 
 export type DeviceResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
+
+// POST http://hobwork.internal/v1/browser
+export type BrowserRequest = (
+  | { action: 'open'; url: string }
+  | { action: 'tabs' }
+  | { action: 'close' }
+  | { action: 'goto'; url: string }
+  | { action: 'back' }
+  | { action: 'reload' }
+  | { action: 'click'; selector: string }
+  | { action: 'hover'; selector: string }
+  | { action: 'fill'; selector: string; text: string }
+  | { action: 'type'; selector: string; text: string }
+  | { action: 'press'; key: string; selector?: string }
+  | { action: 'select'; selector: string; values: string[] }
+  | { action: 'waitFor'; selector: string }
+  | { action: 'text' }
+  | { action: 'html' }
+  | { action: 'evaluate'; source: string; arg?: unknown; world?: 'isolated' | 'main' }
+  | { action: 'url' }
+  | { action: 'title' }
+  // A JPEG of the tab's window, base64.
+  | { action: 'screenshot'; fullPage?: boolean }
+) & {
+  // The tab the command acts on, except for open and tabs.
+  tab?: string
+  // Set by the runner inside an invocation, so the call is logged with it.
+  invocation?: number
+  timeoutMs?: number
+  // ctx.secrets: environment name -> the placeholder the guest was given. The
+  // host swaps a placeholder in typed text for the real value, when the secret
+  // is assigned to this hob and the tab's site is one of its hosts.
+  secrets?: Record<string, string>
+}
+
+export type BrowserResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }
 
 // PUT http://hobwork.internal/v1/files/<path> stores the body (streamed, up to
 // MAX_FILE_BYTES) and answers FilesResponse with a FileInfo. GET on the same

@@ -5,6 +5,7 @@ import { defaultIcon, ICONS_DIR, iconFile, LIST_ICON_SIZE, letterIconSvg } from 
 import { AccessError, parseAccess, type Access } from '../access.ts'
 import { createAgentToken, getAgent, listAgents, MAX_AGENT_NAME, revokeAgentToken } from '../agents.ts'
 import type { AppTarget } from '../apps/origins.ts'
+import type { BrowserService } from '../browser/service.ts'
 import { branchRoutes } from './branches.ts'
 import type { Auth } from '../auth/auth.ts'
 import type { User } from '../auth/users.ts'
@@ -174,6 +175,7 @@ export function createApiRoutes(options: {
   secrets?: SecretStore
   storage?: StorageUsage
   privateEgress?: PrivateEgressRule[]
+  browser?: BrowserService
 }) {
   const { host, auth, delivery, runtime } = options
 
@@ -237,6 +239,10 @@ export function createApiRoutes(options: {
       entryPoints: entryPoints ?? null,
       ...(configError ? { configError } : {}),
       egress: [...new Set([...(config?.egress ?? []), ...secretHosts])].sort().map((entry) => describeEgress(entry, options.privateEgress ?? [])),
+      browser: {
+        sites: config?.browser.sites ?? [],
+        ...(options.browser ? options.browser.status() : { running: false, tabs: 0 }),
+      },
       database: options.data?.status(project.name) ?? null,
       ...(options.storage ? { storage: options.storage.get(project) } : {}),
       app: config ? await hasApp(project.name) : false,
@@ -309,6 +315,33 @@ export function createApiRoutes(options: {
 
   const routes: ApiRoute[] = [
     ...branchRoutes({ host, runtime, appOrigin: options.appOrigin, workspaces: options.workspaces, delivery, data: options.data }),
+    // The tabs the host's browser has for this hob, and a picture of one, for
+    // the person watching it work.
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/browser$/,
+      handle: async ({ res, params }) => {
+        const project = getProjectOrRenamed(host, params[0]!)
+        if (!project) throw new HttpError(404, `There is no hob called "${params[0]}"`)
+        json(res, 200, {
+          running: options.browser?.status().running ?? false,
+          tabs: (await options.browser?.tabsOf(project.name)) ?? [],
+        })
+      },
+    },
+    {
+      method: 'GET',
+      pattern: /^\/api\/projects\/([^/]+)\/browser\/([a-f0-9]{16})\.jpg$/,
+      handle: async ({ res, params }) => {
+        const project = getProjectOrRenamed(host, params[0]!)
+        if (!project) throw new HttpError(404, `There is no hob called "${params[0]}"`)
+        const tabs = (await options.browser?.tabsOf(project.name)) ?? []
+        if (!tabs.some((entry) => entry.id === params[1])) throw new HttpError(404, 'That tab is not open')
+        const data = await options.browser?.screenshotOf(params[1]!)
+        if (data === undefined) throw new HttpError(404, 'That tab is not open')
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }).end(Buffer.from(data, 'base64'))
+      },
+    },
     {
       method: 'GET',
       pattern: /^\/api\/projects$/,

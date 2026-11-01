@@ -11,6 +11,8 @@ export type Change =
   | { kind: 'logs'; project: string }
   // Branches, their heads, previews and Home Assistant approvals.
   | { kind: 'branches'; project: string }
+  // Tabs of the hob's browser opened or closed, and the browser starting or stopping.
+  | { kind: 'browser'; project: string }
   // The library, assignments and host requests.
   | { kind: 'secrets' }
   // Agents, their keys, OAuth connections and SSH keys.

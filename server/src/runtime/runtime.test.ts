@@ -8,6 +8,8 @@ import { createApp } from '../app.ts'
 import { onChange, publishChange, type Change } from '../changes.ts'
 import { randomBytes } from 'node:crypto'
 import { createProjectData, type ProjectData } from '../data/project-data.ts'
+import { getBranchBrowserApproval, grantBranchBrowser } from '../browser/approvals.ts'
+import type { BrowserCall, BrowserService } from '../browser/service.ts'
 import { createDelivery } from '../delivery.ts'
 import { createDevices } from '../devices/devices.ts'
 import type { DeviceConnection } from '../devices/registry.ts'
@@ -21,7 +23,7 @@ import { repoPath } from '../host.ts'
 import { startHostPipelineVm } from '../pipeline/host-backend.ts'
 import { createProject, DEFAULT_BRANCH } from '../projects.ts'
 import { createTestHost } from '../test-host.ts'
-import { fakePackageJson, seedMain, type Files } from '../test-project.ts'
+import { fakePackageJson, seedBranch, seedMain, type Files } from '../test-project.ts'
 import { appSessionCookie, sendTo, signedIn, TEST_APPS_DOMAIN, TEST_PUBLIC_URL } from '../test-web.ts'
 import { createSecretStore, type Actor } from '../secrets.ts'
 import { recordVersion } from '../versions.ts'
@@ -948,4 +950,64 @@ test('the runner only answers requests that carry its token', async () => {
   const message = { invocation: { id: 1, kind: 'cron', name: 'tick', manual: true }, handler: 'src/tick.ts' }
   expect((await fetch(`${url}/invoke`, { method: 'POST', body: JSON.stringify(message) })).status).toBe(401)
   expect((await runtime.invoke('filament', { kind: 'cron', name: 'tick', manual: true })).ok).toBe(true)
+})
+
+test('handlers browse through the host, only for the sites hobwork.json declares, and previews need permission', async () => {
+  const calls: BrowserCall[] = []
+  const browser: BrowserService = {
+    run: async (call) => {
+      calls.push(call)
+      return { id: 'a1b2c3d4e5f60718', url: 'https://shop.example.com/' }
+    },
+    status: () => ({ running: false, tabs: 0 }),
+    tabsOf: async () => [],
+    screenshotOf: async () => undefined,
+    close: async () => {},
+  }
+  const secrets = createSecretStore(host, randomBytes(32))
+  secrets.create(
+    { name: 'Shop', value: 'hunter2', hosts: ['shop.example.com'], assign: { project: 'filament', envName: 'SHOP_PASSWORD' } },
+    HOST_ACTOR,
+  )
+  start({ browser, secrets })
+  const config = { ...HOBWORK_JSON, browser: { sites: ['shop.example.com'] } }
+  await deploy(projectFiles({ hobwork: config }))
+
+  const call = (sandbox: NonNullable<(typeof sandboxes.created)[number]['internal']>, invocation: number, url = 'https://shop.example.com/') =>
+    sandbox(
+      new Request('http://hobwork.internal/v1/browser', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'open', url, invocation }),
+      }),
+    )
+
+  const opened = await call(sandboxes.created[0]!.internal!, 1)
+  expect(await opened.json()).toEqual({ ok: true, result: { id: 'a1b2c3d4e5f60718', url: 'https://shop.example.com/' } })
+  // The endpoint hands the service the hob, the committed sites and the values
+  // of its secrets, so a handler can type one into a form.
+  expect(calls[0]).toMatchObject({ session: { project: 'filament' }, sites: ['shop.example.com'], request: { action: 'open' } })
+  expect(calls[0]!.secrets).toEqual({ SHOP_PASSWORD: { value: 'hunter2', hosts: ['shop.example.com'] } })
+
+  // A preview opens nothing until someone allows it for that branch.
+  // The branch differs from main in a handler, which is what makes it a branch.
+  await seedBranch(
+    host,
+    'filament',
+    'add-spools',
+    projectFiles({ hobwork: config, handlers: { 'handlers/spools.js': `export default async () => [{ id: 2 }]` } }),
+  )
+  expect((await runtime.invoke('filament', { kind: 'route', name: 'GET /spools', manual: true, branch: 'add-spools' })).ok).toBe(true)
+  const preview = sandboxes.created.find((options) => options.label?.startsWith('preview'))?.internal
+  expect(preview).toBeDefined()
+  const denied = await call(preview!, 2)
+  expect(await denied.json()).toMatchObject({ ok: false, error: { code: 'not_approved' } })
+  expect(calls).toHaveLength(1)
+  const refusal = queryLogs(host, { project: 'filament', branch: 'add-spools', limit: 20 }).find((line) => line.level === 'warn')
+  expect(refusal?.message).toContain('set_branch_browser')
+
+  grantBranchBrowser(host, 'filament', 'add-spools', { userId: signedIn(host).user.id })
+  expect(getBranchBrowserApproval(host, 'filament', 'add-spools')).toMatchObject({ byAgent: false })
+  const allowed = await call(preview!, 3)
+  expect(await allowed.json()).toMatchObject({ ok: true })
+  expect(calls[1]).toMatchObject({ session: { project: 'filament', branch: 'add-spools' } })
 })

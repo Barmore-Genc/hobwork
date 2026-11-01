@@ -92,6 +92,8 @@ export type ProjectDetail = {
   entryPoints: EntryPoints | null
   configError?: string
   egress: EgressTarget[]
+  // The sites the hob opens in the browser, and whether it runs now.
+  browser: { sites: string[]; running: boolean; tabs: number; startedAt?: string }
   database: DbStatus | null
   storage?: StorageUse | null
   // The running version has a page to open.
@@ -174,6 +176,7 @@ export type Branch = {
   previewUrl: string | null
   running: boolean
   homeAssistant: { by: string; byAgent: boolean; grantedAt: string } | null
+  browser: { by: string; byAgent: boolean; grantedAt: string } | null
   recentRuns: Invocation[]
 }
 
@@ -516,6 +519,13 @@ export const api = {
     request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}`),
   stopBranchHomeAssistant: (project: string, branch: string) =>
     request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/home-assistant`),
+  allowBranchBrowser: (project: string, branch: string) =>
+    request<{ by: string; grantedAt: string }>(
+      'PUT',
+      `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/browser`,
+    ),
+  stopBranchBrowser: (project: string, branch: string) =>
+    request<void>('DELETE', `/api/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/browser`),
   invocations: (project: string, filter: InvocationFilter) =>
     request<{ invocations: Invocation[]; more: boolean }>(
       'GET',

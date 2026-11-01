@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { api, ApiError, type Branch } from '../../api.ts'
 import { exactTime, timeAgo } from '../../format.ts'
 import { Link } from '../../router.tsx'
@@ -12,27 +12,48 @@ function message(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err)
 }
 
-function HomeAssistantSwitch({
+type Permission = { by: string; byAgent: boolean; grantedAt: string } | null
+
+function PermissionSwitch({
   project,
   branch,
+  id,
+  permission,
+  granted,
+  withheld,
+  confirmTitle,
+  confirmBody,
+  allow,
+  stop,
   onChange,
 }: {
   project: string
   branch: Branch
+  id: string
+  permission: Permission
+  granted: string
+  withheld: string
+  confirmTitle: string
+  confirmBody: ReactNode
+  allow: (
+    project: string,
+    branch: string,
+  ) => Promise<{ by: string; grantedAt: string }>
+  stop: (project: string, branch: string) => Promise<void>
   onChange: () => void
 }) {
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const allowed = branch.homeAssistant !== null
-  const id = `ha-${branch.name}`
+  const allowed = permission !== null
+  const switchId = `${id}-${branch.name}`
 
-  async function change(allow: boolean) {
+  async function change(next: boolean) {
     setBusy(true)
     setError(null)
     try {
-      if (allow) await api.allowBranchHomeAssistant(project, branch.name)
-      else await api.stopBranchHomeAssistant(project, branch.name)
+      if (next) await allow(project, branch.name)
+      else await stop(project, branch.name)
       setConfirming(false)
       onChange()
     } catch (err) {
@@ -49,7 +70,7 @@ function HomeAssistantSwitch({
           type="button"
           role="switch"
           aria-checked={allowed}
-          aria-labelledby={`${id}-label`}
+          aria-labelledby={`${switchId}-label`}
           disabled={busy}
           onClick={() => (allowed ? void change(false) : setConfirming(true))}
           className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-60 ${
@@ -64,20 +85,20 @@ function HomeAssistantSwitch({
           />
         </button>
         <div className="min-w-0 text-sm">
-          <p id={`${id}-label`} className="font-semibold text-fg">
-            Let this branch control Home Assistant
+          <p id={`${switchId}-label`} className="font-semibold text-fg">
+            {granted}
           </p>
           <p className="text-muted">
-            {branch.homeAssistant ? (
+            {permission ? (
               <>
-                Allowed by {branch.homeAssistant.byAgent && 'agent '}
-                {branch.homeAssistant.by},{' '}
-                <time dateTime={branch.homeAssistant.grantedAt} title={exactTime(branch.homeAssistant.grantedAt)}>
-                  {timeAgo(branch.homeAssistant.grantedAt)}
+                Allowed by {permission.byAgent && 'agent '}
+                {permission.by},{' '}
+                <time dateTime={permission.grantedAt} title={exactTime(permission.grantedAt)}>
+                  {timeAgo(permission.grantedAt)}
                 </time>
               </>
             ) : (
-              'It can see what is happening at home, but not switch anything.'
+              withheld
             )}
           </p>
         </div>
@@ -89,18 +110,14 @@ function HomeAssistantSwitch({
       )}
       <ConfirmDialog
         open={confirming}
-        title={`Let ${branch.name} control Home Assistant?`}
+        title={confirmTitle}
         confirmLabel="Allow"
         busy={busy}
         error={error}
         onConfirm={() => change(true)}
         onCancel={() => setConfirming(false)}
       >
-        <p>
-          While you try out this branch, it can turn things on and off at home and send events, like the live version does.
-          Changes on this branch have not been checked yet.
-        </p>
-        <p>You can turn this off again at any time.</p>
+        {confirmBody}
       </ConfirmDialog>
     </div>
   )
@@ -215,7 +232,48 @@ function BranchRow({ project, branch, onChange }: { project: string; branch: Bra
           <DeleteBranch project={project} branch={branch} onChange={onChange} />
         </div>
       </div>
-      <HomeAssistantSwitch project={project} branch={branch} onChange={onChange} />
+      <PermissionSwitch
+        project={project}
+        branch={branch}
+        id="ha"
+        permission={branch.homeAssistant}
+        granted="Let this branch control Home Assistant"
+        withheld="It can see what is happening at home, but not switch anything."
+        confirmTitle={`Let ${branch.name} control Home Assistant?`}
+        confirmBody={
+          <>
+            <p>
+              While you try out this branch, it can turn things on and off at home and send events, like the live version
+              does. Changes on this branch have not been checked yet.
+            </p>
+            <p>You can turn this off again at any time.</p>
+          </>
+        }
+        allow={api.allowBranchHomeAssistant}
+        stop={api.stopBranchHomeAssistant}
+        onChange={onChange}
+      />
+      <PermissionSwitch
+        project={project}
+        branch={branch}
+        id="browser"
+        permission={branch.browser}
+        granted="Let this branch use the browser"
+        withheld="It can reach the internet, but not open pages."
+        confirmTitle={`Let ${branch.name} use the browser?`}
+        confirmBody={
+          <>
+            <p>
+              While you try out this branch, it can open the sites it declares and use the browser's saved logins, like the
+              live version does. Changes on this branch have not been checked yet.
+            </p>
+            <p>You can turn this off again at any time.</p>
+          </>
+        }
+        allow={api.allowBranchBrowser}
+        stop={api.stopBranchBrowser}
+        onChange={onChange}
+      />
     </li>
   )
 }

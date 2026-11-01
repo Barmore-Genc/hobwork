@@ -18,9 +18,9 @@ export type BrowserSettings = {
   // Default: the host's time zone.
   timezoneId?: string
   window: { width: number; height: number }
-  // A Chrome channel (chrome, msedge, chromium), for a host that wants the
-  // installed browser rather than the one patchright downloaded. Extensions
-  // cannot be side-loaded into Google Chrome or Edge.
+  // Chromium is the full Chrome for Testing build, not the headless shell, so
+  // uBlock Origin Lite loads even when the host runs headless. Google Chrome
+  // and Edge refuse to side-load an unpacked extension.
   channel?: string
   // HOBWORK_BROWSER_EXECUTABLE: an exact binary, e.g. a distro's chromium.
   executablePath?: string
@@ -61,7 +61,7 @@ export function loadBrowserSettings(dataDir: string, env: NodeJS.ProcessEnv = pr
   const mode = (env.HOBWORK_BROWSER ?? '').trim().toLowerCase()
   if (mode !== '' && mode !== 'on' && mode !== 'off') throw new Error('HOBWORK_BROWSER must be on or off')
   const maxTabsPerHob = count('HOBWORK_BROWSER_MAX_TABS', env.HOBWORK_BROWSER_MAX_TABS, DEFAULT_BROWSER_MAX_TABS)
-  const channel = env.HOBWORK_BROWSER_CHANNEL?.trim() || undefined
+  const channel = env.HOBWORK_BROWSER_CHANNEL?.trim() || 'chromium'
   return {
     dataDir,
     enabled: mode !== 'off',
@@ -72,7 +72,7 @@ export function loadBrowserSettings(dataDir: string, env: NodeJS.ProcessEnv = pr
     locale: env.HOBWORK_BROWSER_LOCALE?.trim() || 'en-US',
     ...(env.HOBWORK_BROWSER_TIMEZONE?.trim() ? { timezoneId: env.HOBWORK_BROWSER_TIMEZONE.trim() } : {}),
     window: windowSize(env.HOBWORK_BROWSER_WINDOW),
-    ...(channel ? { channel } : {}),
+    channel,
     ...(env.HOBWORK_BROWSER_EXECUTABLE?.trim() ? { executablePath: env.HOBWORK_BROWSER_EXECUTABLE.trim() } : {}),
     browsersPath: `${dataDir}/browser/browsers`,
     profileDir: `${dataDir}/browser/profile`,

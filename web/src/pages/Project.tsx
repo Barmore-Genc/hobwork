@@ -449,6 +449,27 @@ function HealthSection({ project }: { project: ProjectDetail }) {
             </dd>
           </>
         )}
+        <dt className="font-semibold">Browser</dt>
+        <dd className="min-w-0">
+          {project.browser.sites.length ? (
+            <>
+              <ul className="flex flex-wrap gap-2">
+                {project.browser.sites.map((site) => (
+                  <li key={site} className="rounded-sm border border-border bg-surface px-2 py-0.5 text-sm break-all">
+                    <span className="font-mono">{site}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-sm text-muted">
+                {project.browser.running
+                  ? `Running, ${project.browser.tabs} ${project.browser.tabs === 1 ? 'page' : 'pages'} open. Stops when nothing uses it.`
+                  : 'Pages the hob opens, with the browser the server keeps for hobs. It starts when the hob opens one.'}
+              </p>
+            </>
+          ) : (
+            <p className="text-muted">The hob opens no pages</p>
+          )}
+        </dd>
         <dt className="font-semibold">Can reach</dt>
         <dd className="min-w-0">
           {project.egress.length ? (

@@ -1,6 +1,25 @@
-import { BROWSER_MAX_TIMEOUT_MS, BrowserError, type Browser, type BrowserOptions, type BrowserTab, type BrowserTabInfo } from '../webbrowser.ts'
+import type { Browser, BrowserErrorCode, BrowserOptions, BrowserTab, BrowserTabInfo } from '../webbrowser.ts'
 import { internalPost } from './internal-fetch.ts'
-import type { BrowserRequest, BrowserResponse } from './protocol.ts'
+import { BROWSER_MAX_TIMEOUT_MS, type BrowserRequest, type BrowserResponse } from './protocol.ts'
+
+// The runner and the handler bundle each have a copy of this class, so
+// instanceof checks a brand instead of the prototype chain.
+const BRAND = Symbol.for('hobwork.BrowserError')
+
+export class BrowserError extends Error {
+  code: BrowserErrorCode
+
+  constructor(code: BrowserErrorCode, message: string) {
+    super(message)
+    this.name = 'BrowserError'
+    this.code = code
+    Object.defineProperty(this, BRAND, { value: true })
+  }
+
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[BRAND] === true
+  }
+}
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 

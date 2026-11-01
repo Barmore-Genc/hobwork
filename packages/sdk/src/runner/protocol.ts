@@ -6,9 +6,15 @@ import type { HaServiceTarget, HaStatesFilter } from '../homeassistant.ts'
 import type { Invocation, LogLevel } from '../index.ts'
 import type { Caller } from '../people.ts'
 
-// Here rather than in homeassistant.ts, since runtime VMs get the runner
-// directory without the rest of the SDK and only type imports may leave it.
+// Here rather than in homeassistant.ts or webbrowser.ts, since runtime VMs get
+// the runner directory without the rest of the SDK and only type imports may
+// leave it.
 export const HA_MAX_RETRIES = 5
+
+export const BROWSER_DEFAULT_TIMEOUT_MS = 30_000
+export const BROWSER_MAX_TIMEOUT_MS = 120_000
+// Returned page text and HTML are cut here, like command output.
+export const BROWSER_MAX_TEXT_CHARS = 100_000
 
 // Inside the guest. Nothing else listens there.
 export const RUNNER_PORT = 8080

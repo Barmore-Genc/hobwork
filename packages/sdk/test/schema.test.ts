@@ -42,6 +42,12 @@ test('accepts egress hosts with and without ports', () => {
   expect(validate({ egress }), JSON.stringify(validate.errors)).toBe(true)
 })
 
+test('accepts browser sites', () => {
+  const browser = { sites: ['shop.example.com', '*.example.org', 'nas.lan:8443'] }
+  expect(validate({ browser }), JSON.stringify(validate.errors)).toBe(true)
+  expect(validate({ browser: { sites: [] } }), JSON.stringify(validate.errors)).toBe(true)
+})
+
 test('accepts uploads and triggers for them', () => {
   const config = {
     uploads: { inbox: { prefix: 'prints/inbox/', maxBytes: 209715200, types: ['image/*', '.3mf', 'application/pdf'] } },
@@ -68,6 +74,9 @@ test.each([
   ],
   ['device trigger with an unknown event', { triggers: { a: { device: { capability: 'notifications', event: 'x' }, handler: 'src/a.ts' } } }],
   ['egress not an array', { egress: 'api.example.com' }],
+  ['browser sites not an array', { browser: { sites: 'shop.example.com' } }],
+  ['browser site with a scheme', { browser: { sites: ['https://shop.example.com'] } }],
+  ['browser with an unknown key', { browser: { sites: [], profile: 'shared' } }],
   ['egress with a URL', { egress: ['https://api.example.com'] }],
   ['upload prefix without a trailing slash', { uploads: { inbox: { prefix: 'inbox' } } }],
   ['upload prefix going up', { uploads: { inbox: { prefix: '../inbox/' } } }],

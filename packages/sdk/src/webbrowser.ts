@@ -8,10 +8,8 @@
 // where a cron stopped.
 export type BrowserTabInfo = { id: string; url: string; title: string }
 
-export const BROWSER_DEFAULT_TIMEOUT_MS = 30_000
-export const BROWSER_MAX_TIMEOUT_MS = 120_000
-// Returned page text and HTML are cut here, like command output.
-export const BROWSER_MAX_TEXT_CHARS = 100_000
+export { BROWSER_DEFAULT_TIMEOUT_MS, BROWSER_MAX_TEXT_CHARS, BROWSER_MAX_TIMEOUT_MS } from './runner/protocol.ts'
+export { BrowserError } from './runner/browser-client.ts'
 
 export type BrowserErrorCode =
   // No browser is installed on the host, or whoever runs it turned it off.
@@ -33,25 +31,6 @@ export type BrowserErrorCode =
   | 'bad_request'
   // The host could not answer at all.
   | 'host_error'
-
-// The runner and the handler bundle each have a copy of this class, so
-// instanceof checks a brand instead of the prototype chain.
-const BRAND = Symbol.for('hobwork.BrowserError')
-
-export class BrowserError extends Error {
-  code: BrowserErrorCode
-
-  constructor(code: BrowserErrorCode, message: string) {
-    super(message)
-    this.name = 'BrowserError'
-    this.code = code
-    Object.defineProperty(this, BRAND, { value: true })
-  }
-
-  static override [Symbol.hasInstance](value: unknown): boolean {
-    return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[BRAND] === true
-  }
-}
 
 export type BrowserOptions = {
   // How long the host waits for the command, at most BROWSER_MAX_TIMEOUT_MS.

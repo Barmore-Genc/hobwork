@@ -54,10 +54,20 @@ export function extensionDir(settings: BrowserSettings): string | undefined {
   return existsSync(`${dir}/manifest.json`) ? dir : undefined
 }
 
+// patchright reads PLAYWRIGHT_BROWSERS_PATH once, when its registry loads, so
+// it has to be set before the import. An operator who sets it keeps it.
+export function useBrowsersPath(settings: BrowserSettings): string {
+  const configured = process.env.PLAYWRIGHT_BROWSERS_PATH?.trim()
+  const path = configured === undefined || configured === '' ? settings.browsersPath : configured
+  process.env.PLAYWRIGHT_BROWSERS_PATH = path
+  return path
+}
+
 // Where the browser binary is, or undefined when it was never installed. Both
 // patchright and the browser are optional: a host that does not use them never
 // loads either.
 export async function browserExecutable(settings: BrowserSettings): Promise<string | undefined> {
+  useBrowsersPath(settings)
   try {
     const { chromium } = await import('patchright')
     const path = settings.executablePath ?? chromium.executablePath()
@@ -75,9 +85,18 @@ function text(value: string): string {
 // profile: the headless shell reports HeadlessChrome and takes no extensions.
 export const patchrightEngine: EngineFactory = async (options) => {
   const { settings } = options
+  useBrowsersPath(settings)
   const { chromium } = await import('patchright')
   const extension = extensionDir(settings)
   mkdirSync(settings.profileDir, { recursive: true, mode: 0o700 })
+  if (settings.headless) {
+    // Measured with Chrome 156 here: the full build still appends the token,
+    // so headless is a fallback for a host with neither a display nor Xvfb.
+    options.log(
+      'warn',
+      'Browser: running headless, so the user agent says HeadlessChrome. Install Xvfb on a Linux host, or run where there is a display',
+    )
+  }
   const display = settings.headless
     ? undefined
     : await startDisplay({ ...settings.window, log: (message) => options.log('info', message) })
@@ -154,6 +173,17 @@ export const patchrightEngine: EngineFactory = async (options) => {
       await route.abort('failed').catch(() => {})
     }
   })
+
+  // A manifest v3 extension registers a service worker when it loads, which is
+  // the only sign from here that uBlock Origin Lite is actually there.
+  if (extension !== undefined) {
+    const first = context.serviceWorkers()[0]
+    const worker = first ?? (await context.waitForEvent('serviceworker', { timeout: 10_000 }).catch(() => undefined))
+    options.log(
+      worker === undefined ? 'warn' : 'info',
+      worker === undefined ? 'Browser: uBlock Origin Lite did not start' : 'Browser: uBlock Origin Lite is loaded',
+    )
+  }
 
   context.on('page', (page: Page) => watch(page))
   context.on('close', () => {

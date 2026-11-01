@@ -2,12 +2,12 @@ import { execFile } from 'node:child_process'
 import { createWriteStream, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, type Dirent } from 'node:fs'
 import { cp, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { browserExecutable, extensionDir } from './engine.ts'
+import { browserExecutable, extensionDir, useBrowsersPath } from './engine.ts'
 import { loadBrowserSettings, type BrowserSettings } from './settings.ts'
 
 const run = promisify(execFile)
@@ -91,19 +91,21 @@ export async function installExtension(settings: BrowserSettings, log: (message:
 export async function installBrowser(options: { dataDir: string; log?: (message: string) => void }): Promise<InstallResult> {
   const log = options.log ?? ((message: string) => console.log(message))
   const settings = loadBrowserSettings(options.dataDir)
-  mkdirSync(settings.browsersPath, { recursive: true, mode: 0o700 })
+  const browsersPath = useBrowsersPath(settings)
+  mkdirSync(browsersPath, { recursive: true, mode: 0o700 })
 
   log('Downloading Chromium')
-  const cli = fileURLToPath(import.meta.resolve('patchright/cli.js'))
+  // patchright does not export cli.js, so it is found next to the entry point.
+  const cli = join(dirname(fileURLToPath(import.meta.resolve('patchright'))), 'cli.js')
   await run(process.execPath, [cli, 'install', 'chromium'], {
-    env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: settings.browsersPath },
+    env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsersPath },
     maxBuffer: 16 * 1024 * 1024,
   })
 
   const extension = await installExtension(settings, log)
   const executable = await browserExecutable(settings)
   if (executable === undefined) {
-    throw new Error(`Chromium was downloaded into ${settings.browsersPath} but patchright cannot find it`)
+    throw new Error(`Chromium was downloaded into ${browsersPath} but patchright cannot find it`)
   }
   return { browser: executable, ...(extension === undefined ? {} : { extension }) }
 }

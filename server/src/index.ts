@@ -5,6 +5,7 @@ import { createApp } from './app.ts'
 import { publishChange } from './changes.ts'
 import { createBrowserService } from './browser/service.ts'
 import { loadBrowserSettings } from './browser/settings.ts'
+import { sweepStaleDisplays } from './browser/sweep.ts'
 import { createAppOrigins } from './apps/origins.ts'
 import { createBackups } from './backup/backups.ts'
 import { loadConfig } from './config.ts'
@@ -52,8 +53,13 @@ for (const project of listProjects(host)) installHooks(repoPath(host, project.na
 
 const secretKey = loadSecretKey(config.dataDir, config.secretKey)
 const secrets = createSecretStore(host, secretKey)
+const browserSettings = loadBrowserSettings(config.dataDir)
+// Xvfb servers a killed host or a crashed browser left behind hold their
+// display numbers for the life of the unit, so the browser would run out of
+// them. This frees what this host started before it starts anything.
+await sweepStaleDisplays({ log: (message) => console.log(message) })
 const browser = createBrowserService({
-  settings: loadBrowserSettings(config.dataDir),
+  settings: browserSettings,
   log: (level, message) => (level === 'warn' ? console.warn(message) : console.log(message)),
   onChange: (project) => publishChange(host.db, { kind: 'browser', project }),
 })

@@ -94,41 +94,51 @@ export const patchrightEngine: EngineFactory = async (options) => {
   const { chromium } = await import('patchright')
   const extension = extensionDir(settings)
   mkdirSync(settings.profileDir, { recursive: true, mode: 0o700 })
-  if (settings.headless) {
+  const started = settings.headless
+    ? ({ kind: 'headless', reason: 'HOBWORK_BROWSER_HEADLESS=1 is set' } as const)
+    : await startDisplay({ ...settings.window, log: (message) => options.log('info', message) })
+  const display = started.kind === 'display' ? started.display : undefined
+  // The browser runs headless only when there is nothing to show a window on.
+  // A headful launch without a display does not fall back to anything: Chrome
+  // exits at once and every command answers with "browser has been closed".
+  const headless = started.kind === 'headless'
+  if (headless) {
     // Measured with Chrome 156 here: the full build still appends the token,
     // so headless is a fallback for a host with neither a display nor Xvfb.
-    options.log(
-      'warn',
-      'Browser: running headless, so the user agent says HeadlessChrome. Install Xvfb on a Linux host, or run where there is a display',
-    )
+    options.log('warn', `Browser: running headless, so the user agent says HeadlessChrome. ${started.reason}`)
   }
-  const display = settings.headless
-    ? undefined
-    : await startDisplay({ ...settings.window, log: (message) => options.log('info', message) })
 
-  const context: BrowserContext = await chromium.launchPersistentContext(settings.profileDir, {
-    headless: settings.headless,
-    // A real window, not an emulated viewport, so outerWidth, screen and the
-    // rest of the window geometry look like a desktop.
-    viewport: null,
-    locale: settings.locale,
-    ...(settings.timezoneId === undefined ? {} : { timezoneId: settings.timezoneId }),
-    acceptDownloads: false,
-    permissions: [],
-    args: [
-      `--window-size=${settings.window.width},${settings.window.height}`,
-      `--lang=${settings.locale}`,
-      // No GPU on a server, so WebGL is SwiftShader and needs this to exist at
-      // all. A software renderer is common; no WebGL at all is not.
-      '--enable-unsafe-swiftshader',
-      '--no-first-run',
-      '--no-default-browser-check',
-      ...(extension ? [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] : []),
-    ],
-    ...(settings.channel === undefined ? {} : { channel: settings.channel }),
-    ...(settings.executablePath === undefined ? {} : { executablePath: settings.executablePath }),
-    ...(display === undefined ? {} : { env: display.env }),
-  })
+  let context: BrowserContext
+  try {
+    context = await chromium.launchPersistentContext(settings.profileDir, {
+      headless,
+      // A real window, not an emulated viewport, so outerWidth, screen and the
+      // rest of the window geometry look like a desktop.
+      viewport: null,
+      locale: settings.locale,
+      ...(settings.timezoneId === undefined ? {} : { timezoneId: settings.timezoneId }),
+      acceptDownloads: false,
+      permissions: [],
+      args: [
+        `--window-size=${settings.window.width},${settings.window.height}`,
+        `--lang=${settings.locale}`,
+        // No GPU on a server, so WebGL is SwiftShader and needs this to exist at
+        // all. A software renderer is common; no WebGL at all is not.
+        '--enable-unsafe-swiftshader',
+        '--no-first-run',
+        '--no-default-browser-check',
+        ...(extension ? [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] : []),
+      ],
+      ...(settings.channel === undefined ? {} : { channel: settings.channel }),
+      ...(settings.executablePath === undefined ? {} : { executablePath: settings.executablePath }),
+      ...(display === undefined ? {} : { env: display.env }),
+    })
+  } catch (err) {
+    // Nothing else closes the display of a browser that never started, and
+    // each Xvfb left behind holds its display number for the host's lifetime.
+    display?.stop()
+    throw err
+  }
 
   const tabs = new Map<Page, EngineTab>()
   let closing = false
@@ -193,6 +203,9 @@ export const patchrightEngine: EngineFactory = async (options) => {
   context.on('page', (page: Page) => watch(page))
   context.on('close', () => {
     if (closing) return
+    // The engine is gone with the browser, so its display would never be
+    // stopped by close().
+    display?.stop()
     options.onClosed('The browser closed')
   })
   for (const page of context.pages()) watch(page)
@@ -282,6 +295,17 @@ export const patchrightEngine: EngineFactory = async (options) => {
   const initial = context.pages()[0]
   let spare: Page | undefined = initial && initial.url() === 'about:blank' ? initial : undefined
 
+  // Chrome exits when its last window closes, and a hob closes the tab it
+  // opened when it is done, so a page is left open for the browser to keep a
+  // window. Without it every call stops the browser and starts a new one.
+  async function keepSpare(): Promise<void> {
+    if (spare !== undefined || closing) return
+    const page = await context.newPage().catch(() => undefined)
+    if (page === undefined) return
+    watch(page)
+    spare = page
+  }
+
   return {
     async open(): Promise<EngineTab> {
       let page = spare
@@ -292,6 +316,7 @@ export const patchrightEngine: EngineFactory = async (options) => {
       }
       const tab = new PatchrightTab(page)
       tabs.set(page, tab)
+      await keepSpare()
       return tab
     },
     async close() {

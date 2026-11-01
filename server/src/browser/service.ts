@@ -27,6 +27,9 @@ type Tab = {
   session: BrowserSession
   sites: ReturnType<typeof parseBrowserSites>
   engine: EngineTab
+  // Selectors a secret was typed into, covered in screenshots because pixels
+  // cannot be scrubbed like text.
+  masked: Set<string>
   // Commands for one tab run in order, so two invocations do not interleave.
   chain: Promise<unknown>
   queued: number
@@ -44,6 +47,9 @@ const IDLE_CHECK_MS = 15_000
 const ERROR_CHARS = 400
 
 const SELECTOR_ACTIONS = new Set(['click', 'hover', 'fill', 'type', 'select', 'waitFor', 'press'])
+// Base64 JPEG a screenshot may be, which is about 1.5 MB of image. The
+// endpoint's own result limit sits just above it.
+const MAX_SCREENSHOT_CHARS = 2_000_000
 
 function short(message: string): string {
   const text = message.replace(/\s+/g, ' ').trim()
@@ -139,8 +145,14 @@ export function createBrowserService(options: {
 
   // A placeholder in typed text becomes the value only for the hosts people
   // bound the secret to, like ctx.fetch does it for headers.
-  function substitute(tab: Tab, value: string, placeholders: Record<string, string> | undefined, secrets: Record<string, BrowserSecret> | undefined): string {
+  function substitute(
+    tab: Tab,
+    value: string,
+    placeholders: Record<string, string> | undefined,
+    secrets: Record<string, BrowserSecret> | undefined,
+  ): { text: string; secret: boolean } {
     let out = value
+    let substituted = false
     let hostname: string
     try {
       hostname = new URL(tab.engine.url()).hostname
@@ -157,8 +169,9 @@ export function createBrowserService(options: {
         )
       }
       out = out.split(placeholder).join(secret.value)
+      substituted = true
     }
-    return out
+    return { text: out, secret: substituted }
   }
 
   async function execute(tab: Tab, request: BrowserRequest, secrets: Record<string, BrowserSecret> | undefined): Promise<unknown> {
@@ -182,11 +195,17 @@ export function createBrowserService(options: {
         case 'hover':
           return await page.hover(request.selector, timeoutMs).then(() => null)
         case 'fill':
-          return await page.fill(request.selector, substitute(tab, request.text, request.secrets, secrets), timeoutMs).then(() => null)
-        case 'type':
-          return await page.type(request.selector, substitute(tab, request.text, request.secrets, secrets), timeoutMs).then(() => null)
-        case 'press':
-          return await page.press(substitute(tab, request.key, request.secrets, secrets), request.selector, timeoutMs).then(() => null)
+        case 'type': {
+          const given = substitute(tab, request.text, request.secrets, secrets)
+          if (given.secret) tab.masked.add(request.selector)
+          const work = request.action === 'fill' ? page.fill.bind(page) : page.type.bind(page)
+          return await work(request.selector, given.text, timeoutMs).then(() => null)
+        }
+        case 'press': {
+          const given = substitute(tab, request.key, request.secrets, secrets)
+          if (given.secret && request.selector !== undefined) tab.masked.add(request.selector)
+          return await page.press(given.text, request.selector, timeoutMs).then(() => null)
+        }
         case 'select':
           return await page.select(request.selector, request.values, timeoutMs).then(() => null)
         case 'waitFor':
@@ -201,6 +220,16 @@ export function createBrowserService(options: {
           return page.url()
         case 'title':
           return await page.title()
+        case 'screenshot': {
+          const data = await page.screenshot({ fullPage: request.fullPage === true, mask: [...tab.masked], timeoutMs })
+          if (data.length > MAX_SCREENSHOT_CHARS) {
+            throw new BrowserError(
+              'bad_request',
+              `The screenshot is ${Math.round(data.length / 1024)} KB, more than a browser call may return. Take it of the window rather than the whole page`,
+            )
+          }
+          return data
+        }
         default:
           throw new BrowserError('bad_request', `${request.action} does not act on a tab`)
       }
@@ -259,6 +288,7 @@ export function createBrowserService(options: {
       session,
       sites,
       engine: engineTab,
+      masked: new Set(),
       chain: Promise.resolve(),
       queued: 0,
     }

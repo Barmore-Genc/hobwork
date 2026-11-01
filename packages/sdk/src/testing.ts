@@ -128,6 +128,7 @@ function unstubbedBrowser(): Browser {
     evaluate: reject('ctx.browser tab evaluate'),
     url: reject('ctx.browser tab url'),
     title: reject('ctx.browser tab title'),
+    screenshot: reject('ctx.browser tab screenshot'),
     close: reject('ctx.browser tab close'),
   })
   return {

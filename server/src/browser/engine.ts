@@ -23,6 +23,8 @@ export interface EngineTab {
   evaluate(source: string, arg: unknown, world: 'isolated' | 'main'): Promise<unknown>
   url(): string
   title(): Promise<string>
+  // Base64 JPEG. The selectors are covered with a solid block.
+  screenshot(options: { fullPage: boolean; mask: string[]; timeoutMs: number }): Promise<string>
   close(): Promise<void>
 }
 
@@ -47,6 +49,9 @@ export type EngineOptions = {
 export type EngineFactory = (options: EngineOptions) => Promise<Engine>
 
 const UBLOCK_DIR = 'ublock-origin-lite'
+// A long page is a large image, and a hob asked for a screenshot inside an
+// invocation, so there is a limit.
+const MAX_SCREENSHOT_HEIGHT = 20_000
 
 // The unpacked uBlock Origin Lite build browser:install put in the data dir.
 export function extensionDir(settings: BrowserSettings): string | undefined {
@@ -244,6 +249,29 @@ export const patchrightEngine: EngineFactory = async (options) => {
     }
     async title() {
       return this.#page.title()
+    }
+    async screenshot(options: { fullPage: boolean; mask: string[]; timeoutMs: number }) {
+      if (options.fullPage) {
+        // A string expression, so the host's types need no DOM library.
+        const height = Number(await this.#page.evaluate('document.documentElement.scrollHeight').catch(() => 0))
+        if (height > MAX_SCREENSHOT_HEIGHT) {
+          throw new Error(`The page is ${height} pixels tall, more than the ${MAX_SCREENSHOT_HEIGHT} a screenshot may have`)
+        }
+      }
+      // A selector that no longer matches anything is nothing to cover.
+      const mask = []
+      for (const selector of options.mask) {
+        if ((await this.#page.locator(selector).count().catch(() => 0)) > 0) mask.push(this.#page.locator(selector))
+      }
+      const jpeg = await this.#page.screenshot({
+        type: 'jpeg',
+        quality: 80,
+        fullPage: options.fullPage,
+        mask,
+        maskColor: '#111111',
+        timeout: options.timeoutMs,
+      })
+      return jpeg.toString('base64')
     }
     async close() {
       tabs.delete(this.#page)

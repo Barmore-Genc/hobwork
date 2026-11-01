@@ -120,6 +120,7 @@ export function createApp(
     secrets: options.secrets,
     storage: options.storage,
     devices,
+    browser: options.browser,
     ai: options.ai,
     appOrigin: origins.origin,
     appsUrl: origins.appsUrl,

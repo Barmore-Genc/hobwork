@@ -109,6 +109,12 @@ describe.skipIf(!enabled)('the real browser', () => {
       await expect(tab.evaluate('(tag) => document.querySelector(tag).textContent', 'h1', 'isolated')).resolves.toBe('Spools')
       expect(await tab.html()).toContain('<h1 id="title">Spools</h1>')
 
+      // A JPEG, with a field covered and a selector that matches nothing.
+      const base64 = await tab.screenshot({ fullPage: false, mask: ['#search', '#nothing-here'], timeoutMs: 15_000 })
+      const jpeg = Buffer.from(base64, 'base64')
+      expect(jpeg.byteLength).toBeGreaterThan(1_000)
+      expect([...jpeg.slice(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+
       // A navigation the rules refuse never lands, and the host hears about it.
       await expect(tab.goto(`${pages.base}/blocked`, 15_000)).rejects.toThrow()
       expect(blocked).toEqual([`${pages.base}/blocked`])

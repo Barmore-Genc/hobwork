@@ -72,7 +72,10 @@ test('selectors, values and keys are bounded', () => {
 })
 
 test('actions are a fixed list, and the body has to be JSON', () => {
-  expect(rejects({ action: 'screenshot', tab: TAB })).toMatch(/is not a browser action/)
+  expect(rejects({ action: 'record', tab: TAB })).toMatch(/is not a browser action/)
+  expect(parse({ action: 'screenshot', tab: TAB })).toEqual({ action: 'screenshot', tab: TAB })
+  expect(parse({ action: 'screenshot', tab: TAB, fullPage: true })).toEqual({ action: 'screenshot', tab: TAB, fullPage: true })
+  expect(rejects({ action: 'screenshot', tab: TAB, fullPage: 'yes' })).toMatch(/fullPage must be a boolean/)
   expect(rejects({ action: 'navigate', tab: TAB })).toMatch(/is not a browser action/)
   expect(rejects('{"action":')).toMatch(/JSON/)
   expect(rejects({})).toMatch(/action must be a string/)

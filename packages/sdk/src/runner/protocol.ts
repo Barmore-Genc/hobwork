@@ -159,6 +159,8 @@ export type BrowserRequest = (
   | { action: 'evaluate'; source: string; arg?: unknown; world?: 'isolated' | 'main' }
   | { action: 'url' }
   | { action: 'title' }
+  // A JPEG of the tab's window, base64.
+  | { action: 'screenshot'; fullPage?: boolean }
 ) & {
   // The tab the command acts on, except for open and tabs.
   tab?: string

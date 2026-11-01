@@ -69,6 +69,12 @@ class FakeTab implements EngineTab {
   async title() {
     return 'A shop'
   }
+  screenshots: { fullPage: boolean; mask: string[] }[] = []
+  async screenshot(options: { fullPage: boolean; mask: string[]; timeoutMs: number }) {
+    await this.#run('screenshot')
+    this.screenshots.push({ fullPage: options.fullPage, mask: options.mask })
+    return 'aGVsbG8='
+  }
   async close() {
     this.closed += 1
   }
@@ -220,6 +226,27 @@ test('a secret is typed only into the hosts it is bound to', async () => {
   expect(err.code).toBe('not_allowed')
   expect(err.message).toMatch(/does not send SHOP_PASSWORD to shop.example.com/)
   expect(browser.tabs[0]!.calls).not.toContain('fill #password hunter2 hunter2')
+  await service.close()
+})
+
+test('a screenshot covers the fields a secret was typed into', async () => {
+  const browser = new FakeBrowser()
+  const service = setUp(browser)
+  const tab = (await service.run(call({ action: 'open', url: SHOP }))) as { id: string }
+  const secrets = { SHOP_PASSWORD: { value: 'hunter2', hosts: ['shop.example.com'] } }
+
+  // Ordinary typing is not covered.
+  await service.run(call({ action: 'fill', tab: tab.id, selector: '#search', text: 'PETG' }))
+  // A secret is, from then on.
+  await service.run(
+    call({ action: 'fill', tab: tab.id, selector: '#password', text: 'p-hunter2', secrets: { SHOP_PASSWORD: 'p-hunter2' } }, { secrets }),
+  )
+  const jpeg = await service.run(call({ action: 'screenshot', tab: tab.id }))
+  expect(jpeg).toBe('aGVsbG8=')
+  expect(browser.tabs[0]!.screenshots).toEqual([{ fullPage: false, mask: ['#password'] }])
+
+  await service.run(call({ action: 'screenshot', tab: tab.id, fullPage: true }))
+  expect(browser.tabs[0]!.screenshots[1]).toEqual({ fullPage: true, mask: ['#password'] })
   await service.close()
 })
 

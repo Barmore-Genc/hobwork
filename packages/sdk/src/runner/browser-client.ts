@@ -1,4 +1,10 @@
-import type { Browser, BrowserErrorCode, BrowserOptions, BrowserTab, BrowserTabInfo } from '../webbrowser.ts'
+import type {
+  Browser,
+  BrowserErrorCode,
+  BrowserOptions,
+  BrowserTab,
+  BrowserTabInfo,
+} from '../webbrowser.ts'
 import { internalPost } from './internal-fetch.ts'
 import { BROWSER_MAX_TIMEOUT_MS, type BrowserRequest, type BrowserResponse } from './protocol.ts'
 
@@ -97,6 +103,11 @@ export function createBrowserClient(send: BrowserSend, secrets: Record<string, s
         ),
       url: () => call<string>({ action: 'url' }),
       title: () => call<string>({ action: 'title' }),
+      screenshot: async (options) => {
+        const { fullPage, ...rest } = options ?? {}
+        const data = await call<string>({ action: 'screenshot', ...(fullPage ? { fullPage: true } : {}) }, rest)
+        return Uint8Array.from(Buffer.from(data, 'base64'))
+      },
       close: () => call<void>({ action: 'close' }),
     }
   }

@@ -1,6 +1,7 @@
 import type { BrowserRequest, BrowserResponse } from '../../../packages/sdk/src/runner/protocol.ts'
 import { BrowserError } from '../../../packages/sdk/src/webbrowser.ts'
 import { BrowserBadRequest, parseBrowserRequest } from './commands.ts'
+import { redact } from './redact.ts'
 import type { BrowserSecret, BrowserService } from './service.ts'
 
 // Deployed handlers browse the sites hobwork.json declares. A branch preview
@@ -39,15 +40,12 @@ const STATUS_BY_CODE: Record<string, number> = {
   bad_request: 400,
 }
 
-const MAX_LOGGED_CHARS = 200
-const MAX_RESULT_CHARS = 2 * 1024 * 1024
-// Short values are too common to redact without hiding the page's own text.
-const MIN_REDACTED_CHARS = 4
-const REDACTED = '[redacted]'
-
 // Reads: what a handler needs to decide something. They are logged at debug so
 // a hob's log is not drowned by scraping.
-const READ_ACTIONS = new Set(['tabs', 'text', 'html', 'url', 'title', 'evaluate'])
+const READ_ACTIONS = new Set(['tabs', 'text', 'html', 'url', 'title', 'evaluate', 'screenshot'])
+
+const MAX_LOGGED_CHARS = 200
+const MAX_RESULT_CHARS = 2 * 1024 * 1024
 
 function short(text: string): string {
   return text.length > MAX_LOGGED_CHARS ? `${text.slice(0, MAX_LOGGED_CHARS)}…` : text
@@ -66,6 +64,7 @@ function describe(request: BrowserRequest): string {
     case 'html':
     case 'url':
     case 'title':
+    case 'screenshot':
       return request.action
     case 'click':
     case 'hover':
@@ -82,25 +81,6 @@ function describe(request: BrowserRequest): string {
     case 'evaluate':
       return `evaluate ${request.source.length} characters`
   }
-}
-
-// Secret values must not travel back to the guest, even by accident: a page
-// that echoes a field, an error message, a URL.
-export function redact(value: unknown, secrets: Record<string, BrowserSecret>): unknown {
-  const values = [...new Set(Object.values(secrets).map((secret) => secret.value))]
-    .filter((secret) => secret.length >= MIN_REDACTED_CHARS)
-    .sort((a, b) => b.length - a.length)
-  if (values.length === 0) return value
-  const scrub = (text: string) => values.reduce((out, secret) => out.split(secret).join(REDACTED), text)
-  const walk = (node: unknown): unknown => {
-    if (typeof node === 'string') return scrub(node)
-    if (Array.isArray(node)) return node.map(walk)
-    if (node !== null && typeof node === 'object') {
-      return Object.fromEntries(Object.entries(node).map(([key, inner]) => [scrub(key), walk(inner)]))
-    }
-    return node
-  }
-  return walk(value)
 }
 
 function answer(response: BrowserResponse, status = 200): Response {
@@ -158,7 +138,11 @@ export async function browserResponse(body: string, options: BrowserEndpointOpti
       )
     }
     log(READ_ACTIONS.has(request.action) ? 'debug' : 'info', `Browser: ${scrub(describe(request))}`)
-    return answer({ ok: true, result: redact(result, secrets) })
+    // A JPEG is bytes: a value that happened to appear in the base64 would
+    // corrupt it, and the pixels a secret could be in are masked by the
+    // service instead.
+    const answerable = request.action === 'screenshot' ? result : redact(result, secrets)
+    return answer({ ok: true, result: answerable })
   } catch (err) {
     const code = err instanceof BrowserError ? err.code : 'host_error'
     const message = err instanceof Error ? err.message : String(err)

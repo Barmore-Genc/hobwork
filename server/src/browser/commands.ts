@@ -28,6 +28,7 @@ const ACTIONS = new Set([
   'evaluate',
   'url',
   'title',
+  'screenshot',
 ])
 
 const MAX_URL_CHARS = 4096
@@ -135,6 +136,9 @@ export function parseBrowserRequest(body: string): BrowserRequest {
     case 'title':
     case 'close':
       return common as BrowserRequest
+    case 'screenshot':
+      if (request.fullPage !== undefined && typeof request.fullPage !== 'boolean') fail('fullPage must be a boolean')
+      return { ...common, action, ...(request.fullPage === true ? { fullPage: true } : {}) } as BrowserRequest
     case 'click':
     case 'hover':
     case 'waitFor':

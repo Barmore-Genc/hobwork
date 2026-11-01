@@ -984,9 +984,9 @@ export function createRuntime(host: Host, options: RuntimeOptions = {}) {
     async crossAppRequests(project: string, branch?: string): Promise<string[]> {
       return (await deployedFor(project, branch)).config.crossAppRequests
     },
-    // What the deployed version declares in hobwork.json.
-    async config(project: string): Promise<{ config: ProjectConfig; version: number | null }> {
-      const deployed = await deployment(project)
+    // What the deployed version declares in hobwork.json, or a branch's latest commit.
+    async config(project: string, branch?: string): Promise<{ config: ProjectConfig; version: number | null }> {
+      const deployed = await deployedFor(project, branch)
       return { config: deployed.config, version: deployed.version }
     },
     // The deployed version's build, or the branch's for a preview, built

@@ -45,6 +45,12 @@ export type BrowserEvaluateOptions = BrowserOptions & {
   world?: 'isolated' | 'main'
 }
 
+export type BrowserScreenshotOptions = BrowserOptions & {
+  // A JPEG of the whole page instead of the window. Long pages are cut at
+  // 20,000 pixels, and a tall page can be refused for its size.
+  fullPage?: boolean
+}
+
 export type BrowserPressOptions = BrowserOptions & {
   // Focus this element first, else keys go to whatever has focus.
   selector?: string
@@ -84,6 +90,11 @@ export interface BrowserTab {
   ): Promise<T>
   url(): Promise<string>
   title(): Promise<string>
+  // A JPEG of the tab, as the browser draws it. Elements the host typed a
+  // secret into are covered with a solid block, since pixels cannot be
+  // scrubbed like text. A page that prints the secret elsewhere (an error
+  // message, a canvas) still shows it.
+  screenshot(options?: BrowserScreenshotOptions): Promise<Uint8Array>
   // Closes this tab. Other tabs of the hob stay open.
   close(): Promise<void>
 }

@@ -131,6 +131,7 @@ jobs:
             exit 0
           fi
           gh workflow run deploy.yml --repo Barmore-Genc/homelab \
-            -f recipe=deploy-hobwork -f hobwork-ref=main
+            -f recipe=deploy-hobwork -f hobwork-ref=main \
+            -f hobwork-commit="$GITHUB_SHA"
           echo "Started: https://github.com/Barmore-Genc/homelab/actions/workflows/deploy.yml"
 

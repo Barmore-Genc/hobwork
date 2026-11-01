@@ -97,7 +97,7 @@ Access follows Home Assistant: the deployed version browses, a branch preview do
 - `pnpm -C server browser:install` (or `browser:update`) runs patchright's own installer with `PLAYWRIGHT_BROWSERS_PATH=<data>/browser/browsers`, then downloads the newest uBlock Origin Lite chromium zip and unpacks it into `<data>/browser/extensions/ublock-origin-lite`, recording the version beside it. `PLAYWRIGHT_BROWSERS_PATH` set by the operator wins, for a host that keeps its browsers elsewhere.
 - Browser and extension updates ride patchright upgrades: the browser build has to match the driver, which is the point of not bundling one.
 - The host answers `not_configured` with the command in the message when no browser is installed.
-- Host requirements, documented rather than installed by Hobwork: `xvfb` and `unzip` on Linux, Chromium's system libraries (`playwright install-deps`), and the font packages above.
+- Host requirements, installed by whoever runs the host rather than by Hobwork: `xvfb` and `unzip` on Linux, Chromium's system libraries (`playwright install-deps`), and the font packages above. On the host that runs this repository's builds, `~/Code/homelab`'s `deploy-hobwork-host` installs them and runs `browser:install` as the `hobwork` user, and `deploy-hobwork` runs it again for a release that bumps patchright, so a browser build always matches its driver. A merge to `main` here dispatches that deploy once its build succeeds (`HOMELAB_DEPLOY_TOKEN`); without the secret the build stays an artifact.
 - The profile holds cookies and logins. Backups stage only the host DB, the repos, hob DBs, hob files and `secret.key`, so it never leaves the host, and `<data>/browser` is reinstallable.
 
 ## Tests

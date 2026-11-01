@@ -113,3 +113,24 @@ jobs:
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes release/out/*
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # A build of main goes live on the host that runs it: the homelab repo's
+  # Deploy workflow downloads this build and restarts Hobwork. Without the
+  # token the build is only an artifact, and this says so instead of failing.
+  deploy:
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Deploy to colossus
+        env:
+          GH_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "HOMELAB_DEPLOY_TOKEN is not set, so this build is not deployed."
+            exit 0
+          fi
+          gh workflow run deploy.yml --repo Barmore-Genc/homelab \
+            -f recipe=deploy-hobwork -f hobwork-ref=main
+          echo "Started: https://github.com/Barmore-Genc/homelab/actions/workflows/deploy.yml"
+

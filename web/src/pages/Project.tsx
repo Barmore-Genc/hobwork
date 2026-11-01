@@ -450,25 +450,6 @@ function HealthSection({ project }: { project: ProjectDetail }) {
             </dd>
           </>
         )}
-        {project.browser.sites.length > 0 && (
-          <>
-            <dt className="font-semibold">Browser</dt>
-            <dd className="min-w-0">
-              <ul className="flex flex-wrap gap-2">
-                {project.browser.sites.map((site) => (
-                  <li key={site} className="rounded-sm border border-border bg-surface px-2 py-0.5 text-sm break-all">
-                    <span className="font-mono">{site}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 text-sm text-muted">
-                {project.browser.running
-                  ? `Running, ${project.browser.tabs} ${project.browser.tabs === 1 ? 'page' : 'pages'} open. It stops when nothing uses it for a while.`
-                  : 'Pages the hob opens, in the browser this server keeps for hobs. It starts when the hob opens one.'}
-              </p>
-            </dd>
-          </>
-        )}
         <dt className="font-semibold">Can reach</dt>
         <dd className="min-w-0">
           {project.egress.length ? (
@@ -625,6 +606,16 @@ function BrowserSection({ project }: { project: ProjectDetail }) {
           </div>
         )}
       </div>
+      <p className="mt-2 max-w-prose text-sm text-muted">
+        Pages the hob opens, in the browser this server keeps for hobs. It may open{' '}
+        {project.browser.sites.map((site, index) => (
+          <span key={site}>
+            <span className="font-mono text-fg">{site}</span>
+            {index === project.browser.sites.length - 1 ? '. ' : ', '}
+          </span>
+        ))}
+        Everything else is refused, and so is anything that is not https.
+      </p>
       {error && (
         <div className="mt-4">
           <Notice tone="error">{error}</Notice>
@@ -632,7 +623,7 @@ function BrowserSection({ project }: { project: ProjectDetail }) {
       )}
       {tabs.length === 0 ? (
         <p className="mt-2 max-w-prose text-muted">
-          No pages are open. The hob opens them itself, on the sites it declares, and the browser stops when nothing uses it.
+          No pages are open. The hob opens them itself, and the browser stops when nothing uses it for a while.
         </p>
       ) : (
         <ul className="mt-4 grid gap-6 sm:grid-cols-2">
